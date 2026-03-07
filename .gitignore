@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+target/
+
+# Build output
+dist/
+build/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Rust
+**/*.rs.bk
+Cargo.lock
+
+# Test artifacts
+test-results/
+screenshots/
+
+# Claude context (internal)
+.claude/
