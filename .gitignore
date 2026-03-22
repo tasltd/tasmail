@@ -31,3 +31,6 @@ screenshots/
 
 # Claude context (internal)
 .claude/
+
+# Git worktrees for sessions
+.worktrees/
