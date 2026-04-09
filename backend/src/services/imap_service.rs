@@ -41,6 +41,9 @@ pub struct FullMessage {
     pub text_body: Option<String>,
     pub html_body: Option<String>,
     pub attachments: Vec<Attachment>,
+    pub message_id: Option<String>,
+    pub in_reply_to: Option<String>,
+    pub references: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -502,6 +505,13 @@ impl ImapService {
 
         extract_parts(&parsed, &mut text_body, &mut html_body, &mut attachments, "");
 
+        // Added: Extract threading headers from parsed mail
+        let message_id = extract_header(&parsed, "Message-ID");
+        let in_reply_to = extract_header(&parsed, "In-Reply-To");
+        let references = extract_header(&parsed, "References")
+            .map(|r| r.split_whitespace().map(String::from).collect())
+            .unwrap_or_default();
+
         // Mark as seen — collect the stream to drive it
         let _seen: Vec<_> = session
             .uid_store(uid.to_string(), "+FLAGS (\\Seen)")
@@ -524,6 +534,9 @@ impl ImapService {
             text_body,
             html_body,
             attachments,
+            message_id,
+            in_reply_to,
+            references,
         })
     }
 }
@@ -548,6 +561,15 @@ fn format_imap_address(addr: &imap_proto::Address) -> String {
         Some(n) if !n.is_empty() => format!("{} <{}@{}>", n, mailbox_name, host),
         _ => format!("{}@{}", mailbox_name, host),
     }
+}
+
+/// Extract a specific header value from a parsed email
+fn extract_header(mail: &mailparse::ParsedMail, name: &str) -> Option<String> {
+    mail.headers
+        .iter()
+        .find(|h| h.get_key().eq_ignore_ascii_case(name))
+        .map(|h| h.get_value().trim().to_string())
+        .filter(|v: &String| !v.is_empty())
 }
 
 /// Recursively extract text, html, and attachments from MIME parts

@@ -25,6 +25,9 @@ export interface FullMessage {
   text_body: string | null;
   html_body: string | null;
   attachments: Attachment[];
+  message_id: string | null;
+  in_reply_to: string | null;
+  references: string[];
 }
 
 export interface Attachment {
