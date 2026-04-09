@@ -14,12 +14,18 @@ interface AppShellProps {
 export function AppShell({ onLogout }: AppShellProps) {
   const viewMode = useMailStore((s) => s.viewMode);
   const sidebarOpen = useUiStore((s) => s.sidebarOpen);
+  const toggleSidebar = useUiStore((s) => s.toggleSidebar);
 
   return (
     <div className={`app-shell ${sidebarOpen ? '' : 'app-shell--sidebar-collapsed'}`}>
       <TopBar onLogout={onLogout} />
       <div className="app-shell__body">
-        {sidebarOpen && <Sidebar />}
+        {sidebarOpen && (
+          <>
+            <div className="sidebar-overlay" onClick={toggleSidebar} />
+            <Sidebar />
+          </>
+        )}
         <main className="app-shell__content">
           {viewMode === 'list' && <MessageList />}
           {viewMode === 'reader' && <MessageView />}

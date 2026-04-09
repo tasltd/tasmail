@@ -68,6 +68,8 @@ body {
   overflow-y: auto;
   background: var(--color-surface);
 }
+/* Hide sidebar overlay on desktop — only visible on mobile via media query */
+.sidebar-overlay { display: none; }
 
 /* Top Bar */
 .topbar {
@@ -419,10 +421,118 @@ body {
 .error-boundary h2 { margin-bottom: 8px; }
 .error-boundary p { color: var(--color-text-secondary); margin-bottom: 16px; }
 
-/* Responsive */
+/* Active state for flagged/starred */
+.btn--active { color: #f59e0b; }
+
+/* Dark theme */
+[data-theme="dark"] {
+  --color-bg: #1a1a2e;
+  --color-surface: #16213e;
+  --color-border: #2a2a4a;
+  --color-text: #e0e0e0;
+  --color-text-secondary: #999;
+  --color-unread: #ffffff;
+}
+[data-theme="dark"] .btn:hover,
+[data-theme="dark"] .btn--icon:hover { background: #2a2a4a; }
+[data-theme="dark"] .folder-item:hover { background: #2a2a4a; }
+[data-theme="dark"] .folder-item--active { background: #1e3a5f; }
+[data-theme="dark"] .message-row:hover { background: #1e2a45; }
+[data-theme="dark"] .message-row--active { background: #1e3a5f; }
+[data-theme="dark"] .skeleton-row {
+  background: linear-gradient(90deg, #2a2a4a 25%, #1e2a45 50%, #2a2a4a 75%);
+  background-size: 200% 100%;
+}
+
+/* Responsive — Tablet (768px-1024px) */
+@media (max-width: 1024px) {
+  :root { --sidebar-width: 200px; }
+  .topbar__search { max-width: 400px; }
+  .message-view { padding: 12px; }
+  .composer { padding: 12px; }
+}
+
+/* Responsive — Mobile (<=768px) */
 @media (max-width: 768px) {
-  .sidebar { width: 100%; position: absolute; z-index: 10; }
+  :root { --sidebar-width: 100%; }
+
+  /* Sidebar becomes overlay on mobile */
+  .sidebar {
+    position: fixed;
+    top: var(--topbar-height);
+    left: 0;
+    bottom: 0;
+    width: 80%;
+    max-width: 300px;
+    z-index: 100;
+    box-shadow: 4px 0 24px rgba(0,0,0,0.15);
+    transition: transform 0.2s ease;
+  }
   .app-shell--sidebar-collapsed .sidebar { display: none; }
-  .message-row { grid-template-columns: 1fr 80px; }
-  .message-row__from { grid-column: 1 / -1; }
+
+  /* Overlay backdrop — visible on mobile only */
+  .sidebar-overlay {
+    display: block;
+    position: fixed;
+    inset: 0;
+    top: var(--topbar-height);
+    background: rgba(0,0,0,0.3);
+    z-index: 99;
+  }
+
+  /* TopBar: hide search on narrow screens, show as icon */
+  .topbar { padding: 8px 12px; gap: 8px; }
+  .topbar__search { max-width: none; }
+
+  /* Message list: stack from/subject vertically */
+  .message-row {
+    grid-template-columns: 1fr auto;
+    grid-template-rows: auto auto;
+    gap: 2px 8px;
+    padding: 10px 12px;
+  }
+  .message-row__from { grid-column: 1; grid-row: 1; font-size: 13px; }
+  .message-row__date { grid-column: 2; grid-row: 1; }
+  .message-row__subject { grid-column: 1 / -1; grid-row: 2; font-size: 13px; }
+
+  /* Message view */
+  .message-view { padding: 12px; max-width: 100%; }
+  .message-view__subject { font-size: 18px; }
+  .message-view__toolbar { flex-wrap: wrap; }
+
+  /* Composer */
+  .composer { padding: 12px; max-width: 100%; }
+  .composer__field { flex-direction: column; align-items: flex-start; }
+  .composer__field label { width: auto; }
+  .composer__field input { width: 100%; }
+  .composer__editor { min-height: 200px; }
+
+  /* Login card */
+  .login-card { padding: 24px 16px; margin: 16px; }
+}
+
+/* Responsive — Small mobile (<=480px) */
+@media (max-width: 480px) {
+  .topbar__search input { font-size: 13px; }
+  .message-list__header { padding: 8px 12px; }
+  .message-row { padding: 8px 10px; }
+  .message-row__from { font-size: 12px; }
+  .message-row__subject { font-size: 12px; }
+  .message-row__date { font-size: 11px; }
+  .message-view__subject { font-size: 16px; }
+  .message-view__meta { font-size: 12px; }
+  .login-card__header h1 { font-size: 20px; }
+}
+
+/* Touch-friendly targets */
+@media (pointer: coarse) {
+  .btn--icon { min-width: 44px; min-height: 44px; display: flex; align-items: center; justify-content: center; }
+  .folder-item { padding: 12px; min-height: 44px; }
+  .message-row { min-height: 60px; }
+}
+
+/* Safe area for notched devices */
+@supports(padding: env(safe-area-inset-bottom)) {
+  .app-shell { padding-bottom: env(safe-area-inset-bottom); }
+  .sidebar { padding-bottom: env(safe-area-inset-bottom); }
 }
