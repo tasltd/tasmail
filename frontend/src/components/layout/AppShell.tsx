@@ -4,6 +4,8 @@ import { MessageList } from '../mail/MessageList';
 import { MessageView } from '../mail/MessageView';
 import { Composer } from '../mail/Composer';
 import { SearchResults } from '../mail/SearchResults';
+import { SignatureManager } from '../settings/SignatureManager';
+import { ContactManager } from '../settings/ContactManager';
 import { useMailStore } from '../../stores/mailStore';
 import { useUiStore } from '../../stores/uiStore';
 
@@ -31,6 +33,8 @@ export function AppShell({ onLogout }: AppShellProps) {
           {viewMode === 'reader' && <MessageView />}
           {viewMode === 'compose' && <Composer />}
           {viewMode === 'search' && <SearchResults />}
+          {viewMode === 'signatures' && <SignatureManager />}
+          {viewMode === 'contacts' && <ContactManager />}
         </main>
       </div>
     </div>

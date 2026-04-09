@@ -1,6 +1,6 @@
 use axum::{
     middleware as axum_middleware,
-    routing::{delete, get, post},
+    routing::{delete, get, post, put},
     Router,
 };
 use tower_http::cors::{Any, CorsLayer};
@@ -43,6 +43,24 @@ pub fn create_router(state: AppState) -> Router {
         .route(
             "/api/folders/{folder}/messages/{uid}/flag",
             post(handlers::messages::flag_message),
+        )
+        // Signatures
+        .route(
+            "/api/signatures",
+            get(handlers::signatures::list_signatures).post(handlers::signatures::create_signature),
+        )
+        .route(
+            "/api/signatures/{id}",
+            put(handlers::signatures::update_signature).delete(handlers::signatures::delete_signature),
+        )
+        // Contacts
+        .route(
+            "/api/contacts",
+            get(handlers::contacts::list_contacts).post(handlers::contacts::create_contact),
+        )
+        .route(
+            "/api/contacts/{id}",
+            put(handlers::contacts::update_contact).delete(handlers::contacts::delete_contact),
         )
         // Admin routes
         .route(

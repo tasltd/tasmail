@@ -69,4 +69,14 @@ describe('mailStore', () => {
     store.setViewMode('compose');
     expect(useMailStore.getState().viewMode).toBe('compose');
   });
+
+  it('setViewMode can switch to signatures view', () => {
+    useMailStore.getState().setViewMode('signatures');
+    expect(useMailStore.getState().viewMode).toBe('signatures');
+  });
+
+  it('setViewMode can switch to contacts view', () => {
+    useMailStore.getState().setViewMode('contacts');
+    expect(useMailStore.getState().viewMode).toBe('contacts');
+  });
 });
