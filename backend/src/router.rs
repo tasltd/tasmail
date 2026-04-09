@@ -35,6 +35,7 @@ pub fn create_router(state: AppState) -> Router {
             get(handlers::messages::get_message).delete(handlers::messages::delete_message),
         )
         .route("/api/messages/send", post(handlers::messages::send_message))
+        .route("/api/drafts", post(handlers::messages::save_draft))
         .route("/api/search", get(handlers::messages::search_messages))
         .route(
             "/api/folders/{folder}/messages/{uid}/move",

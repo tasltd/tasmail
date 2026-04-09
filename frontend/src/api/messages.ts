@@ -58,3 +58,15 @@ export async function flagMessage(
     add,
   });
 }
+
+export interface SaveDraftRequest {
+  to: string[];
+  cc?: string[];
+  subject: string;
+  html_body?: string;
+  text_body?: string;
+}
+
+export async function saveDraft(request: SaveDraftRequest): Promise<void> {
+  await apiClient.post('/drafts', request);
+}

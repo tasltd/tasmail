@@ -34,6 +34,15 @@ pub struct FlagRequest {
     pub add: bool,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct SaveDraftRequest {
+    pub to: Vec<String>,
+    pub cc: Option<Vec<String>>,
+    pub subject: String,
+    pub html_body: Option<String>,
+    pub text_body: Option<String>,
+}
+
 /// GET /api/folders/:folder/messages — list messages in a folder
 pub async fn list_messages(
     State(state): State<AppState>,
@@ -210,4 +219,55 @@ pub async fn flag_message(
         .await?;
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// POST /api/drafts — save a draft to IMAP Drafts folder
+pub async fn save_draft(
+    State(state): State<AppState>,
+    axum::Extension(claims): axum::Extension<Claims>,
+    Json(body): Json<SaveDraftRequest>,
+) -> Result<StatusCode, AppError> {
+    let mailbox_id: uuid::Uuid = claims
+        .sub
+        .parse()
+        .map_err(|_| AppError::Internal(anyhow::anyhow!("Invalid mailbox ID")))?;
+
+    let mailbox = crate::models::mailbox::Mailbox::find_by_id(&state.db, mailbox_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
+
+    // Build a minimal RFC 2822 message for the draft
+    let to_header = body.to.join(", ");
+    let cc_header = body.cc.as_deref().unwrap_or(&[]).join(", ");
+    let text = body.text_body.as_deref().unwrap_or("");
+    let html = body.html_body.as_deref().unwrap_or("");
+
+    let mut raw_msg = format!(
+        "From: {}\r\nTo: {}\r\n",
+        mailbox.username, to_header,
+    );
+    if !cc_header.is_empty() {
+        raw_msg.push_str(&format!("Cc: {}\r\n", cc_header));
+    }
+    raw_msg.push_str(&format!("Subject: {}\r\n", body.subject));
+    raw_msg.push_str(&format!("Date: {}\r\n", chrono::Utc::now().format("%a, %d %b %Y %H:%M:%S +0000")));
+    raw_msg.push_str("MIME-Version: 1.0\r\n");
+
+    if !html.is_empty() {
+        let boundary = format!("----=_Part_{}", uuid::Uuid::new_v4().simple());
+        raw_msg.push_str(&format!("Content-Type: multipart/alternative; boundary=\"{}\"\r\n\r\n", boundary));
+        raw_msg.push_str(&format!("--{}\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n{}\r\n", boundary, text));
+        raw_msg.push_str(&format!("--{}\r\nContent-Type: text/html; charset=utf-8\r\n\r\n{}\r\n", boundary, html));
+        raw_msg.push_str(&format!("--{}--\r\n", boundary));
+    } else {
+        raw_msg.push_str("Content-Type: text/plain; charset=utf-8\r\n\r\n");
+        raw_msg.push_str(text);
+    }
+
+    let imap_service = ImapService::new(state.config.imap.clone());
+    imap_service
+        .save_draft(&mailbox.username, &mailbox.password_hash, raw_msg.as_bytes())
+        .await?;
+
+    Ok(StatusCode::CREATED)
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { searchMessages, deleteMessage, moveMessage, flagMessage } from './messages';
+import { searchMessages, deleteMessage, moveMessage, flagMessage, saveDraft } from './messages';
 import { apiClient } from './client';
 
 vi.mock('./client', () => ({
@@ -86,6 +86,35 @@ describe('message API functions', () => {
       expect(apiClient.post).toHaveBeenCalledWith('/folders/INBOX/messages/42/flag', {
         flag: '\\Seen',
         add: false,
+      });
+    });
+  });
+
+  describe('saveDraft', () => {
+    it('calls POST /drafts with draft data', async () => {
+      vi.mocked(apiClient.post).mockResolvedValue(undefined);
+
+      await saveDraft({
+        to: ['user@example.com'],
+        subject: 'Test draft',
+        html_body: '<p>Hello</p>',
+        text_body: 'Hello',
+      });
+      expect(apiClient.post).toHaveBeenCalledWith('/drafts', {
+        to: ['user@example.com'],
+        subject: 'Test draft',
+        html_body: '<p>Hello</p>',
+        text_body: 'Hello',
+      });
+    });
+
+    it('sends draft without optional fields', async () => {
+      vi.mocked(apiClient.post).mockResolvedValue(undefined);
+
+      await saveDraft({ to: ['a@b.com'], subject: '' });
+      expect(apiClient.post).toHaveBeenCalledWith('/drafts', {
+        to: ['a@b.com'],
+        subject: '',
       });
     });
   });

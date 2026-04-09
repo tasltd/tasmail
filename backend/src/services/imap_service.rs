@@ -415,6 +415,25 @@ impl ImapService {
         Ok(())
     }
 
+    /// Save a draft message to the Drafts folder via IMAP APPEND
+    pub async fn save_draft(
+        &self,
+        username: &str,
+        password: &str,
+        raw_message: &[u8],
+    ) -> Result<(), AppError> {
+        let mut session = self.connect(username, password).await?;
+
+        // async-imap 0.11 append: (mailbox, flags, internaldate, content)
+        session
+            .append("Drafts", Some("(\\Draft \\Seen)"), None, raw_message)
+            .await
+            .map_err(|e| AppError::Imap(format!("APPEND to Drafts failed: {}", e)))?;
+
+        let _ = session.logout().await;
+        Ok(())
+    }
+
     /// Fetch a full message by UID
     pub async fn get_message(
         &self,
