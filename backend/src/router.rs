@@ -4,6 +4,7 @@ use axum::{
     Router,
 };
 use tower_http::cors::{Any, CorsLayer};
+use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
 
 use crate::handlers;
@@ -85,9 +86,16 @@ pub fn create_router(state: AppState) -> Router {
             auth_middleware,
         ));
 
+    // Added: API version header on all responses
+    let api_version_layer = SetResponseHeaderLayer::overriding(
+        axum::http::header::HeaderName::from_static("x-api-version"),
+        axum::http::HeaderValue::from_static("1.0"),
+    );
+
     Router::new()
         .merge(public_routes)
         .merge(protected_routes)
+        .layer(api_version_layer)
         .layer(TraceLayer::new_for_http())
         .layer(cors)
         .with_state(state)
