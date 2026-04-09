@@ -32,9 +32,18 @@ pub fn create_router(state: AppState) -> Router {
         )
         .route(
             "/api/folders/{folder}/messages/{uid}",
-            get(handlers::messages::get_message),
+            get(handlers::messages::get_message).delete(handlers::messages::delete_message),
         )
         .route("/api/messages/send", post(handlers::messages::send_message))
+        .route("/api/search", get(handlers::messages::search_messages))
+        .route(
+            "/api/folders/{folder}/messages/{uid}/move",
+            post(handlers::messages::move_message),
+        )
+        .route(
+            "/api/folders/{folder}/messages/{uid}/flag",
+            post(handlers::messages::flag_message),
+        )
         // Admin routes
         .route(
             "/api/admin/domains",

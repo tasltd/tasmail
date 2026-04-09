@@ -1,4 +1,4 @@
-import type { FullMessage, MessageListResponse, SendEmailRequest } from '../types/mail';
+import type { FullMessage, MessageListResponse, SearchResponse, SendEmailRequest } from '../types/mail';
 import { apiClient } from './client';
 
 export async function fetchMessages(
@@ -22,4 +22,39 @@ export async function fetchMessage(
 
 export async function sendMessage(request: SendEmailRequest): Promise<void> {
   await apiClient.post('/messages/send', request);
+}
+
+export async function searchMessages(
+  query: string,
+  folder?: string,
+): Promise<SearchResponse> {
+  const params = new URLSearchParams({ q: query });
+  if (folder) params.set('folder', folder);
+  return apiClient.get<SearchResponse>(`/search?${params.toString()}`);
+}
+
+export async function deleteMessage(folder: string, uid: number): Promise<void> {
+  await apiClient.delete(`/folders/${encodeURIComponent(folder)}/messages/${uid}`);
+}
+
+export async function moveMessage(
+  folder: string,
+  uid: number,
+  toFolder: string,
+): Promise<void> {
+  await apiClient.post(`/folders/${encodeURIComponent(folder)}/messages/${uid}/move`, {
+    to_folder: toFolder,
+  });
+}
+
+export async function flagMessage(
+  folder: string,
+  uid: number,
+  flag: string,
+  add: boolean,
+): Promise<void> {
+  await apiClient.post(`/folders/${encodeURIComponent(folder)}/messages/${uid}/flag`, {
+    flag,
+    add,
+  });
 }

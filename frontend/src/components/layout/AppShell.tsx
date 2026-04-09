@@ -3,6 +3,7 @@ import { TopBar } from './TopBar';
 import { MessageList } from '../mail/MessageList';
 import { MessageView } from '../mail/MessageView';
 import { Composer } from '../mail/Composer';
+import { SearchResults } from '../mail/SearchResults';
 import { useMailStore } from '../../stores/mailStore';
 import { useUiStore } from '../../stores/uiStore';
 
@@ -23,6 +24,7 @@ export function AppShell({ onLogout }: AppShellProps) {
           {viewMode === 'list' && <MessageList />}
           {viewMode === 'reader' && <MessageView />}
           {viewMode === 'compose' && <Composer />}
+          {viewMode === 'search' && <SearchResults />}
         </main>
       </div>
     </div>

@@ -41,6 +41,13 @@ export interface MessageListResponse {
   page_size: number;
 }
 
+export interface SearchResponse {
+  messages: MessageEnvelope[];
+  total: number;
+  query: string;
+  folder: string;
+}
+
 export interface SendEmailRequest {
   to: string[];
   cc?: string[];

@@ -213,6 +213,208 @@ impl ImapService {
         Ok((envelopes, total))
     }
 
+    /// Search messages in a folder using IMAP SEARCH
+    pub async fn search_messages(
+        &self,
+        username: &str,
+        password: &str,
+        folder: &str,
+        query: &str,
+    ) -> Result<Vec<MessageEnvelope>, AppError> {
+        let mut session = self.connect(username, password).await?;
+
+        session
+            .select(folder)
+            .await
+            .map_err(|e| AppError::Imap(format!("SELECT failed: {}", e)))?;
+
+        // Use IMAP SEARCH with TEXT criteria (searches headers + body)
+        let search_criteria = format!("TEXT \"{}\"", query.replace('"', "\\\""));
+        let uids: Vec<u32> = session
+            .uid_search(&search_criteria)
+            .await
+            .map_err(|e| AppError::Imap(format!("SEARCH failed: {}", e)))?
+            .into_iter()
+            .collect();
+
+        if uids.is_empty() {
+            let _ = session.logout().await;
+            return Ok(vec![]);
+        }
+
+        // Fetch envelopes for matching UIDs (limit to most recent 100)
+        let uid_list: Vec<String> = uids.iter().rev().take(100).map(|u| u.to_string()).collect();
+        let uid_range = uid_list.join(",");
+
+        let messages: Vec<_> = session
+            .uid_fetch(&uid_range, "(UID ENVELOPE FLAGS RFC822.SIZE)")
+            .await
+            .map_err(|e| AppError::Imap(format!("FETCH failed: {}", e)))?
+            .try_collect()
+            .await
+            .map_err(|e| AppError::Imap(format!("FETCH stream failed: {}", e)))?;
+
+        let mut envelopes = Vec::new();
+        for msg in &messages {
+            let uid = msg.uid.unwrap_or(0);
+            let envelope = msg.envelope();
+
+            let subject = envelope
+                .and_then(|e| e.subject.as_ref())
+                .and_then(|s| std::str::from_utf8(s).ok())
+                .map(String::from);
+
+            let from = envelope
+                .and_then(|e| e.from.as_ref())
+                .and_then(|addrs| addrs.first())
+                .map(format_imap_address);
+
+            let date = envelope
+                .and_then(|e| e.date.as_ref())
+                .and_then(|d| std::str::from_utf8(d).ok())
+                .map(String::from);
+
+            let flags: Vec<String> = msg
+                .flags()
+                .map(|f| format!("{:?}", f))
+                .collect();
+
+            envelopes.push(MessageEnvelope {
+                uid,
+                subject,
+                from,
+                date,
+                flags,
+                size: msg.size,
+            });
+        }
+
+        envelopes.reverse();
+        let _ = session.logout().await;
+
+        Ok(envelopes)
+    }
+
+    /// Move a message to a different folder
+    pub async fn move_message(
+        &self,
+        username: &str,
+        password: &str,
+        from_folder: &str,
+        uid: u32,
+        to_folder: &str,
+    ) -> Result<(), AppError> {
+        let mut session = self.connect(username, password).await?;
+
+        session
+            .select(from_folder)
+            .await
+            .map_err(|e| AppError::Imap(format!("SELECT failed: {}", e)))?;
+
+        // Copy to destination
+        session
+            .uid_copy(uid.to_string(), to_folder)
+            .await
+            .map_err(|e| AppError::Imap(format!("COPY failed: {}", e)))?;
+
+        // Mark as deleted in source
+        let _: Vec<_> = session
+            .uid_store(uid.to_string(), "+FLAGS (\\Deleted)")
+            .await
+            .map_err(|e| AppError::Imap(format!("Store failed: {}", e)))?
+            .try_collect()
+            .await
+            .unwrap_or_default();
+
+        // Expunge
+        session
+            .expunge()
+            .await
+            .map_err(|e| AppError::Imap(format!("EXPUNGE failed: {}", e)))?
+            .try_collect::<Vec<_>>()
+            .await
+            .ok();
+
+        let _ = session.logout().await;
+        Ok(())
+    }
+
+    /// Delete a message (move to Trash or permanent delete)
+    pub async fn delete_message(
+        &self,
+        username: &str,
+        password: &str,
+        folder: &str,
+        uid: u32,
+    ) -> Result<(), AppError> {
+        if folder == "Trash" {
+            // Permanent delete from Trash
+            let mut session = self.connect(username, password).await?;
+            session
+                .select(folder)
+                .await
+                .map_err(|e| AppError::Imap(format!("SELECT failed: {}", e)))?;
+
+            let _: Vec<_> = session
+                .uid_store(uid.to_string(), "+FLAGS (\\Deleted)")
+                .await
+                .map_err(|e| AppError::Imap(format!("Store failed: {}", e)))?
+                .try_collect()
+                .await
+                .unwrap_or_default();
+
+            session
+                .expunge()
+                .await
+                .map_err(|e| AppError::Imap(format!("EXPUNGE failed: {}", e)))?
+                .try_collect::<Vec<_>>()
+                .await
+                .ok();
+
+            let _ = session.logout().await;
+            Ok(())
+        } else {
+            // Move to Trash
+            self.move_message(username, password, folder, uid, "Trash")
+                .await
+        }
+    }
+
+    /// Toggle a flag on a message
+    pub async fn set_flag(
+        &self,
+        username: &str,
+        password: &str,
+        folder: &str,
+        uid: u32,
+        flag: &str,
+        add: bool,
+    ) -> Result<(), AppError> {
+        let mut session = self.connect(username, password).await?;
+
+        session
+            .select(folder)
+            .await
+            .map_err(|e| AppError::Imap(format!("SELECT failed: {}", e)))?;
+
+        let store_cmd = if add {
+            format!("+FLAGS ({})", flag)
+        } else {
+            format!("-FLAGS ({})", flag)
+        };
+
+        let _: Vec<_> = session
+            .uid_store(uid.to_string(), &store_cmd)
+            .await
+            .map_err(|e| AppError::Imap(format!("Store failed: {}", e)))?
+            .try_collect()
+            .await
+            .unwrap_or_default();
+
+        let _ = session.logout().await;
+        Ok(())
+    }
+
     /// Fetch a full message by UID
     pub async fn get_message(
         &self,

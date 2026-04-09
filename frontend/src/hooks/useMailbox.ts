@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { fetchFolders } from '../api/folders';
-import { fetchMessages, fetchMessage } from '../api/messages';
+import { fetchMessages, fetchMessage, searchMessages } from '../api/messages';
 import { useMailStore } from '../stores/mailStore';
 
 export function useFolders() {
@@ -37,4 +37,14 @@ export function useCurrentMessage() {
   const folder = useMailStore((s) => s.selectedFolder);
   const uid = useMailStore((s) => s.selectedUid);
   return useMessage(folder, uid);
+}
+
+// Added: Search hook with debounced query
+export function useSearch(query: string, folder?: string) {
+  return useQuery({
+    queryKey: ['search', query, folder],
+    queryFn: () => searchMessages(query, folder),
+    enabled: query.length >= 2,
+    staleTime: 30_000,
+  });
 }
