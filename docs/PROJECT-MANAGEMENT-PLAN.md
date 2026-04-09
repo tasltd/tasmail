@@ -1,5 +1,5 @@
 # Project Management Plan (PMBOK 7 Aligned)
-# RustMail — Self-Hosted Web Email Client on Linux
+# TASMail — Self-Hosted Web Email Client on Linux
 
 **Version:** 1.0
 **Date:** 2026-03-07
@@ -10,13 +10,13 @@
 
 ## 1. Brief Project Description
 
-RustMail is a privacy-focused, self-hosted web email system running on Linux. Users access a modern Gmail-like browser interface for custom-domain email (compose, send/receive, folders, search, attachments). The system is built from open-source components: **Postfix** (SMTP mail transfer), **Dovecot** (IMAP mail delivery/access), **Rspamd** (spam filtering), and a custom **React 19 SPA** frontend connected to a high-performance **Rust (Axum)** backend. The project delivers full data control, TLS encryption, DKIM/SPF/DMARC email authentication, real-time push notifications via IMAP IDLE, and an admin interface for multi-domain management.
+TASMail is a privacy-focused, self-hosted web email system running on Linux. Users access a modern Gmail-like browser interface for custom-domain email (compose, send/receive, folders, search, attachments). The system is built from open-source components: **Postfix** (SMTP mail transfer), **Dovecot** (IMAP mail delivery/access), **Rspamd** (spam filtering), and a custom **React 19 SPA** frontend connected to a high-performance **Rust (Axum)** backend. The project delivers full data control, TLS encryption, DKIM/SPF/DMARC email authentication, real-time push notifications via IMAP IDLE, and an admin interface for multi-domain management.
 
 **Target Users:** Privacy-conscious individuals, small teams (5-50 users), and organizations seeking independence from commercial email providers (Gmail, Outlook).
 
 **Technology Justification vs All-in-One Stacks:**
 
-| Criterion | Mailcow/Modoboa | RustMail (Custom) |
+| Criterion | Mailcow/Modoboa | TASMail (Custom) |
 |-----------|-----------------|-------------------|
 | RAM usage | 4-8 GB (Docker) | 1-2 GB (native) |
 | UI quality | SOGo (AngularJS, 2015-era) | React 19 SPA (modern) |
@@ -35,7 +35,7 @@ RustMail is a privacy-focused, self-hosted web email system running on Linux. Us
 
 | Element | Detail |
 |---------|--------|
-| **Project Name** | RustMail — Self-Hosted Email Service |
+| **Project Name** | TASMail — Self-Hosted Email Service |
 | **Project Manager** | TAS Engineering |
 | **Sponsor** | Project Owner |
 | **Start Date** | 2026-03-10 |

@@ -1,5 +1,5 @@
 # Security Documentation
-# RustMail — Self-Hosted Email Service
+# TASMail — Self-Hosted Email Service
 
 **Version:** 1.0
 **Date:** 2026-03-07
@@ -8,7 +8,7 @@
 
 ## 1. Security Architecture Overview
 
-RustMail implements defense-in-depth across six layers:
+TASMail implements defense-in-depth across six layers:
 
 ```
 Layer 1: Network     — Firewall (UFW/nftables), Fail2ban, rate limiting
@@ -279,12 +279,12 @@ let user = sqlx::query_as!(
 ### 6.1 Service Hardening (systemd)
 
 ```ini
-# RustMail service hardening
+# TASMail service hardening
 NoNewPrivileges=true          # Cannot gain privileges
 ProtectSystem=strict          # Read-only filesystem (except specified)
 ProtectHome=true              # No access to /home
 PrivateTmp=true               # Isolated /tmp
-ReadWritePaths=/var/log/rustmail
+ReadWritePaths=/var/log/tasmail
 CapabilityBoundingSet=        # No capabilities
 SystemCallFilter=@system-service  # Restricted syscalls
 ```
@@ -293,8 +293,8 @@ SystemCallFilter=@system-service  # Restricted syscalls
 
 ```ini
 # pg_hba.conf — local connections only
-local   rustmail    rustmail    md5
-host    rustmail    rustmail    127.0.0.1/32    md5
+local   tasmail    tasmail    md5
+host    tasmail    tasmail    127.0.0.1/32    md5
 
 # postgresql.conf
 listen_addresses = 'localhost'    # No external connections
@@ -305,13 +305,13 @@ ssl = on
 
 | Path | Owner | Permissions |
 |------|-------|-------------|
-| `/etc/rustmail/config.toml` | root:rustmail | 640 |
-| `/etc/rustmail/jwt-private.pem` | rustmail:rustmail | 600 |
+| `/etc/tasmail/config.toml` | root:tasmail | 640 |
+| `/etc/tasmail/jwt-private.pem` | tasmail:tasmail | 600 |
 | `/etc/postfix/pgsql-*.cf` | root:postfix | 640 |
 | `/etc/dovecot/dovecot-sql.conf.ext` | root:dovecot | 640 |
 | `/etc/opendkim/keys/` | opendkim:opendkim | 600 |
 | `/var/vmail/` | vmail:vmail | 770 |
-| `/opt/rustmail/bin/rustmail` | rustmail:rustmail | 755 |
+| `/opt/tasmail/bin/tasmail` | tasmail:tasmail | 755 |
 
 ---
 
@@ -321,7 +321,7 @@ ssl = on
 
 | Log | Location | Watch For |
 |-----|----------|-----------|
-| RustMail API | journald / /var/log/rustmail/ | Failed logins, 4xx/5xx errors |
+| TASMail API | journald / /var/log/tasmail/ | Failed logins, 4xx/5xx errors |
 | Postfix | /var/log/mail.log | Rejected connections, auth failures |
 | Dovecot | /var/log/mail.log | Auth failures, connection errors |
 | Nginx | /var/log/nginx/ | 4xx/5xx errors, unusual patterns |

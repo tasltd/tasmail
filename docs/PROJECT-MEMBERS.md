@@ -1,8 +1,8 @@
-# RustMail — Project Team Members
+# TASMail — Project Team Members
 
-**Project:** RustMail Self-Hosted Email Service
+**Project:** TASMail Self-Hosted Email Service
 **Institution:** University of Ghana
-**Repository:** https://github.com/dfdodzi/project-email-service (private)
+**Repository:** https://github.com/tasltd/tasmail (private)
 **Updated:** 2026-03-07
 
 ---
@@ -52,4 +52,4 @@
 - The `daptordarattler` account has admin access for CI/CD automation
 - PAT for dfdodzi is stored in `~/.zshrc` as `GH_TOKEN_DFDODZI`
 - SSH key for dfdodzi is at `~/.ssh/dfdodzi-nusenu` with Host alias `github-dfdodzi` in `~/.ssh/config`
-- Each invited member must accept the invitation at https://github.com/dfdodzi/project-email-service/invitations
+- Each invited member must accept the invitation at https://github.com/tasltd/tasmail/invitations

@@ -1,5 +1,5 @@
 # System/Software Requirements Specification (SRS)
-# RustMail — Self-Hosted Email Service
+# TASMail — Self-Hosted Email Service
 
 **Version:** 1.0
 **Date:** 2026-03-07
@@ -12,18 +12,18 @@
 
 ### 1.1 Purpose
 
-This Software Requirements Specification defines the functional and non-functional requirements for RustMail, a self-hosted email service consisting of a React frontend, Rust backend (Axum), and integration with Postfix (SMTP) and Dovecot (IMAP/LMTP). This document serves as the authoritative reference for all development, testing, and deployment activities.
+This Software Requirements Specification defines the functional and non-functional requirements for TASMail, a self-hosted email service consisting of a React frontend, Rust backend (Axum), and integration with Postfix (SMTP) and Dovecot (IMAP/LMTP). This document serves as the authoritative reference for all development, testing, and deployment activities.
 
 ### 1.2 Scope
 
-RustMail provides:
+TASMail provides:
 - A webmail interface for reading, composing, and managing email
 - A REST/WebSocket API backend that proxies IMAP and SMTP operations
 - An admin interface for managing domains, users, aliases, and quotas
 - Integration with standard Linux mail infrastructure (Postfix + Dovecot)
 - Real-time email notifications via IMAP IDLE → WebSocket bridge
 
-RustMail does **not** replace Postfix or Dovecot — it acts as an intelligent middleware layer between the browser and these established mail engines.
+TASMail does **not** replace Postfix or Dovecot — it acts as an intelligent middleware layer between the browser and these established mail engines.
 
 ### 1.3 Definitions, Acronyms, and Abbreviations
 
@@ -62,10 +62,10 @@ RustMail does **not** replace Postfix or Dovecot — it acts as an intelligent m
 
 ### 2.1 Product Perspective
 
-RustMail is a new product that integrates with existing open-source mail infrastructure. It is not a modification of an existing system. The system boundary is:
+TASMail is a new product that integrates with existing open-source mail infrastructure. It is not a modification of an existing system. The system boundary is:
 
 ```
-External Systems (Existing)         RustMail (New)              External Systems (Existing)
+External Systems (Existing)         TASMail (New)              External Systems (Existing)
 ┌─────────────────────┐      ┌───────────────────────┐      ┌─────────────────────┐
 │ Remote SMTP Servers  │◄────►│ Postfix (MTA)          │      │ DNS Servers          │
 │ (Gmail, Outlook...)  │      │                        │      │ (MX, SPF, DKIM)      │
@@ -441,7 +441,7 @@ The React SPA provides the following views:
 
 ### 5.2 Hardware Interfaces
 
-None — RustMail is a software-only system.
+None — TASMail is a software-only system.
 
 ### 5.3 Software Interfaces
 
@@ -601,7 +601,7 @@ port = 3000
 workers = 4  # tokio runtime threads
 
 [database]
-url = "postgresql://rustmail:password@localhost/rustmail"
+url = "postgresql://tasmail:password@localhost/tasmail"
 max_connections = 20
 min_connections = 5
 
@@ -618,8 +618,8 @@ port = 587
 tls = "starttls"
 
 [auth]
-jwt_private_key_path = "/etc/rustmail/jwt-private.pem"
-jwt_public_key_path = "/etc/rustmail/jwt-public.pem"
+jwt_private_key_path = "/etc/tasmail/jwt-private.pem"
+jwt_public_key_path = "/etc/tasmail/jwt-public.pem"
 access_token_expiry_minutes = 15
 refresh_token_expiry_days = 7
 argon2_memory_cost = 65536
@@ -684,7 +684,7 @@ format = "json"
 
 | Service | Type | Description |
 |---------|------|-------------|
-| `rustmail-backend` | systemd | Axum API server |
+| `tasmail-backend` | systemd | Axum API server |
 | `postfix` | systemd | SMTP MTA |
 | `dovecot` | systemd | IMAP/LMTP MDA |
 | `postgresql` | systemd | Database |
@@ -694,13 +694,13 @@ format = "json"
 ### 9.2 File System Layout
 
 ```
-/etc/rustmail/
+/etc/tasmail/
   config.toml              # Backend configuration
   jwt-private.pem          # JWT signing key
   jwt-public.pem           # JWT verification key
 
-/opt/rustmail/
-  bin/rustmail             # Backend binary
+/opt/tasmail/
+  bin/tasmail             # Backend binary
   frontend/                # React SPA static build
     index.html
     assets/
@@ -710,7 +710,7 @@ format = "json"
     user/
       Maildir/
 
-/var/log/rustmail/         # Application logs
+/var/log/tasmail/         # Application logs
   backend.log
 ```
 

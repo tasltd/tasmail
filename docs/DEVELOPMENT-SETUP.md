@@ -1,5 +1,5 @@
 # Development Setup Guide
-# RustMail — Self-Hosted Email Service
+# TASMail — Self-Hosted Email Service
 
 **Version:** 1.0
 **Date:** 2026-03-07
@@ -110,7 +110,7 @@ project-email-service/
 │   │   └── utils/
 │   └── public/
 ├── config/                     # Configuration templates
-│   ├── rustmail.toml.example
+│   ├── tasmail.toml.example
 │   ├── postfix/
 │   │   ├── main.cf.example
 │   │   └── master.cf.example
@@ -120,7 +120,7 @@ project-email-service/
 │   │   ├── 10-mail.conf.example
 │   │   └── 10-master.conf.example
 │   └── nginx/
-│       └── rustmail.conf.example
+│       └── tasmail.conf.example
 ├── scripts/                    # Utility scripts
 │   ├── setup-dev.sh            # Dev environment setup
 │   ├── setup-db.sh             # Database initialization
@@ -143,9 +143,9 @@ project-email-service/
 sudo -u postgres psql
 
 # Create database and user
-CREATE USER rustmail WITH PASSWORD 'dev_password_change_me';
-CREATE DATABASE rustmail OWNER rustmail;
-\c rustmail
+CREATE USER tasmail WITH PASSWORD 'dev_password_change_me';
+CREATE DATABASE tasmail OWNER tasmail;
+\c tasmail
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 \q
@@ -159,11 +159,11 @@ cd backend/
 
 # Using sqlx-cli
 cargo install sqlx-cli --no-default-features --features postgres
-export DATABASE_URL="postgresql://rustmail:dev_password_change_me@localhost/rustmail"
+export DATABASE_URL="postgresql://tasmail:dev_password_change_me@localhost/tasmail"
 sqlx migrate run
 
 # Or manually
-psql -U rustmail -d rustmail -f migrations/001_initial_schema.sql
+psql -U tasmail -d tasmail -f migrations/001_initial_schema.sql
 ```
 
 ### 3.3 Seed Development Data
@@ -226,8 +226,8 @@ EOF
 # /etc/postfix/pgsql-virtual-domains.cf
 sudo tee /etc/postfix/pgsql-virtual-domains.cf << 'EOF'
 hosts = localhost
-dbname = rustmail
-user = rustmail
+dbname = tasmail
+user = tasmail
 password = dev_password_change_me
 query = SELECT domain FROM domains WHERE domain = '%s' AND active = TRUE
 EOF
@@ -235,8 +235,8 @@ EOF
 # /etc/postfix/pgsql-virtual-mailbox.cf
 sudo tee /etc/postfix/pgsql-virtual-mailbox.cf << 'EOF'
 hosts = localhost
-dbname = rustmail
-user = rustmail
+dbname = tasmail
+user = tasmail
 password = dev_password_change_me
 query = SELECT CONCAT(SPLIT_PART(username, '@', 2), '/', SPLIT_PART(username, '@', 1), '/Maildir/') FROM mailboxes WHERE username = '%s' AND active = TRUE
 EOF
@@ -244,8 +244,8 @@ EOF
 # /etc/postfix/pgsql-virtual-alias.cf
 sudo tee /etc/postfix/pgsql-virtual-alias.cf << 'EOF'
 hosts = localhost
-dbname = rustmail
-user = rustmail
+dbname = tasmail
+user = tasmail
 password = dev_password_change_me
 query = SELECT destination FROM aliases WHERE source = '%s' AND active = TRUE
 EOF
@@ -309,7 +309,7 @@ EOF
 # /etc/dovecot/dovecot-sql.conf.ext
 sudo tee /etc/dovecot/dovecot-sql.conf.ext << 'EOF'
 driver = pgsql
-connect = host=127.0.0.1 dbname=rustmail user=rustmail password=dev_password_change_me
+connect = host=127.0.0.1 dbname=tasmail user=tasmail password=dev_password_change_me
 
 default_pass_scheme = SHA512-CRYPT
 
@@ -385,7 +385,7 @@ cd backend/
 # Create Cargo.toml
 cat > Cargo.toml << 'EOF'
 [package]
-name = "rustmail"
+name = "tasmail"
 version = "0.1.0"
 edition = "2021"
 
@@ -426,7 +426,7 @@ cargo build
 
 ```bash
 # Set environment
-export DATABASE_URL="postgresql://rustmail:dev_password_change_me@localhost/rustmail"
+export DATABASE_URL="postgresql://tasmail:dev_password_change_me@localhost/tasmail"
 export RUST_LOG=debug
 
 # Run with auto-reload (install cargo-watch)
@@ -544,7 +544,7 @@ cd frontend/ && npm run dev
 
 ```bash
 # Check PostgreSQL
-psql -U rustmail -d rustmail -c "SELECT 1;"
+psql -U tasmail -d tasmail -c "SELECT 1;"
 
 # Check Postfix
 sudo postfix status
@@ -633,8 +633,8 @@ openssl genpkey -algorithm RSA -out jwt-private.pem -pkeyopt rsa_keygen_bits:204
 openssl rsa -pubout -in jwt-private.pem -out jwt-public.pem
 
 # Place in config directory
-sudo mkdir -p /etc/rustmail
-sudo cp jwt-private.pem jwt-public.pem /etc/rustmail/
-sudo chmod 600 /etc/rustmail/jwt-private.pem
-sudo chmod 644 /etc/rustmail/jwt-public.pem
+sudo mkdir -p /etc/tasmail
+sudo cp jwt-private.pem jwt-public.pem /etc/tasmail/
+sudo chmod 600 /etc/tasmail/jwt-private.pem
+sudo chmod 644 /etc/tasmail/jwt-public.pem
 ```

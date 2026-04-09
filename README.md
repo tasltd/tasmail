@@ -1,8 +1,8 @@
-# RustMail — Self-Hosted Email Service
+# TASMail — Self-Hosted Email Service
 
 A modern, self-hosted email service with a React frontend, Rust (Axum) backend, and Postfix/Dovecot mail infrastructure. Privacy-first, cost-effective alternative to Google Workspace and Microsoft 365.
 
-## Why RustMail?
+## Why TASMail?
 
 - **Modern Webmail UI** — React 19 SPA with real-time push notifications, rich text composer, and responsive design
 - **High Performance** — Rust backend uses < 100 MB RAM; sub-200ms API responses

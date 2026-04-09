@@ -1,7 +1,7 @@
-# Ghana Business Validation Research: RustMail Self-Hosted Email Service
+# Ghana Business Validation Research: TASMail Self-Hosted Email Service
 
 **Date**: 2026-03-07
-**Prepared For**: RustMail Product Team
+**Prepared For**: TASMail Product Team
 **Product**: React frontend + Rust backend + Postfix/Dovecot self-hosted email solution
 **Scope**: Market viability assessment for launch by a Ghanaian technology company
 
@@ -237,7 +237,7 @@ Strong indirect demand signals:
 
 5. **Penalties**: Non-compliance attracts both civil liability and criminal sanctions.
 
-**Compliance Opportunity**: RustMail should register as a data controller/processor with Ghana's DPC. Local hosting positions the product as inherently compliant with Act 843's cross-border transfer restrictions — a key selling point for regulated industries.
+**Compliance Opportunity**: TASMail should register as a data controller/processor with Ghana's DPC. Local hosting positions the product as inherently compliant with Act 843's cross-border transfer restrictions — a key selling point for regulated industries.
 
 **Source: DPC Compliance Guidelines 2025** — https://dataprotection.org.gh/wp-content/uploads/2025/07/GUIDELINES-TO-DEMONSTRATE-DATA-PROTECTION-COMPLIANCE-1.pdf
 
@@ -260,7 +260,7 @@ Strong indirect demand signals:
 
 4. **No-License Operation Prohibition**: Unlicensed cybersecurity businesses are prohibited from operating in Ghana.
 
-**Action Required**: RustMail should assess whether its email security features require CSA licensing and consult with the CSA proactively before commercial launch.
+**Action Required**: TASMail should assess whether its email security features require CSA licensing and consult with the CSA proactively before commercial launch.
 
 ### 3.3 National Communications Authority (NCA)
 
@@ -295,7 +295,7 @@ The NCA regulates electronic communications activities and services in Ghana. Em
 - November 2024: ECOWAS experts convened in Accra to validate the **revised Supplementary Act**, signaling stricter regional data governance
 - A locally-hosted email service in Ghana qualifies as ECOWAS-compliant data handling, with no Article 36 notification requirements for cross-border transfers within the region
 
-**West Africa Expansion Opportunity**: ECOWAS compliance positions RustMail as a natural choice for businesses operating across West African member states (Nigeria, Senegal, Cote d'Ivoire, etc.).
+**West Africa Expansion Opportunity**: ECOWAS compliance positions TASMail as a natural choice for businesses operating across West African member states (Nigeria, Senegal, Cote d'Ivoire, etc.).
 
 ---
 
@@ -357,7 +357,7 @@ Other local VPS providers:
 - Organizations peered at GIX were **significantly less impacted** during the March 2024 submarine cable disruption
 - Peering enables lower latency for email delivery between Ghanaian users
 
-**Recommendation**: RustMail should host within a GIX-peered data center (PAIX, NITA, or MDXi) to maximize local email delivery speed and resilience.
+**Recommendation**: TASMail should host within a GIX-peered data center (PAIX, NITA, or MDXi) to maximize local email delivery speed and resilience.
 
 ### 4.4 Internet Backbone Reliability
 
@@ -371,7 +371,7 @@ Other local VPS providers:
 - 5G (launched November 2024) adds terrestrial redundancy
 - Starlink availability (GHS 770/month) adds satellite backup option
 
-**Risk Mitigation for RustMail**:
+**Risk Mitigation for TASMail**:
 - Host within GIX-peered facility for maximum domestic resilience
 - Implement multi-gateway architecture across multiple cable systems
 - Consider Starlink as emergency backup for critical operations
@@ -442,7 +442,7 @@ Other local VPS providers:
 6. Data Protection Act 843 compliance certification
 7. Rust-powered high-performance backend
 
-This represents a confirmed **blue ocean positioning** for RustMail in the Ghana market.
+This represents a confirmed **blue ocean positioning** for TASMail in the Ghana market.
 
 ---
 
@@ -457,7 +457,7 @@ This represents a confirmed **blue ocean positioning** for RustMail in the Ghana
 
 This sets a market expectation: **GHS 50-250/month per organization** is the SME software affordability sweet spot, regardless of number of users.
 
-### 6.2 Proposed Pricing Tiers (RustMail)
+### 6.2 Proposed Pricing Tiers (TASMail)
 
 All prices in GHS (Ghana Cedis), reflecting local purchasing power:
 

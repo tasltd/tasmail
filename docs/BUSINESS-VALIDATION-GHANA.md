@@ -1,4 +1,4 @@
-# Business Validation: RustMail for the Ghanaian Market
+# Business Validation: TASMail for the Ghanaian Market
 
 **Version:** 1.0
 **Date:** 2026-03-07
@@ -20,18 +20,18 @@ Ghanaian businesses face a specific pain point: **they are locked to desktop ema
 
 ## 2. Product Model — Two Offerings
 
-RustMail addresses this with **two product forms:**
+TASMail addresses this with **two product forms:**
 
 ### Form A: BYO-SMTP (Bring Your Own Email)
 - Customer already has an email server or uses an existing provider
-- They connect their SMTP/IMAP credentials to RustMail's web interface
-- RustMail acts as a **modern webmail client** (like Gmail's UI) for their existing email
+- They connect their SMTP/IMAP credentials to TASMail's web interface
+- TASMail acts as a **modern webmail client** (like Gmail's UI) for their existing email
 - **Value proposition:** Replace desktop email clients with web access from any device
 - **Price point:** GHS 15-25/user/month (low barrier, pure UI service)
 
 ### Form B: Full Hosted Email
 - Customer signs up with their corporate/business domain (company.com.gh)
-- RustMail provisions their email infrastructure (Postfix + Dovecot)
+- TASMail provisions their email infrastructure (Postfix + Dovecot)
 - Full managed service: domain DNS, DKIM/SPF/DMARC, spam filtering, backups
 - **Value proposition:** Professional business email at a fraction of Google Workspace cost
 - **Price point:** GHS 40-110/user/month (depending on tier)
@@ -70,17 +70,17 @@ GHS/user/month:
 Free Gmail         |██                               | GHS 0    (no custom domain, unprofessional)
 Zoho Mail Free     |██                               | GHS 0    (5 user limit, then paid)
 Zoho Mail Lite     |████                             | GHS 11   (limited features)
-RustMail BYO-SMTP  |██████                           | GHS 20   ← NEW: web access for existing email
+TASMail BYO-SMTP  |██████                           | GHS 20   ← NEW: web access for existing email
 HostAfrica Core    |████████                         | GHS 31   (basic email hosting)
-RustMail Starter   |██████████                       | GHS 40   ← NEW: full hosted, cheapest tier
-RustMail Business  |████████████████                 | GHS 65   ← NEW: full hosted, mainstream
+TASMail Starter   |██████████                       | GHS 40   ← NEW: full hosted, cheapest tier
+TASMail Business  |████████████████                 | GHS 65   ← NEW: full hosted, mainstream
 Google Workspace   |████████████████████             | GHS 75   (Starter, USD-denominated)
-RustMail Premium   |██████████████████████████       | GHS 110  ← NEW: enterprise features
+TASMail Premium   |██████████████████████████       | GHS 110  ← NEW: enterprise features
 Google Workspace   |██████████████████████████████████| GHS 151  (Standard, USD-denominated)
 M365 Business      |██████████████████████████████████| GHS 151+ (USD-denominated)
 ```
 
-**Key insight:** There's a clear gap between free services (GHS 0) and Google Workspace (GHS 75+). RustMail positions in this gap with GHS pricing that doesn't fluctuate with the dollar.
+**Key insight:** There's a clear gap between free services (GHS 0) and Google Workspace (GHS 75+). TASMail positions in this gap with GHS pricing that doesn't fluctuate with the dollar.
 
 ### 3.3 Why GHS Pricing Is a Competitive Advantage
 
@@ -89,7 +89,7 @@ The Ghanaian cedi has depreciated significantly:
 - 2023: 1 USD = 12.3 GHS
 - 2026: 1 USD = 10.78 GHS
 
-A Google Workspace subscription that cost GHS 34/user in 2020 now costs GHS 65-75/user — a **2x increase with zero additional features**. Businesses that signed up at GHS 34 now face GHS 75+. RustMail's GHS-denominated pricing removes this currency risk entirely.
+A Google Workspace subscription that cost GHS 34/user in 2020 now costs GHS 65-75/user — a **2x increase with zero additional features**. Businesses that signed up at GHS 34 now face GHS 75+. TASMail's GHS-denominated pricing removes this currency risk entirely.
 
 ---
 
@@ -127,7 +127,7 @@ A Google Workspace subscription that cost GHS 34/user in 2020 now costs GHS 65-7
 | Microsoft 365 | USA | GHS 75-237/user/mo (USD) | Enterprise features, Outlook | Expensive, complex, USD-only |
 | Zoho Mail | India | GHS 11-54/user/mo | Cheap, good features | 5-user free cap, India-hosted |
 | HostAfrica | South Africa | GHS 31-47/user/mo | Local pricing, GHS | SA-hosted, basic webmail (Roundcube) |
-| **RustMail** | **Ghana** | **GHS 20-110/user/mo** | **Local hosting, modern UI, DPC compliant, GHS pricing, BYO-SMTP option** | **New brand, IP warm-up needed** |
+| **TASMail** | **Ghana** | **GHS 20-110/user/mo** | **Local hosting, modern UI, DPC compliant, GHS pricing, BYO-SMTP option** | **New brand, IP warm-up needed** |
 
 ### Key Differentiators
 
@@ -232,7 +232,7 @@ A Google Workspace subscription that cost GHS 34/user in 2020 now costs GHS 65-7
 
 ## 10. Validation Verdict
 
-**Is RustMail viable as a Ghanaian technology business? YES.**
+**Is TASMail viable as a Ghanaian technology business? YES.**
 
 **Critical success factors:**
 1. **BYO-SMTP first** — launch the webmail-only product to build trust before pushing full hosted email

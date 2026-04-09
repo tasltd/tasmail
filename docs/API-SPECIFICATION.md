@@ -1,5 +1,5 @@
 # API Specification
-# RustMail — Self-Hosted Email Service
+# TASMail — Self-Hosted Email Service
 
 **Version:** 1.0
 **Base URL:** `https://mail.example.com/api`

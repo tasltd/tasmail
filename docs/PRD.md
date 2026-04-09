@@ -1,5 +1,5 @@
 # Product Requirements Document (PRD)
-# RustMail — Self-Hosted Email Service
+# TASMail — Self-Hosted Email Service
 
 **Version:** 1.0
 **Date:** 2026-03-07
@@ -10,7 +10,7 @@
 
 ## 1. Executive Summary
 
-RustMail is a self-hosted email service that provides a modern webmail experience through a React single-page application (SPA) frontend connected to a high-performance Rust backend (Axum). It leverages proven open-source Linux mail engines — Postfix for SMTP mail transfer and Dovecot for IMAP mail delivery/access — to handle the core email protocol responsibilities. The Rust backend acts as an intelligent API proxy between the browser-based UI and the mail infrastructure, providing authentication, session management, real-time notifications, and a clean REST/WebSocket API.
+TASMail is a self-hosted email service that provides a modern webmail experience through a React single-page application (SPA) frontend connected to a high-performance Rust backend (Axum). It leverages proven open-source Linux mail engines — Postfix for SMTP mail transfer and Dovecot for IMAP mail delivery/access — to handle the core email protocol responsibilities. The Rust backend acts as an intelligent API proxy between the browser-based UI and the mail infrastructure, providing authentication, session management, real-time notifications, and a clean REST/WebSocket API.
 
 ### 1.1 Problem Statement
 
@@ -291,7 +291,7 @@ Mail is stored by Dovecot in Maildir format at `/var/vmail/{domain}/{user}/Maild
 
 ### 9.1 Read Email Flow
 
-1. User opens RustMail in browser → React SPA loads
+1. User opens TASMail in browser → React SPA loads
 2. SPA calls `POST /api/auth/login` with credentials → JWT returned
 3. SPA calls `GET /api/folders` → folder tree rendered
 4. SPA calls `GET /api/folders/INBOX/messages?page=1` → message list rendered

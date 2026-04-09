@@ -1,5 +1,5 @@
 # Architecture Document
-# RustMail — Self-Hosted Email Service
+# TASMail — Self-Hosted Email Service
 
 **Version:** 1.0
 **Date:** 2026-03-07
@@ -8,7 +8,7 @@
 
 ## 1. Architecture Overview
 
-RustMail follows a **layered proxy architecture** where the Rust backend acts as an intelligent middleware between the React frontend and the Linux mail infrastructure (Postfix + Dovecot). The backend never stores email data — it proxies all mail operations through IMAP/SMTP protocols to Dovecot and Postfix respectively.
+TASMail follows a **layered proxy architecture** where the Rust backend acts as an intelligent middleware between the React frontend and the Linux mail infrastructure (Postfix + Dovecot). The backend never stores email data — it proxies all mail operations through IMAP/SMTP protocols to Dovecot and Postfix respectively.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -379,17 +379,17 @@ Content-Security-Policy:
 │  └──────────┘  └──────────┘                                │
 │                                                              │
 │  Storage: /var/vmail/ (Maildir)                             │
-│  Config:  /etc/rustmail/config.toml                         │
-│  Logs:    /var/log/rustmail/                                │
-│  Binary:  /opt/rustmail/bin/rustmail                        │
-│  Frontend:/opt/rustmail/frontend/                           │
+│  Config:  /etc/tasmail/config.toml                         │
+│  Logs:    /var/log/tasmail/                                │
+│  Binary:  /opt/tasmail/bin/tasmail                        │
+│  Frontend:/opt/tasmail/frontend/                           │
 └──────────────────────────────────────────────────────────────┘
 ```
 
 ### 7.2 Nginx Configuration
 
 ```nginx
-# /etc/nginx/sites-enabled/rustmail.conf
+# /etc/nginx/sites-enabled/tasmail.conf
 
 # Redirect HTTP → HTTPS
 server {
@@ -414,7 +414,7 @@ server {
     add_header Referrer-Policy "strict-origin-when-cross-origin";
 
     # React SPA — static files
-    root /opt/rustmail/frontend;
+    root /opt/tasmail/frontend;
     index index.html;
 
     # SPA fallback
@@ -454,17 +454,17 @@ server {
 ### 7.3 Systemd Service
 
 ```ini
-# /etc/systemd/system/rustmail.service
+# /etc/systemd/system/tasmail.service
 [Unit]
-Description=RustMail Email Service Backend
+Description=TASMail Email Service Backend
 After=postgresql.service dovecot.service postfix.service
 Wants=postgresql.service dovecot.service postfix.service
 
 [Service]
 Type=simple
-User=rustmail
-Group=rustmail
-ExecStart=/opt/rustmail/bin/rustmail --config /etc/rustmail/config.toml
+User=tasmail
+Group=tasmail
+ExecStart=/opt/tasmail/bin/tasmail --config /etc/tasmail/config.toml
 Restart=always
 RestartSec=5
 Environment=RUST_LOG=info
@@ -475,7 +475,7 @@ StandardError=journal
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/log/rustmail
+ReadWritePaths=/var/log/tasmail
 PrivateTmp=true
 
 [Install]
@@ -536,7 +536,7 @@ npx playwright test              # E2E tests
 
 | Component | Log Format | Destination |
 |-----------|-----------|-------------|
-| Axum Backend | JSON (tracing) | journald / /var/log/rustmail/ |
+| Axum Backend | JSON (tracing) | journald / /var/log/tasmail/ |
 | Postfix | syslog | /var/log/mail.log |
 | Dovecot | syslog | /var/log/mail.log |
 | Nginx | combined | /var/log/nginx/access.log |

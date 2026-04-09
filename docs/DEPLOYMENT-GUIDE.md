@@ -1,5 +1,5 @@
 # Deployment Guide
-# RustMail — Self-Hosted Email Service
+# TASMail — Self-Hosted Email Service
 
 **Version:** 1.0
 **Date:** 2026-03-07
@@ -160,15 +160,15 @@ sudo apt install -y postgresql-16 postgresql-client-16
 
 # Create database
 sudo -u postgres psql << 'SQL'
-CREATE USER rustmail WITH PASSWORD 'CHANGE_THIS_PRODUCTION_PASSWORD';
-CREATE DATABASE rustmail OWNER rustmail;
-\c rustmail
+CREATE USER tasmail WITH PASSWORD 'CHANGE_THIS_PRODUCTION_PASSWORD';
+CREATE DATABASE tasmail OWNER tasmail;
+\c tasmail
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 SQL
 
 # Run schema migrations
-psql -U rustmail -d rustmail -h localhost < /opt/rustmail/migrations/001_initial_schema.sql
+psql -U tasmail -d tasmail -h localhost < /opt/tasmail/migrations/001_initial_schema.sql
 ```
 
 ### 4.2 Postfix
@@ -284,7 +284,7 @@ sudo certbot renew --dry-run
 
 ---
 
-## 7. Deploy RustMail Backend
+## 7. Deploy TASMail Backend
 
 ### 7.1 Build Release Binary
 
@@ -293,30 +293,30 @@ sudo certbot renew --dry-run
 cd backend/
 cargo build --release
 
-# Binary at: target/release/rustmail
+# Binary at: target/release/tasmail
 # Copy to server
-scp target/release/rustmail user@server:/opt/rustmail/bin/
+scp target/release/tasmail user@server:/opt/tasmail/bin/
 ```
 
 ### 7.2 Create Config
 
 ```bash
-sudo mkdir -p /etc/rustmail /var/log/rustmail /opt/rustmail/bin
+sudo mkdir -p /etc/tasmail /var/log/tasmail /opt/tasmail/bin
 
 # Generate JWT keys
-openssl genpkey -algorithm RSA -out /etc/rustmail/jwt-private.pem -pkeyopt rsa_keygen_bits:2048
-openssl rsa -pubout -in /etc/rustmail/jwt-private.pem -out /etc/rustmail/jwt-public.pem
-sudo chmod 600 /etc/rustmail/jwt-private.pem
+openssl genpkey -algorithm RSA -out /etc/tasmail/jwt-private.pem -pkeyopt rsa_keygen_bits:2048
+openssl rsa -pubout -in /etc/tasmail/jwt-private.pem -out /etc/tasmail/jwt-public.pem
+sudo chmod 600 /etc/tasmail/jwt-private.pem
 
 # Create config file
-sudo tee /etc/rustmail/config.toml << 'EOF'
+sudo tee /etc/tasmail/config.toml << 'EOF'
 [server]
 host = "127.0.0.1"
 port = 3000
 workers = 4
 
 [database]
-url = "postgresql://rustmail:PRODUCTION_PASSWORD@localhost/rustmail"
+url = "postgresql://tasmail:PRODUCTION_PASSWORD@localhost/tasmail"
 max_connections = 20
 
 [imap]
@@ -330,8 +330,8 @@ port = 587
 tls = "starttls"
 
 [auth]
-jwt_private_key_path = "/etc/rustmail/jwt-private.pem"
-jwt_public_key_path = "/etc/rustmail/jwt-public.pem"
+jwt_private_key_path = "/etc/tasmail/jwt-private.pem"
+jwt_public_key_path = "/etc/tasmail/jwt-public.pem"
 access_token_expiry_minutes = 15
 refresh_token_expiry_days = 7
 
@@ -349,24 +349,24 @@ EOF
 
 ```bash
 # Create service user
-sudo useradd -r -s /sbin/nologin rustmail
+sudo useradd -r -s /sbin/nologin tasmail
 
 # Set permissions
-sudo chown -R rustmail:rustmail /var/log/rustmail
-sudo chown rustmail:rustmail /opt/rustmail/bin/rustmail
+sudo chown -R tasmail:tasmail /var/log/tasmail
+sudo chown tasmail:tasmail /opt/tasmail/bin/tasmail
 
 # Install systemd service
-sudo tee /etc/systemd/system/rustmail.service << 'EOF'
+sudo tee /etc/systemd/system/tasmail.service << 'EOF'
 [Unit]
-Description=RustMail Email Service Backend
+Description=TASMail Email Service Backend
 After=postgresql.service dovecot.service postfix.service
 Wants=postgresql.service dovecot.service postfix.service
 
 [Service]
 Type=simple
-User=rustmail
-Group=rustmail
-ExecStart=/opt/rustmail/bin/rustmail --config /etc/rustmail/config.toml
+User=tasmail
+Group=tasmail
+ExecStart=/opt/tasmail/bin/tasmail --config /etc/tasmail/config.toml
 Restart=always
 RestartSec=5
 StandardOutput=journal
@@ -375,7 +375,7 @@ StandardError=journal
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/log/rustmail
+ReadWritePaths=/var/log/tasmail
 PrivateTmp=true
 
 [Install]
@@ -383,8 +383,8 @@ WantedBy=multi-user.target
 EOF
 
 sudo systemctl daemon-reload
-sudo systemctl start rustmail
-sudo systemctl enable rustmail
+sudo systemctl start tasmail
+sudo systemctl enable tasmail
 ```
 
 ---
@@ -397,7 +397,7 @@ cd frontend/
 npm run build
 
 # Copy dist/ to server
-scp -r dist/* user@server:/opt/rustmail/frontend/
+scp -r dist/* user@server:/opt/tasmail/frontend/
 ```
 
 ---
@@ -405,7 +405,7 @@ scp -r dist/* user@server:/opt/rustmail/frontend/
 ## 9. Configure Nginx
 
 ```bash
-sudo tee /etc/nginx/sites-available/rustmail << 'EOF'
+sudo tee /etc/nginx/sites-available/tasmail << 'EOF'
 server {
     listen 80;
     server_name mail.yourdomain.com;
@@ -429,7 +429,7 @@ server {
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
 
     # React SPA
-    root /opt/rustmail/frontend;
+    root /opt/tasmail/frontend;
     index index.html;
 
     location / {
@@ -458,7 +458,7 @@ server {
 }
 EOF
 
-sudo ln -s /etc/nginx/sites-available/rustmail /etc/nginx/sites-enabled/
+sudo ln -s /etc/nginx/sites-available/tasmail /etc/nginx/sites-enabled/
 sudo nginx -t
 sudo systemctl restart nginx
 sudo systemctl enable nginx
@@ -470,7 +470,7 @@ sudo systemctl enable nginx
 
 ```bash
 # 1. Check all services
-sudo systemctl status postgresql postfix dovecot rustmail nginx rspamd
+sudo systemctl status postgresql postfix dovecot tasmail nginx rspamd
 
 # 2. Test SMTP
 swaks --to test@yourdomain.com --from test@external.com --server localhost
@@ -500,14 +500,14 @@ curl -s https://mail.yourdomain.com/api/health | jq
 
 ```bash
 # Database backup (daily cron)
-pg_dump -U rustmail rustmail | gzip > /backups/rustmail-db-$(date +%Y%m%d).sql.gz
+pg_dump -U tasmail tasmail | gzip > /backups/tasmail-db-$(date +%Y%m%d).sql.gz
 
 # Maildir backup (daily rsync)
 rsync -avz /var/vmail/ /backups/vmail/
 
 # Config backup
-tar czf /backups/rustmail-config-$(date +%Y%m%d).tar.gz \
-  /etc/rustmail/ /etc/postfix/ /etc/dovecot/ /etc/nginx/sites-available/rustmail
+tar czf /backups/tasmail-config-$(date +%Y%m%d).tar.gz \
+  /etc/tasmail/ /etc/postfix/ /etc/dovecot/ /etc/nginx/sites-available/tasmail
 
 # DKIM keys backup (keep secure!)
 sudo cp -r /etc/opendkim/keys/ /backups/dkim-keys/
@@ -515,20 +515,20 @@ sudo cp -r /etc/opendkim/keys/ /backups/dkim-keys/
 
 ---
 
-## 12. Updating RustMail
+## 12. Updating TASMail
 
 ```bash
 # 1. Build new release
 cd backend/ && cargo build --release
 
 # 2. Deploy with zero downtime
-sudo systemctl stop rustmail
-sudo cp target/release/rustmail /opt/rustmail/bin/rustmail
-sudo systemctl start rustmail
+sudo systemctl stop tasmail
+sudo cp target/release/tasmail /opt/tasmail/bin/tasmail
+sudo systemctl start tasmail
 
 # 3. Update frontend
 cd frontend/ && npm run build
-sudo rsync -avz --delete dist/ /opt/rustmail/frontend/
+sudo rsync -avz --delete dist/ /opt/tasmail/frontend/
 
 # 4. Verify
 curl -s https://mail.yourdomain.com/api/health
