@@ -175,6 +175,29 @@ pub async fn refresh_tokens(
 mod tests {
     use super::*;
 
+    fn test_jwt_config() -> JwtConfig {
+        JwtConfig {
+            secret: "test-secret-key-for-unit-tests".to_string(),
+            access_token_expiry_secs: 900,
+            refresh_token_expiry_secs: 604800,
+        }
+    }
+
+    fn test_mailbox() -> Mailbox {
+        Mailbox {
+            id: Uuid::new_v4(),
+            domain_id: Uuid::new_v4(),
+            username: "test@example.com".to_string(),
+            password_hash: hash_password("testpass123").unwrap(),
+            display_name: Some("Test User".to_string()),
+            quota_bytes: 1_073_741_824,
+            active: true,
+            is_admin: false,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
     #[test]
     fn test_hash_and_verify_password() {
         let password = "secure_password_123!";
@@ -184,14 +207,148 @@ mod tests {
     }
 
     #[test]
+    fn test_hash_password_produces_unique_hashes() {
+        let password = "same_password";
+        let hash1 = hash_password(password).unwrap();
+        let hash2 = hash_password(password).unwrap();
+        // Different salts mean different hashes
+        assert_ne!(hash1, hash2);
+        // Both verify correctly
+        assert!(verify_password(password, &hash1).unwrap());
+        assert!(verify_password(password, &hash2).unwrap());
+    }
+
+    #[test]
+    fn test_empty_password() {
+        let hash = hash_password("").unwrap();
+        assert!(verify_password("", &hash).unwrap());
+        assert!(!verify_password("anything", &hash).unwrap());
+    }
+
+    #[test]
+    fn test_unicode_password() {
+        let password = "p@$$w0rd_!#";
+        let hash = hash_password(password).unwrap();
+        assert!(verify_password(password, &hash).unwrap());
+    }
+
+    #[test]
+    fn test_verify_invalid_hash_format() {
+        let result = verify_password("password", "not-a-valid-hash");
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn test_refresh_token_hashing() {
         let token = generate_refresh_token();
         let hash1 = hash_refresh_token(&token);
         let hash2 = hash_refresh_token(&token);
-        // Same input produces same hash
         assert_eq!(hash1, hash2);
-        // Different tokens produce different hashes
         let token2 = generate_refresh_token();
         assert_ne!(hash_refresh_token(&token), hash_refresh_token(&token2));
+    }
+
+    #[test]
+    fn test_refresh_token_uniqueness() {
+        let tokens: Vec<String> = (0..100).map(|_| generate_refresh_token()).collect();
+        let unique: std::collections::HashSet<&String> = tokens.iter().collect();
+        assert_eq!(tokens.len(), unique.len());
+    }
+
+    #[test]
+    fn test_refresh_token_hash_is_sha256() {
+        let token = generate_refresh_token();
+        let hash = hash_refresh_token(&token);
+        // SHA-256 produces 64 hex characters
+        assert_eq!(hash.len(), 64);
+        assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn test_create_access_token() {
+        let config = test_jwt_config();
+        let mailbox = test_mailbox();
+        let token = create_access_token(&config, &mailbox).unwrap();
+        assert!(!token.is_empty());
+        // Token should have 3 parts (header.payload.signature)
+        assert_eq!(token.split('.').count(), 3);
+    }
+
+    #[test]
+    fn test_validate_access_token() {
+        let config = test_jwt_config();
+        let mailbox = test_mailbox();
+        let token = create_access_token(&config, &mailbox).unwrap();
+        let claims = validate_access_token(&config, &token).unwrap();
+        assert_eq!(claims.sub, mailbox.id.to_string());
+        assert_eq!(claims.username, "test@example.com");
+        assert!(!claims.is_admin);
+    }
+
+    #[test]
+    fn test_validate_token_wrong_secret() {
+        let config = test_jwt_config();
+        let mailbox = test_mailbox();
+        let token = create_access_token(&config, &mailbox).unwrap();
+
+        let wrong_config = JwtConfig {
+            secret: "wrong-secret".to_string(),
+            ..config
+        };
+        let result = validate_access_token(&wrong_config, &token);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_expired_token() {
+        let config = test_jwt_config();
+        let mailbox = test_mailbox();
+        // Manually create a token that expired an hour ago
+        let past = Utc::now() - Duration::seconds(7200);
+        let claims = Claims {
+            sub: mailbox.id.to_string(),
+            username: mailbox.username,
+            is_admin: false,
+            exp: (past + Duration::seconds(900)).timestamp() as usize,
+            iat: past.timestamp() as usize,
+        };
+        let token = encode(
+            &Header::default(),
+            &claims,
+            &EncodingKey::from_secret(config.secret.as_bytes()),
+        )
+        .unwrap();
+        let result = validate_access_token(&config, &token);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_malformed_token() {
+        let config = test_jwt_config();
+        assert!(validate_access_token(&config, "not.a.token").is_err());
+        assert!(validate_access_token(&config, "").is_err());
+        assert!(validate_access_token(&config, "abc").is_err());
+    }
+
+    #[test]
+    fn test_admin_claim_in_token() {
+        let config = test_jwt_config();
+        let mut mailbox = test_mailbox();
+        mailbox.is_admin = true;
+        let token = create_access_token(&config, &mailbox).unwrap();
+        let claims = validate_access_token(&config, &token).unwrap();
+        assert!(claims.is_admin);
+    }
+
+    #[test]
+    fn test_token_expiry_is_set() {
+        let config = test_jwt_config();
+        let mailbox = test_mailbox();
+        let token = create_access_token(&config, &mailbox).unwrap();
+        let claims = validate_access_token(&config, &token).unwrap();
+        assert!(claims.exp > claims.iat);
+        // Expiry should be ~900 seconds after issued-at
+        let diff = claims.exp - claims.iat;
+        assert!(diff >= 899 && diff <= 901);
     }
 }

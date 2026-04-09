@@ -68,3 +68,47 @@ impl IntoResponse for AppError {
         (status, axum::Json(body)).into_response()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::response::IntoResponse;
+
+    #[test]
+    fn test_error_display() {
+        let err = AppError::Unauthorized("bad token".to_string());
+        assert_eq!(err.to_string(), "Authentication failed: bad token");
+
+        let err = AppError::NotFound("user".to_string());
+        assert_eq!(err.to_string(), "Not found: user");
+
+        let err = AppError::BadRequest("missing field".to_string());
+        assert_eq!(err.to_string(), "Bad request: missing field");
+    }
+
+    #[test]
+    fn test_error_status_codes() {
+        let cases = vec![
+            (AppError::Unauthorized("".to_string()), StatusCode::UNAUTHORIZED),
+            (AppError::Forbidden("".to_string()), StatusCode::FORBIDDEN),
+            (AppError::NotFound("".to_string()), StatusCode::NOT_FOUND),
+            (AppError::BadRequest("".to_string()), StatusCode::BAD_REQUEST),
+            (AppError::Conflict("".to_string()), StatusCode::CONFLICT),
+            (AppError::Imap("".to_string()), StatusCode::BAD_GATEWAY),
+            (AppError::Smtp("".to_string()), StatusCode::BAD_GATEWAY),
+        ];
+
+        for (error, expected_status) in cases {
+            let response = error.into_response();
+            assert_eq!(response.status(), expected_status);
+        }
+    }
+
+    #[test]
+    fn test_internal_error_from_anyhow() {
+        let err: AppError = anyhow::anyhow!("something broke").into();
+        assert!(matches!(err, AppError::Internal(_)));
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+}
