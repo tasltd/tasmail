@@ -1,0 +1,55 @@
+[package]
+name = "tasmail"
+version = "0.1.0"
+edition = "2024"
+description = "TASMail - Self-hosted email service backend"
+license = "MIT"
+
+[dependencies]
+# Web framework
+axum = { version = "0.8", features = ["ws", "macros"] }
+axum-extra = { version = "0.10", features = ["cookie", "typed-header"] }
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["compat"] }
+tower = { version = "0.5", features = ["full"] }
+tower-http = { version = "0.6", features = ["cors", "compression-gzip", "trace", "limit"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Database
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "migrate"] }
+
+# Authentication
+jsonwebtoken = "9"
+argon2 = "0.5"
+
+# IMAP/SMTP
+async-imap = "0.11"
+imap-proto = "0.16"
+async-native-tls = "0.5"
+lettre = { version = "0.11", default-features = false, features = ["tokio1-rustls-tls", "builder", "smtp-transport", "hostname"] }
+mailparse = "0.16"
+
+# Configuration
+toml = "0.8"
+dotenvy = "0.15"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Utilities
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+rand = "0.9"
+base64 = "0.22"
+futures = "0.3"
+sha2 = "0.10"
+thiserror = "2"
+anyhow = "1"
+
+[dev-dependencies]
+reqwest = { version = "0.12", features = ["json", "cookies"] }
+tokio-test = "0.4"

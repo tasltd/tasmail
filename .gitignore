@@ -23,7 +23,6 @@ Thumbs.db
 
 # Rust
 **/*.rs.bk
-Cargo.lock
 
 # Test artifacts
 test-results/
