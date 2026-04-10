@@ -110,14 +110,88 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
 
     #[test]
     fn test_config_from_env_loads() {
-        // Verify config loads without error (actual values depend on env)
         let config = Config::from_env().unwrap();
         assert!(!config.server.host.is_empty());
         assert!(config.server.port > 0);
         assert!(config.database.max_connections > 0);
         assert!(config.jwt.access_token_expiry_secs > 0);
+    }
+
+    #[test]
+    fn test_config_from_env_has_reasonable_values() {
+        // NOTE: env vars may override defaults, so test for reasonable ranges
+        let config = Config::from_env().unwrap();
+        assert!(!config.server.host.is_empty());
+        assert!(config.server.port > 0);
+        assert!(config.database.max_connections > 0);
+        assert!(config.imap.port > 0);
+        assert!(config.smtp.port > 0);
+        assert!(config.jwt.access_token_expiry_secs > 0);
+        assert!(config.jwt.refresh_token_expiry_secs > config.jwt.access_token_expiry_secs);
+    }
+
+    #[test]
+    fn test_config_from_toml() {
+        let toml_content = r#"
+[server]
+host = "0.0.0.0"
+port = 8080
+
+[database]
+url = "postgres://test:test@localhost/testdb"
+max_connections = 5
+
+[imap]
+host = "imap.example.com"
+port = 993
+tls = true
+
+[smtp]
+host = "smtp.example.com"
+port = 465
+tls = true
+
+[jwt]
+secret = "test-secret-key"
+access_token_expiry_secs = 300
+refresh_token_expiry_secs = 86400
+"#;
+        // Write to a temp file
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        tmp.write_all(toml_content.as_bytes()).unwrap();
+        tmp.flush().unwrap();
+
+        let config = Config::load(tmp.path()).unwrap();
+        assert_eq!(config.server.host, "0.0.0.0");
+        assert_eq!(config.server.port, 8080);
+        assert_eq!(config.database.url, "postgres://test:test@localhost/testdb");
+        assert_eq!(config.database.max_connections, 5);
+        assert_eq!(config.imap.host, "imap.example.com");
+        assert_eq!(config.smtp.host, "smtp.example.com");
+        assert_eq!(config.smtp.port, 465);
+        assert_eq!(config.jwt.secret, "test-secret-key");
+        assert_eq!(config.jwt.access_token_expiry_secs, 300);
+        assert_eq!(config.jwt.refresh_token_expiry_secs, 86400);
+    }
+
+    #[test]
+    fn test_config_invalid_toml() {
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        tmp.write_all(b"not valid toml {{{").unwrap();
+        tmp.flush().unwrap();
+
+        let result = Config::load(tmp.path());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_config_imap_master_password_optional() {
+        let config = Config::from_env().unwrap();
+        // Master password defaults to None from env
+        assert!(config.imap.master_password.is_none());
     }
 }

@@ -109,3 +109,117 @@ impl Contact {
         Ok(result.rows_affected() > 0)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_contact_serialization() {
+        let id = Uuid::new_v4();
+        let mailbox_id = Uuid::new_v4();
+        let now = chrono::Utc::now();
+
+        let contact = Contact {
+            id,
+            mailbox_id,
+            email: "alice@example.com".to_string(),
+            display_name: Some("Alice".to_string()),
+            company: Some("Acme Corp".to_string()),
+            phone: Some("+233201234567".to_string()),
+            notes: Some("VIP client".to_string()),
+            created_at: now,
+            updated_at: now,
+        };
+
+        let json = serde_json::to_value(&contact).unwrap();
+        assert_eq!(json["email"], "alice@example.com");
+        assert_eq!(json["display_name"], "Alice");
+        assert_eq!(json["company"], "Acme Corp");
+        assert_eq!(json["phone"], "+233201234567");
+        assert_eq!(json["notes"], "VIP client");
+        assert_eq!(json["id"], id.to_string());
+        assert_eq!(json["mailbox_id"], mailbox_id.to_string());
+    }
+
+    #[test]
+    fn test_contact_serialization_with_nulls() {
+        let contact = Contact {
+            id: Uuid::new_v4(),
+            mailbox_id: Uuid::new_v4(),
+            email: "bob@example.com".to_string(),
+            display_name: None,
+            company: None,
+            phone: None,
+            notes: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+
+        let json = serde_json::to_value(&contact).unwrap();
+        assert_eq!(json["email"], "bob@example.com");
+        assert!(json["display_name"].is_null());
+        assert!(json["company"].is_null());
+        assert!(json["phone"].is_null());
+        assert!(json["notes"].is_null());
+    }
+
+    #[test]
+    fn test_create_contact_deserialization() {
+        let json = serde_json::json!({
+            "email": "charlie@example.com",
+            "display_name": "Charlie",
+            "company": "TechCo",
+            "phone": "+233551234567",
+            "notes": "New lead"
+        });
+
+        let create: CreateContact = serde_json::from_value(json).unwrap();
+        assert_eq!(create.email, "charlie@example.com");
+        assert_eq!(create.display_name.unwrap(), "Charlie");
+        assert_eq!(create.company.unwrap(), "TechCo");
+        assert_eq!(create.phone.unwrap(), "+233551234567");
+        assert_eq!(create.notes.unwrap(), "New lead");
+    }
+
+    #[test]
+    fn test_create_contact_deserialization_minimal() {
+        let json = serde_json::json!({
+            "email": "minimal@example.com"
+        });
+
+        let create: CreateContact = serde_json::from_value(json).unwrap();
+        assert_eq!(create.email, "minimal@example.com");
+        assert!(create.display_name.is_none());
+        assert!(create.company.is_none());
+        assert!(create.phone.is_none());
+        assert!(create.notes.is_none());
+    }
+
+    #[test]
+    fn test_update_contact_deserialization() {
+        let json = serde_json::json!({
+            "email": "updated@example.com",
+            "display_name": "Updated Name"
+        });
+
+        let update: UpdateContact = serde_json::from_value(json).unwrap();
+        assert_eq!(update.email.unwrap(), "updated@example.com");
+        assert_eq!(update.display_name.unwrap(), "Updated Name");
+        assert!(update.company.is_none());
+        assert!(update.phone.is_none());
+        assert!(update.notes.is_none());
+    }
+
+    #[test]
+    fn test_update_contact_deserialization_empty() {
+        let json = serde_json::json!({});
+
+        let update: UpdateContact = serde_json::from_value(json).unwrap();
+        assert!(update.email.is_none());
+        assert!(update.display_name.is_none());
+        assert!(update.company.is_none());
+        assert!(update.phone.is_none());
+        assert!(update.notes.is_none());
+    }
+}

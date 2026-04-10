@@ -61,3 +61,76 @@ impl Domain {
         Ok(result.rows_affected() > 0)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_domain_serialization() {
+        let id = Uuid::new_v4();
+        let now = Utc::now();
+
+        let domain = Domain {
+            id,
+            name: "example.com".to_string(),
+            active: true,
+            created_at: now,
+            updated_at: now,
+        };
+
+        let json = serde_json::to_value(&domain).unwrap();
+        assert_eq!(json["id"], id.to_string());
+        assert_eq!(json["name"], "example.com");
+        assert_eq!(json["active"], true);
+    }
+
+    #[test]
+    fn test_domain_serialization_inactive() {
+        let domain = Domain {
+            id: Uuid::new_v4(),
+            name: "disabled.org".to_string(),
+            active: false,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+
+        let json = serde_json::to_value(&domain).unwrap();
+        assert_eq!(json["name"], "disabled.org");
+        assert_eq!(json["active"], false);
+    }
+
+    #[test]
+    fn test_domain_roundtrip() {
+        let domain = Domain {
+            id: Uuid::new_v4(),
+            name: "roundtrip.gh".to_string(),
+            active: true,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+
+        let json = serde_json::to_string(&domain).unwrap();
+        let deserialized: Domain = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.id, domain.id);
+        assert_eq!(deserialized.name, "roundtrip.gh");
+        assert_eq!(deserialized.active, true);
+    }
+
+    #[test]
+    fn test_create_domain_deserialization() {
+        let json = serde_json::json!({
+            "name": "newdomain.com"
+        });
+
+        let create: CreateDomain = serde_json::from_value(json).unwrap();
+        assert_eq!(create.name, "newdomain.com");
+    }
+
+    #[test]
+    fn test_create_domain_missing_name_fails() {
+        let json = serde_json::json!({});
+        let result = serde_json::from_value::<CreateDomain>(json);
+        assert!(result.is_err());
+    }
+}

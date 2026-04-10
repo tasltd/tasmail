@@ -677,3 +677,227 @@ fn extract_parts(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Helper to build a simple email for testing
+    fn simple_email(headers: &str, body: &str) -> String {
+        format!("{}\r\n\r\n{}", headers, body)
+    }
+
+    #[test]
+    fn test_extract_header_message_id() {
+        let raw = simple_email(
+            "From: test@example.com\r\nMessage-ID: <abc123@example.com>\r\nSubject: Test",
+            "Hello world",
+        );
+        let parsed = mailparse::parse_mail(raw.as_bytes()).unwrap();
+        let msg_id = extract_header(&parsed, "Message-ID");
+        assert_eq!(msg_id, Some("<abc123@example.com>".to_string()));
+    }
+
+    #[test]
+    fn test_extract_header_in_reply_to() {
+        let raw = simple_email(
+            "From: test@example.com\r\nIn-Reply-To: <parent@example.com>\r\nSubject: Re: Test",
+            "Reply body",
+        );
+        let parsed = mailparse::parse_mail(raw.as_bytes()).unwrap();
+        let irt = extract_header(&parsed, "In-Reply-To");
+        assert_eq!(irt, Some("<parent@example.com>".to_string()));
+    }
+
+    #[test]
+    fn test_extract_header_references() {
+        let raw = simple_email(
+            "From: test@example.com\r\nReferences: <a@example.com> <b@example.com>\r\nSubject: Test",
+            "Body",
+        );
+        let parsed = mailparse::parse_mail(raw.as_bytes()).unwrap();
+        let refs = extract_header(&parsed, "References");
+        assert_eq!(refs, Some("<a@example.com> <b@example.com>".to_string()));
+    }
+
+    #[test]
+    fn test_extract_header_missing() {
+        let raw = simple_email("From: test@example.com\r\nSubject: Test", "Body");
+        let parsed = mailparse::parse_mail(raw.as_bytes()).unwrap();
+        assert_eq!(extract_header(&parsed, "Message-ID"), None);
+        assert_eq!(extract_header(&parsed, "In-Reply-To"), None);
+    }
+
+    #[test]
+    fn test_extract_header_case_insensitive() {
+        let raw = simple_email(
+            "From: test@example.com\r\nmessage-id: <lower@example.com>",
+            "Body",
+        );
+        let parsed = mailparse::parse_mail(raw.as_bytes()).unwrap();
+        let msg_id = extract_header(&parsed, "Message-ID");
+        assert_eq!(msg_id, Some("<lower@example.com>".to_string()));
+    }
+
+    #[test]
+    fn test_extract_parts_plain_text() {
+        let raw = simple_email(
+            "From: test@example.com\r\nContent-Type: text/plain",
+            "Hello plain world",
+        );
+        let parsed = mailparse::parse_mail(raw.as_bytes()).unwrap();
+        let mut text = None;
+        let mut html = None;
+        let mut attachments = Vec::new();
+        extract_parts(&parsed, &mut text, &mut html, &mut attachments, "");
+
+        assert!(text.is_some());
+        assert!(text.unwrap().contains("Hello plain world"));
+        assert!(html.is_none());
+        assert!(attachments.is_empty());
+    }
+
+    #[test]
+    fn test_extract_parts_html() {
+        let raw = simple_email(
+            "From: test@example.com\r\nContent-Type: text/html",
+            "<p>Hello HTML</p>",
+        );
+        let parsed = mailparse::parse_mail(raw.as_bytes()).unwrap();
+        let mut text = None;
+        let mut html = None;
+        let mut attachments = Vec::new();
+        extract_parts(&parsed, &mut text, &mut html, &mut attachments, "");
+
+        assert!(html.is_some());
+        assert!(html.unwrap().contains("<p>Hello HTML</p>"));
+        assert!(text.is_none());
+    }
+
+    #[test]
+    fn test_extract_parts_multipart() {
+        let raw = concat!(
+            "From: test@example.com\r\n",
+            "Content-Type: multipart/alternative; boundary=\"boundary123\"\r\n",
+            "\r\n",
+            "--boundary123\r\n",
+            "Content-Type: text/plain\r\n",
+            "\r\n",
+            "Plain text part\r\n",
+            "--boundary123\r\n",
+            "Content-Type: text/html\r\n",
+            "\r\n",
+            "<p>HTML part</p>\r\n",
+            "--boundary123--\r\n",
+        );
+        let parsed = mailparse::parse_mail(raw.as_bytes()).unwrap();
+        let mut text = None;
+        let mut html = None;
+        let mut attachments = Vec::new();
+        extract_parts(&parsed, &mut text, &mut html, &mut attachments, "");
+
+        assert!(text.as_deref().unwrap().contains("Plain text part"));
+        assert!(html.unwrap().contains("<p>HTML part</p>"));
+        assert!(attachments.is_empty());
+    }
+
+    #[test]
+    fn test_extract_references_split() {
+        let raw = simple_email(
+            "References: <a@ex.com> <b@ex.com> <c@ex.com>",
+            "Body",
+        );
+        let parsed = mailparse::parse_mail(raw.as_bytes()).unwrap();
+        let refs_str = extract_header(&parsed, "References").unwrap();
+        let refs: Vec<&str> = refs_str.split_whitespace().collect();
+        assert_eq!(refs, vec!["<a@ex.com>", "<b@ex.com>", "<c@ex.com>"]);
+    }
+
+    #[test]
+    fn test_folder_struct_serialization() {
+        let folder = Folder {
+            name: "INBOX".to_string(),
+            delimiter: "/".to_string(),
+            messages: Some(42),
+            unseen: Some(5),
+        };
+        let json = serde_json::to_value(&folder).unwrap();
+        assert_eq!(json["name"], "INBOX");
+        assert_eq!(json["messages"], 42);
+        assert_eq!(json["unseen"], 5);
+    }
+
+    #[test]
+    fn test_message_envelope_serialization() {
+        let env = MessageEnvelope {
+            uid: 100,
+            subject: Some("Test Subject".to_string()),
+            from: Some("sender@example.com".to_string()),
+            date: Some("2026-04-10".to_string()),
+            flags: vec!["\\Seen".to_string()],
+            size: Some(1024),
+        };
+        let json = serde_json::to_value(&env).unwrap();
+        assert_eq!(json["uid"], 100);
+        assert_eq!(json["subject"], "Test Subject");
+        assert_eq!(json["flags"][0], "\\Seen");
+    }
+
+    #[test]
+    fn test_full_message_serialization() {
+        let msg = FullMessage {
+            uid: 1,
+            subject: Some("Thread Test".to_string()),
+            from: Some("a@example.com".to_string()),
+            to: vec!["b@example.com".to_string()],
+            cc: vec![],
+            date: Some("2026-04-10T10:00:00Z".to_string()),
+            flags: vec![],
+            text_body: Some("Hello".to_string()),
+            html_body: None,
+            attachments: vec![],
+            message_id: Some("<msg1@example.com>".to_string()),
+            in_reply_to: None,
+            references: vec![],
+        };
+        let json = serde_json::to_value(&msg).unwrap();
+        assert_eq!(json["message_id"], "<msg1@example.com>");
+        assert_eq!(json["references"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn test_full_message_threading_fields() {
+        let msg = FullMessage {
+            uid: 2,
+            subject: Some("Re: Thread Test".to_string()),
+            from: Some("b@example.com".to_string()),
+            to: vec!["a@example.com".to_string()],
+            cc: vec![],
+            date: None,
+            flags: vec![],
+            text_body: Some("Reply".to_string()),
+            html_body: None,
+            attachments: vec![],
+            message_id: Some("<msg2@example.com>".to_string()),
+            in_reply_to: Some("<msg1@example.com>".to_string()),
+            references: vec!["<msg1@example.com>".to_string()],
+        };
+        let json = serde_json::to_value(&msg).unwrap();
+        assert_eq!(json["in_reply_to"], "<msg1@example.com>");
+        assert_eq!(json["references"][0], "<msg1@example.com>");
+    }
+
+    #[test]
+    fn test_attachment_serialization() {
+        let att = Attachment {
+            filename: "document.pdf".to_string(),
+            content_type: "application/pdf".to_string(),
+            size: 2048,
+            part_id: "1.2".to_string(),
+        };
+        let json = serde_json::to_value(&att).unwrap();
+        assert_eq!(json["filename"], "document.pdf");
+        assert_eq!(json["size"], 2048);
+        assert_eq!(json["part_id"], "1.2");
+    }
+}

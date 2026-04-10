@@ -7,7 +7,7 @@ use serde::Deserialize;
 
 use crate::error::AppError;
 use crate::services::auth_service::Claims;
-use crate::services::imap_service::{FullMessage, ImapService, MessageEnvelope};
+use crate::services::imap_service::{FullMessage, ImapService};
 use crate::services::smtp_service::{SendRequest, SmtpService};
 use crate::state::AppState;
 
@@ -270,4 +270,121 @@ pub async fn save_draft(
         .await?;
 
     Ok(StatusCode::CREATED)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_list_messages_query_defaults() {
+        let json = r#"{}"#;
+        let query: ListMessagesQuery = serde_json::from_str(json).unwrap();
+        assert!(query.page.is_none());
+        assert!(query.page_size.is_none());
+    }
+
+    #[test]
+    fn test_list_messages_query_with_values() {
+        let json = r#"{"page": 2, "page_size": 25}"#;
+        let query: ListMessagesQuery = serde_json::from_str(json).unwrap();
+        assert_eq!(query.page, Some(2));
+        assert_eq!(query.page_size, Some(25));
+    }
+
+    #[test]
+    fn test_list_messages_query_partial() {
+        let json = r#"{"page": 5}"#;
+        let query: ListMessagesQuery = serde_json::from_str(json).unwrap();
+        assert_eq!(query.page, Some(5));
+        assert!(query.page_size.is_none());
+    }
+
+    #[test]
+    fn test_search_query_required_q() {
+        let json = r#"{"q": "invoice"}"#;
+        let query: SearchQuery = serde_json::from_str(json).unwrap();
+        assert_eq!(query.q, "invoice");
+        assert!(query.folder.is_none());
+    }
+
+    #[test]
+    fn test_search_query_with_folder() {
+        let json = r#"{"q": "hello", "folder": "Sent"}"#;
+        let query: SearchQuery = serde_json::from_str(json).unwrap();
+        assert_eq!(query.q, "hello");
+        assert_eq!(query.folder.as_deref(), Some("Sent"));
+    }
+
+    #[test]
+    fn test_search_query_missing_q_fails() {
+        let json = r#"{"folder": "INBOX"}"#;
+        let result = serde_json::from_str::<SearchQuery>(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_move_request_deserialization() {
+        let json = r#"{"to_folder": "Trash"}"#;
+        let req: MoveRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.to_folder, "Trash");
+    }
+
+    #[test]
+    fn test_move_request_missing_folder_fails() {
+        let json = r#"{}"#;
+        let result = serde_json::from_str::<MoveRequest>(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_flag_request_deserialization() {
+        let json = r#"{"flag": "\\Seen", "add": true}"#;
+        let req: FlagRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.flag, "\\Seen");
+        assert!(req.add);
+    }
+
+    #[test]
+    fn test_flag_request_remove() {
+        let json = r#"{"flag": "\\Flagged", "add": false}"#;
+        let req: FlagRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.flag, "\\Flagged");
+        assert!(!req.add);
+    }
+
+    #[test]
+    fn test_save_draft_request_full() {
+        let json = r#"{
+            "to": ["alice@example.com"],
+            "cc": ["bob@example.com"],
+            "subject": "Draft subject",
+            "html_body": "<p>Hello</p>",
+            "text_body": "Hello"
+        }"#;
+        let req: SaveDraftRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.to, vec!["alice@example.com"]);
+        assert_eq!(req.cc.as_ref().unwrap().len(), 1);
+        assert_eq!(req.subject, "Draft subject");
+        assert_eq!(req.html_body.as_deref(), Some("<p>Hello</p>"));
+        assert_eq!(req.text_body.as_deref(), Some("Hello"));
+    }
+
+    #[test]
+    fn test_save_draft_request_minimal() {
+        let json = r#"{"to": ["x@y.com"], "subject": "Test"}"#;
+        let req: SaveDraftRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.to, vec!["x@y.com"]);
+        assert_eq!(req.subject, "Test");
+        assert!(req.cc.is_none());
+        assert!(req.html_body.is_none());
+        assert!(req.text_body.is_none());
+    }
+
+    #[test]
+    fn test_save_draft_request_missing_subject_fails() {
+        let json = r#"{"to": ["x@y.com"]}"#;
+        let result = serde_json::from_str::<SaveDraftRequest>(json);
+        assert!(result.is_err());
+    }
 }

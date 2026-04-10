@@ -108,3 +108,37 @@ pub async fn list_scheduled(
 
     Ok(Json(emails))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_schedule_response_serialization() {
+        let resp = ScheduleResponse {
+            id: Uuid::new_v4(),
+            cancel_token: Uuid::new_v4(),
+            scheduled_at: Utc::now(),
+            can_undo_until: Utc::now(),
+        };
+        let json = serde_json::to_value(&resp).unwrap();
+        assert!(json.get("id").is_some());
+        assert!(json.get("cancel_token").is_some());
+        assert!(json.get("scheduled_at").is_some());
+        assert!(json.get("can_undo_until").is_some());
+    }
+
+    #[test]
+    fn test_list_query_deserialization_with_status() {
+        let json = r#"{"status": "pending"}"#;
+        let query: ListQuery = serde_json::from_str(json).unwrap();
+        assert_eq!(query.status.as_deref(), Some("pending"));
+    }
+
+    #[test]
+    fn test_list_query_deserialization_without_status() {
+        let json = r#"{}"#;
+        let query: ListQuery = serde_json::from_str(json).unwrap();
+        assert!(query.status.is_none());
+    }
+}

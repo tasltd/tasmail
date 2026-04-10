@@ -77,3 +77,70 @@ impl Session {
         Ok(result.rows_affected())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_session_serialization() {
+        let id = Uuid::new_v4();
+        let mailbox_id = Uuid::new_v4();
+        let now = Utc::now();
+        let expires = now + chrono::Duration::hours(24);
+
+        let session = Session {
+            id,
+            mailbox_id,
+            refresh_token_hash: "sha256:abc123def456".to_string(),
+            expires_at: expires,
+            created_at: now,
+            ip_address: Some("10.0.0.1".to_string()),
+            user_agent: Some("TASMail/1.0".to_string()),
+        };
+
+        let json = serde_json::to_value(&session).unwrap();
+        assert_eq!(json["id"], id.to_string());
+        assert_eq!(json["mailbox_id"], mailbox_id.to_string());
+        assert_eq!(json["refresh_token_hash"], "sha256:abc123def456");
+        assert_eq!(json["ip_address"], "10.0.0.1");
+        assert_eq!(json["user_agent"], "TASMail/1.0");
+    }
+
+    #[test]
+    fn test_session_serialization_with_nulls() {
+        let session = Session {
+            id: Uuid::new_v4(),
+            mailbox_id: Uuid::new_v4(),
+            refresh_token_hash: "sha256:xyz".to_string(),
+            expires_at: Utc::now(),
+            created_at: Utc::now(),
+            ip_address: None,
+            user_agent: None,
+        };
+
+        let json = serde_json::to_value(&session).unwrap();
+        assert!(json["ip_address"].is_null());
+        assert!(json["user_agent"].is_null());
+    }
+
+    #[test]
+    fn test_session_roundtrip() {
+        let session = Session {
+            id: Uuid::new_v4(),
+            mailbox_id: Uuid::new_v4(),
+            refresh_token_hash: "sha256:roundtrip".to_string(),
+            expires_at: Utc::now() + chrono::Duration::hours(1),
+            created_at: Utc::now(),
+            ip_address: Some("192.168.1.100".to_string()),
+            user_agent: Some("Mozilla/5.0".to_string()),
+        };
+
+        let json = serde_json::to_string(&session).unwrap();
+        let deserialized: Session = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.id, session.id);
+        assert_eq!(deserialized.mailbox_id, session.mailbox_id);
+        assert_eq!(deserialized.refresh_token_hash, "sha256:roundtrip");
+        assert_eq!(deserialized.ip_address.unwrap(), "192.168.1.100");
+    }
+}

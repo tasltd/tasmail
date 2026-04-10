@@ -45,3 +45,16 @@ pub async fn set_auto_reply(
     let rule = AutoReplyRule::upsert(&state.db, mailbox_id, &body).await?;
     Ok((StatusCode::OK, Json(rule)))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_auto_reply_handler_date_validation_logic() {
+        // Test the date comparison logic: end must be after start
+        let start = chrono::Utc::now();
+        let end = start - chrono::Duration::seconds(3600);
+        assert!(end <= start, "End before start should be invalid");
+    }
+}

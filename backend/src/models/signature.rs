@@ -120,3 +120,117 @@ impl Signature {
         Ok(result.rows_affected() > 0)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_signature_serialization() {
+        let id = Uuid::new_v4();
+        let mailbox_id = Uuid::new_v4();
+        let now = chrono::Utc::now();
+
+        let sig = Signature {
+            id,
+            mailbox_id,
+            name: "Work Signature".to_string(),
+            html_body: "<p>Best regards,<br>Kwame</p>".to_string(),
+            text_body: "Best regards,\nKwame".to_string(),
+            is_default: true,
+            created_at: now,
+            updated_at: now,
+        };
+
+        let json = serde_json::to_value(&sig).unwrap();
+        assert_eq!(json["id"], id.to_string());
+        assert_eq!(json["mailbox_id"], mailbox_id.to_string());
+        assert_eq!(json["name"], "Work Signature");
+        assert_eq!(json["html_body"], "<p>Best regards,<br>Kwame</p>");
+        assert_eq!(json["text_body"], "Best regards,\nKwame");
+        assert_eq!(json["is_default"], true);
+    }
+
+    #[test]
+    fn test_signature_roundtrip() {
+        let sig = Signature {
+            id: Uuid::new_v4(),
+            mailbox_id: Uuid::new_v4(),
+            name: "Personal".to_string(),
+            html_body: "<i>Cheers</i>".to_string(),
+            text_body: "Cheers".to_string(),
+            is_default: false,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+
+        let json = serde_json::to_string(&sig).unwrap();
+        let deserialized: Signature = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.id, sig.id);
+        assert_eq!(deserialized.name, "Personal");
+        assert_eq!(deserialized.is_default, false);
+    }
+
+    #[test]
+    fn test_create_signature_deserialization() {
+        let json = serde_json::json!({
+            "name": "New Sig",
+            "html_body": "<b>Hello</b>",
+            "text_body": "Hello",
+            "is_default": true
+        });
+
+        let create: CreateSignature = serde_json::from_value(json).unwrap();
+        assert_eq!(create.name, "New Sig");
+        assert_eq!(create.html_body, "<b>Hello</b>");
+        assert_eq!(create.text_body, "Hello");
+        assert_eq!(create.is_default.unwrap(), true);
+    }
+
+    #[test]
+    fn test_create_signature_is_default_optional() {
+        let json = serde_json::json!({
+            "name": "No Default",
+            "html_body": "<p>Hi</p>",
+            "text_body": "Hi"
+        });
+
+        let create: CreateSignature = serde_json::from_value(json).unwrap();
+        assert_eq!(create.name, "No Default");
+        assert!(create.is_default.is_none());
+    }
+
+    #[test]
+    fn test_create_signature_missing_required_field_fails() {
+        let json = serde_json::json!({
+            "name": "Incomplete"
+        });
+        let result = serde_json::from_value::<CreateSignature>(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_update_signature_deserialization() {
+        let json = serde_json::json!({
+            "name": "Updated Sig",
+            "is_default": false
+        });
+
+        let update: UpdateSignature = serde_json::from_value(json).unwrap();
+        assert_eq!(update.name.unwrap(), "Updated Sig");
+        assert!(update.html_body.is_none());
+        assert!(update.text_body.is_none());
+        assert_eq!(update.is_default.unwrap(), false);
+    }
+
+    #[test]
+    fn test_update_signature_deserialization_empty() {
+        let json = serde_json::json!({});
+
+        let update: UpdateSignature = serde_json::from_value(json).unwrap();
+        assert!(update.name.is_none());
+        assert!(update.html_body.is_none());
+        assert!(update.text_body.is_none());
+        assert!(update.is_default.is_none());
+    }
+}

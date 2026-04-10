@@ -8,7 +8,7 @@ use uuid::Uuid;
 use crate::error::AppError;
 use crate::models::distribution_group::{
     AddMemberRequest, CreateGroupRequest, DistributionGroup, GroupMember,
-    GroupWithCount, UpdateGroupRequest,
+    UpdateGroupRequest,
 };
 use crate::services::auth_service::Claims;
 use crate::state::AppState;

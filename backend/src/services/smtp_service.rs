@@ -122,3 +122,70 @@ impl SmtpService {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_send_request_deserialization_full() {
+        let json = r#"{
+            "to": ["alice@example.com", "bob@example.com"],
+            "cc": ["charlie@example.com"],
+            "bcc": ["dave@example.com"],
+            "subject": "Test email",
+            "text_body": "Hello plain",
+            "html_body": "<p>Hello HTML</p>"
+        }"#;
+        let req: SendRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.to.len(), 2);
+        assert_eq!(req.cc.as_ref().unwrap().len(), 1);
+        assert_eq!(req.bcc.as_ref().unwrap().len(), 1);
+        assert_eq!(req.subject, "Test email");
+        assert_eq!(req.text_body.as_deref(), Some("Hello plain"));
+        assert_eq!(req.html_body.as_deref(), Some("<p>Hello HTML</p>"));
+    }
+
+    #[test]
+    fn test_send_request_deserialization_minimal() {
+        let json = r#"{
+            "to": ["user@example.com"],
+            "subject": "Minimal"
+        }"#;
+        let req: SendRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.to, vec!["user@example.com"]);
+        assert_eq!(req.subject, "Minimal");
+        assert!(req.cc.is_none());
+        assert!(req.bcc.is_none());
+        assert!(req.text_body.is_none());
+        assert!(req.html_body.is_none());
+    }
+
+    #[test]
+    fn test_send_request_empty_to_fails() {
+        let json = r#"{"subject": "No recipients"}"#;
+        let result = serde_json::from_str::<SendRequest>(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_send_request_multiple_recipients() {
+        let json = r#"{
+            "to": ["a@test.com", "b@test.com", "c@test.com"],
+            "subject": "Group mail"
+        }"#;
+        let req: SendRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.to.len(), 3);
+    }
+
+    #[test]
+    fn test_smtp_service_creation() {
+        let config = SmtpConfig {
+            host: "smtp.example.com".to_string(),
+            port: 587,
+            tls: true,
+        };
+        let _service = SmtpService::new(config);
+        // Service created without panic
+    }
+}

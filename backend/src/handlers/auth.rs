@@ -91,3 +91,86 @@ pub async fn logout(
 
     Ok(StatusCode::NO_CONTENT)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_login_request_deserialization() {
+        let json = r#"{"username": "alice@example.com", "password": "secret123"}"#;
+        let req: LoginRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.username, "alice@example.com");
+        assert_eq!(req.password, "secret123");
+    }
+
+    #[test]
+    fn test_login_request_missing_username_fails() {
+        let json = r#"{"password": "secret123"}"#;
+        let result = serde_json::from_str::<LoginRequest>(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_login_request_missing_password_fails() {
+        let json = r#"{"username": "alice@example.com"}"#;
+        let result = serde_json::from_str::<LoginRequest>(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_login_request_empty_body_fails() {
+        let json = r#"{}"#;
+        let result = serde_json::from_str::<LoginRequest>(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_login_request_extra_fields_ignored() {
+        let json = r#"{"username": "bob@test.com", "password": "pw", "extra": "ignored"}"#;
+        let req: LoginRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.username, "bob@test.com");
+        assert_eq!(req.password, "pw");
+    }
+
+    #[test]
+    fn test_refresh_request_deserialization() {
+        let json = r#"{"refresh_token": "abc-def-123"}"#;
+        let req: RefreshRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.refresh_token, "abc-def-123");
+    }
+
+    #[test]
+    fn test_refresh_request_missing_token_fails() {
+        let json = r#"{}"#;
+        let result = serde_json::from_str::<RefreshRequest>(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_token_pair_serialization() {
+        let pair = crate::services::auth_service::TokenPair {
+            access_token: "access_abc".to_string(),
+            refresh_token: "refresh_xyz".to_string(),
+            expires_in: 3600,
+        };
+        let json = serde_json::to_string(&pair).unwrap();
+        assert!(json.contains("access_abc"));
+        assert!(json.contains("refresh_xyz"));
+        assert!(json.contains("3600"));
+    }
+
+    #[test]
+    fn test_token_pair_serialization_fields() {
+        let pair = crate::services::auth_service::TokenPair {
+            access_token: "tok".to_string(),
+            refresh_token: "ref".to_string(),
+            expires_in: 900,
+        };
+        let json = serde_json::to_string(&pair).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(value["access_token"], "tok");
+        assert_eq!(value["refresh_token"], "ref");
+        assert_eq!(value["expires_in"], 900);
+    }
+}

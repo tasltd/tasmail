@@ -65,3 +65,33 @@ fn parse_mailbox_id(claims: &Claims) -> Result<uuid::Uuid, AppError> {
         .parse()
         .map_err(|_| AppError::Internal(anyhow::anyhow!("Invalid mailbox ID")))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::services::auth_service::Claims;
+
+    #[test]
+    fn test_parse_mailbox_id_valid() {
+        let claims = Claims {
+            sub: uuid::Uuid::new_v4().to_string(),
+            username: "test".into(),
+            is_admin: false,
+            exp: 0,
+            iat: 0,
+        };
+        assert!(parse_mailbox_id(&claims).is_ok());
+    }
+
+    #[test]
+    fn test_parse_mailbox_id_invalid() {
+        let claims = Claims {
+            sub: "not-a-uuid".into(),
+            username: "test".into(),
+            is_admin: false,
+            exp: 0,
+            iat: 0,
+        };
+        assert!(parse_mailbox_id(&claims).is_err());
+    }
+}
