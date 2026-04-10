@@ -6,6 +6,7 @@ pub mod folders;
 pub mod groups;
 pub mod health;
 pub mod messages;
+pub mod migration;
 pub mod quota;
 pub mod scheduled;
 pub mod shared;

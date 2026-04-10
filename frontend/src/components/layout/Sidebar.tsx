@@ -1,4 +1,4 @@
-import { PenSquare, FileSignature, Users, Shield, Plane, UsersRound } from 'lucide-react';
+import { PenSquare, FileSignature, Users, Shield, Plane, UsersRound, Upload } from 'lucide-react';
 import { FolderTree } from '../mail/FolderTree';
 import { QuotaBar } from './QuotaBar';
 import { useMailStore } from '../../stores/mailStore';
@@ -49,6 +49,13 @@ export function Sidebar() {
         >
           <UsersRound size={18} />
           <span className="folder-item__name">Groups</span>
+        </button>
+        <button
+          className={`folder-item ${viewMode === 'migration' ? 'folder-item--active' : ''}`}
+          onClick={() => setViewMode('migration')}
+        >
+          <Upload size={18} />
+          <span className="folder-item__name">Migration</span>
         </button>
       </div>
       <QuotaBar />

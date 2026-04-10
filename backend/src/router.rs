@@ -120,6 +120,12 @@ pub fn create_router(state: AppState) -> Router {
             "/api/groups/{id}/members/{address}",
             delete(handlers::groups::remove_member),
         )
+        // Migration (IMAP/MBOX import)
+        .route("/api/migration", get(handlers::migration::list_migrations))
+        .route("/api/migration/imap", post(handlers::migration::start_imap_migration))
+        .route("/api/migration/mbox", post(handlers::migration::start_mbox_import))
+        .route("/api/migration/{id}", get(handlers::migration::get_migration))
+        .route("/api/migration/{id}/cancel", post(handlers::migration::cancel_migration))
         // Shared mailboxes
         .route(
             "/api/shared-mailboxes",

@@ -4,6 +4,7 @@ pub mod contact;
 pub mod distribution_group;
 pub mod domain;
 pub mod mailbox;
+pub mod migration_job;
 pub mod quota;
 pub mod scheduled_email;
 pub mod session;
