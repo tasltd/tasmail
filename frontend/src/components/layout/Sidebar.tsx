@@ -1,4 +1,4 @@
-import { PenSquare, FileSignature, Users, Shield } from 'lucide-react';
+import { PenSquare, FileSignature, Users, Shield, Plane } from 'lucide-react';
 import { FolderTree } from '../mail/FolderTree';
 import { QuotaBar } from './QuotaBar';
 import { useMailStore } from '../../stores/mailStore';
@@ -35,6 +35,13 @@ export function Sidebar() {
         >
           <Shield size={18} />
           <span className="folder-item__name">Security</span>
+        </button>
+        <button
+          className={`folder-item ${viewMode === 'vacation' ? 'folder-item--active' : ''}`}
+          onClick={() => setViewMode('vacation')}
+        >
+          <Plane size={18} />
+          <span className="folder-item__name">Vacation</span>
         </button>
       </div>
       <QuotaBar />

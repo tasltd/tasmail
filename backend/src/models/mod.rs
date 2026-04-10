@@ -1,4 +1,5 @@
 pub mod audit_log;
+pub mod auto_reply;
 pub mod contact;
 pub mod domain;
 pub mod mailbox;

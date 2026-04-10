@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-type ViewMode = 'list' | 'reader' | 'compose' | 'search' | 'signatures' | 'contacts' | 'security';
+type ViewMode = 'list' | 'reader' | 'compose' | 'search' | 'signatures' | 'contacts' | 'security' | 'vacation';
 
 interface MailState {
   selectedFolder: string;

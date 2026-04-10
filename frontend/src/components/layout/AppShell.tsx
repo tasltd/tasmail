@@ -7,6 +7,7 @@ import { SearchResults } from '../mail/SearchResults';
 import { SignatureManager } from '../settings/SignatureManager';
 import { ContactManager } from '../settings/ContactManager';
 import { TwoFactorManager } from '../settings/TwoFactorManager';
+import { VacationResponder } from '../settings/VacationResponder';
 import { useMailStore } from '../../stores/mailStore';
 import { useUiStore } from '../../stores/uiStore';
 
@@ -37,6 +38,7 @@ export function AppShell({ onLogout }: AppShellProps) {
           {viewMode === 'signatures' && <SignatureManager />}
           {viewMode === 'contacts' && <ContactManager />}
           {viewMode === 'security' && <TwoFactorManager />}
+          {viewMode === 'vacation' && <VacationResponder />}
         </main>
       </div>
     </div>

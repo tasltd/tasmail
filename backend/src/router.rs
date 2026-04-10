@@ -88,6 +88,11 @@ pub fn create_router(state: AppState) -> Router {
             "/api/messages/cancel/{cancel_token}",
             post(handlers::scheduled::cancel_scheduled),
         )
+        // Auto-reply / vacation responder
+        .route(
+            "/api/auto-reply",
+            get(handlers::auto_reply::get_auto_reply).put(handlers::auto_reply::set_auto_reply),
+        )
         // Two-factor authentication
         .route("/api/2fa/enroll", post(handlers::two_factor::enroll))
         .route("/api/2fa/verify", post(handlers::two_factor::verify))

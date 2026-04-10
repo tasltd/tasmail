@@ -1,5 +1,6 @@
 pub mod admin;
 pub mod auth;
+pub mod auto_reply;
 pub mod contacts;
 pub mod folders;
 pub mod health;
