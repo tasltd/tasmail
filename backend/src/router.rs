@@ -101,6 +101,25 @@ pub fn create_router(state: AppState) -> Router {
         // Quota
         .route("/api/quota", get(handlers::quota::get_quota))
         .route("/api/quota/sync", post(handlers::quota::sync_quota))
+        // Distribution groups
+        .route(
+            "/api/groups",
+            get(handlers::groups::list_groups).post(handlers::groups::create_group),
+        )
+        .route(
+            "/api/groups/{id}",
+            get(handlers::groups::get_group)
+                .put(handlers::groups::update_group)
+                .delete(handlers::groups::delete_group),
+        )
+        .route(
+            "/api/groups/{id}/members",
+            get(handlers::groups::list_members).post(handlers::groups::add_member),
+        )
+        .route(
+            "/api/groups/{id}/members/{address}",
+            delete(handlers::groups::remove_member),
+        )
         // Audit log
         .route(
             "/api/admin/audit-log",

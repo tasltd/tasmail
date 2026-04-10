@@ -1,6 +1,7 @@
 pub mod audit_log;
 pub mod auto_reply;
 pub mod contact;
+pub mod distribution_group;
 pub mod domain;
 pub mod mailbox;
 pub mod quota;

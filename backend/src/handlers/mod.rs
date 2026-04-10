@@ -3,6 +3,7 @@ pub mod auth;
 pub mod auto_reply;
 pub mod contacts;
 pub mod folders;
+pub mod groups;
 pub mod health;
 pub mod messages;
 pub mod quota;
