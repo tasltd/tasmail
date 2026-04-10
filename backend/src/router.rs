@@ -120,6 +120,19 @@ pub fn create_router(state: AppState) -> Router {
             "/api/groups/{id}/members/{address}",
             delete(handlers::groups::remove_member),
         )
+        // Shared mailboxes
+        .route(
+            "/api/shared-mailboxes",
+            get(handlers::shared::list_accessible),
+        )
+        .route(
+            "/api/shared-mailboxes/{mailbox_id}/acl",
+            get(handlers::shared::list_acl).post(handlers::shared::grant_access),
+        )
+        .route(
+            "/api/shared-mailboxes/{mailbox_id}/acl/{user_id}",
+            delete(handlers::shared::revoke_access),
+        )
         // Audit log
         .route(
             "/api/admin/audit-log",

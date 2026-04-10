@@ -8,5 +8,6 @@ pub mod health;
 pub mod messages;
 pub mod quota;
 pub mod scheduled;
+pub mod shared;
 pub mod signatures;
 pub mod two_factor;
