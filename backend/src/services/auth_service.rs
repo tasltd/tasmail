@@ -196,6 +196,9 @@ mod tests {
             is_admin: false,
             created_at: Utc::now(),
             updated_at: Utc::now(),
+            totp_secret: None,
+            totp_enabled: false,
+            totp_verified_at: None,
         }
     }
 

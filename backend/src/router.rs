@@ -88,6 +88,11 @@ pub fn create_router(state: AppState) -> Router {
             "/api/messages/cancel/{cancel_token}",
             post(handlers::scheduled::cancel_scheduled),
         )
+        // Two-factor authentication
+        .route("/api/2fa/enroll", post(handlers::two_factor::enroll))
+        .route("/api/2fa/verify", post(handlers::two_factor::verify))
+        .route("/api/2fa/status", get(handlers::two_factor::status))
+        .route("/api/2fa", delete(handlers::two_factor::disable))
         // Quota
         .route("/api/quota", get(handlers::quota::get_quota))
         .route("/api/quota/sync", post(handlers::quota::sync_quota))

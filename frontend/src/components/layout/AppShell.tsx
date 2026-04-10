@@ -6,6 +6,7 @@ import { Composer } from '../mail/Composer';
 import { SearchResults } from '../mail/SearchResults';
 import { SignatureManager } from '../settings/SignatureManager';
 import { ContactManager } from '../settings/ContactManager';
+import { TwoFactorManager } from '../settings/TwoFactorManager';
 import { useMailStore } from '../../stores/mailStore';
 import { useUiStore } from '../../stores/uiStore';
 
@@ -35,6 +36,7 @@ export function AppShell({ onLogout }: AppShellProps) {
           {viewMode === 'search' && <SearchResults />}
           {viewMode === 'signatures' && <SignatureManager />}
           {viewMode === 'contacts' && <ContactManager />}
+          {viewMode === 'security' && <TwoFactorManager />}
         </main>
       </div>
     </div>

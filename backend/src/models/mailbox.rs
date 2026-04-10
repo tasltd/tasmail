@@ -16,6 +16,9 @@ pub struct Mailbox {
     pub is_admin: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    pub totp_secret: Option<String>,
+    pub totp_enabled: bool,
+    pub totp_verified_at: Option<DateTime<Utc>>,
 }
 
 /// Safe representation without password hash

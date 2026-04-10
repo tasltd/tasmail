@@ -7,3 +7,4 @@ pub mod messages;
 pub mod quota;
 pub mod scheduled;
 pub mod signatures;
+pub mod two_factor;
