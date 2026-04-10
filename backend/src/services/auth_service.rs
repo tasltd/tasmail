@@ -191,6 +191,7 @@ mod tests {
             password_hash: hash_password("testpass123").unwrap(),
             display_name: Some("Test User".to_string()),
             quota_bytes: 1_073_741_824,
+            quota_warn_percent: 80,
             active: true,
             is_admin: false,
             created_at: Utc::now(),

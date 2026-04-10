@@ -1,5 +1,6 @@
 import { PenSquare, FileSignature, Users } from 'lucide-react';
 import { FolderTree } from '../mail/FolderTree';
+import { QuotaBar } from './QuotaBar';
 import { useMailStore } from '../../stores/mailStore';
 
 export function Sidebar() {
@@ -29,6 +30,7 @@ export function Sidebar() {
           <span className="folder-item__name">Contacts</span>
         </button>
       </div>
+      <QuotaBar />
     </aside>
   );
 }

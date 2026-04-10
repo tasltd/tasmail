@@ -437,6 +437,68 @@ impl ImapService {
         Ok(())
     }
 
+    /// Get quota usage via IMAP (calculates from folder sizes)
+    /// Returns (used_bytes, message_count)
+    pub async fn get_quota(
+        &self,
+        username: &str,
+        password: &str,
+    ) -> Result<(i64, i32), AppError> {
+        let mut session = self.connect(username, password).await?;
+
+        let mailboxes: Vec<_> = session
+            .list(Some(""), Some("*"))
+            .await
+            .map_err(|e| AppError::Imap(format!("LIST failed: {}", e)))?
+            .try_collect()
+            .await
+            .map_err(|e| AppError::Imap(format!("LIST stream failed: {}", e)))?;
+
+        let mut total_messages: u32 = 0;
+        let mut total_size: i64 = 0;
+
+        for mailbox in &mailboxes {
+            let name = mailbox.name().to_string();
+            let status = session
+                .status(&name, "(MESSAGES)")
+                .await
+                .map_err(|e| {
+                    AppError::Imap(format!("STATUS failed for {}: {}", name, e))
+                })?;
+
+            total_messages += status.exists;
+
+            // Select folder and sum message sizes
+            if status.exists > 0 {
+                let mbox = session
+                    .select(&name)
+                    .await
+                    .map_err(|e| AppError::Imap(format!("SELECT failed: {}", e)))?;
+
+                if mbox.exists > 0 {
+                    let range = format!("1:{}", mbox.exists);
+                    let messages: Vec<_> = session
+                        .fetch(&range, "RFC822.SIZE")
+                        .await
+                        .map_err(|e| AppError::Imap(format!("FETCH SIZE failed: {}", e)))?
+                        .try_collect()
+                        .await
+                        .unwrap_or_default();
+
+                    for msg in &messages {
+                        if let Some(size) = msg.size {
+                            total_size += size as i64;
+                        }
+                    }
+                }
+            }
+        }
+
+        let _ = session.logout().await;
+
+        Ok((total_size, total_messages as i32))
+    }
+
     /// Fetch a full message by UID
     pub async fn get_message(
         &self,

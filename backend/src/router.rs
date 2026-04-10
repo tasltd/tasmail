@@ -81,6 +81,9 @@ pub fn create_router(state: AppState) -> Router {
             "/api/admin/users/{id}",
             delete(handlers::admin::users::delete_user),
         )
+        // Quota
+        .route("/api/quota", get(handlers::quota::get_quota))
+        .route("/api/quota/sync", post(handlers::quota::sync_quota))
         // Audit log
         .route(
             "/api/admin/audit-log",

@@ -27,6 +27,8 @@ pub struct ImapConfig {
     pub host: String,
     pub port: u16,
     pub tls: bool,
+    #[serde(default)]
+    pub master_password: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -77,6 +79,7 @@ impl Config {
                 tls: std::env::var("IMAP_TLS")
                     .map(|v| v != "false")
                     .unwrap_or(true),
+                master_password: std::env::var("IMAP_MASTER_PASSWORD").ok(),
             },
             smtp: SmtpConfig {
                 host: std::env::var("SMTP_HOST").unwrap_or_else(|_| "127.0.0.1".to_string()),

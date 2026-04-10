@@ -4,4 +4,5 @@ pub mod contacts;
 pub mod folders;
 pub mod health;
 pub mod messages;
+pub mod quota;
 pub mod signatures;
