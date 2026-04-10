@@ -81,6 +81,11 @@ pub fn create_router(state: AppState) -> Router {
             "/api/admin/users/{id}",
             delete(handlers::admin::users::delete_user),
         )
+        // Audit log
+        .route(
+            "/api/admin/audit-log",
+            get(handlers::admin::audit::list_audit_logs),
+        )
         .layer(axum_middleware::from_fn_with_state(
             state.clone(),
             auth_middleware,

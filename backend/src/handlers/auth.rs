@@ -6,6 +6,7 @@ use axum::{
 use serde::Deserialize;
 
 use crate::error::AppError;
+use crate::models::audit_log::AuditLog;
 use crate::services::auth_service;
 use crate::state::AppState;
 
@@ -35,6 +36,19 @@ pub async fn login(
     )
     .await?;
 
+    // Added: Audit log for successful login (fire-and-forget)
+    let _ = AuditLog::record(
+        &state.db,
+        None,
+        "auth.login",
+        Some("session"),
+        None,
+        Some(serde_json::json!({ "username": body.username })),
+        None,
+        None,
+    )
+    .await;
+
     Ok((StatusCode::OK, Json(tokens)))
 }
 
@@ -61,6 +75,19 @@ pub async fn logout(
 
     // Delete all sessions for this user
     crate::models::session::Session::delete_all_for_mailbox(&state.db, mailbox_id).await?;
+
+    // Added: Audit log for logout
+    let _ = AuditLog::record(
+        &state.db,
+        Some(mailbox_id),
+        "auth.logout",
+        Some("session"),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await;
 
     Ok(StatusCode::NO_CONTENT)
 }
