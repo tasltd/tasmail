@@ -10,5 +10,6 @@ pub mod migration;
 pub mod quota;
 pub mod scheduled;
 pub mod shared;
+pub mod sms_otp;
 pub mod signatures;
 pub mod two_factor;

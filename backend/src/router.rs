@@ -99,6 +99,12 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/2fa/verify", post(handlers::two_factor::verify))
         .route("/api/2fa/status", get(handlers::two_factor::status))
         .route("/api/2fa", delete(handlers::two_factor::disable))
+        // SMS OTP
+        .route("/api/sms-otp/enroll", post(handlers::sms_otp::enroll))
+        .route("/api/sms-otp/verify", post(handlers::sms_otp::verify))
+        .route("/api/sms-otp/status", get(handlers::sms_otp::status))
+        .route("/api/sms-otp/resend", post(handlers::sms_otp::resend))
+        .route("/api/sms-otp", delete(handlers::sms_otp::disable))
         // Quota
         .route("/api/quota", get(handlers::quota::get_quota))
         .route("/api/quota/sync", post(handlers::quota::sync_quota))
