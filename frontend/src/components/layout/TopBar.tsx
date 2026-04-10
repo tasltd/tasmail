@@ -1,7 +1,8 @@
 import { useState, useCallback } from 'react';
-import { Search, Menu, LogOut, Moon, Sun } from 'lucide-react';
+import { Search, Menu, LogOut, Moon, Sun, WifiOff } from 'lucide-react';
 import { useUiStore } from '../../stores/uiStore';
 import { useMailStore } from '../../stores/mailStore';
+import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 
 interface TopBarProps {
   onLogout: () => void;
@@ -12,6 +13,7 @@ export function TopBar({ onLogout }: TopBarProps) {
   const theme = useUiStore((s) => s.theme);
   const toggleTheme = useUiStore((s) => s.toggleTheme);
   const setSearchQuery = useMailStore((s) => s.setSearchQuery);
+  const isOnline = useOnlineStatus();
   const [inputValue, setInputValue] = useState('');
 
   const handleSearch = useCallback(
@@ -41,6 +43,12 @@ export function TopBar({ onLogout }: TopBarProps) {
       </form>
 
       <div className="topbar__actions">
+        {/* Added: Offline indicator for PWA support */}
+        {!isOnline && (
+          <span className="topbar__offline" title="You are offline — changes will sync when reconnected">
+            <WifiOff size={18} /> Offline
+          </span>
+        )}
         <button className="btn btn--icon" onClick={toggleTheme} title="Toggle theme">
           {theme === 'light' ? <Moon size={18} /> : <Sun size={18} />}
         </button>

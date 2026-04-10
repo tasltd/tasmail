@@ -100,7 +100,21 @@ body {
 }
 .topbar__actions {
   display: flex;
+  align-items: center;
   gap: 4px;
+}
+
+/* Added: Offline indicator for PWA */
+.topbar__offline {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  background: var(--color-danger);
+  color: white;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 500;
 }
 
 /* Sidebar */
