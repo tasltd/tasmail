@@ -3,6 +3,7 @@ use axum::{
     routing::{delete, get, post, put},
     Router,
 };
+use tower_http::compression::CompressionLayer;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
@@ -155,9 +156,11 @@ pub fn create_router(state: AppState) -> Router {
         axum::http::HeaderValue::from_static("1.0"),
     );
 
+    // Added: Gzip compression for low-bandwidth optimization
     Router::new()
         .merge(public_routes)
         .merge(protected_routes)
+        .layer(CompressionLayer::new())
         .layer(api_version_layer)
         .layer(TraceLayer::new_for_http())
         .layer(cors)

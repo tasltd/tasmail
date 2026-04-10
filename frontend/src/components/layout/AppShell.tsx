@@ -10,6 +10,7 @@ import { TwoFactorManager } from '../settings/TwoFactorManager';
 import { VacationResponder } from '../settings/VacationResponder';
 import { GroupManager } from '../settings/GroupManager';
 import { MigrationManager } from '../settings/MigrationManager';
+import { LowBandwidthSettings } from '../settings/LowBandwidthSettings';
 import { useMailStore } from '../../stores/mailStore';
 import { useUiStore } from '../../stores/uiStore';
 
@@ -43,6 +44,7 @@ export function AppShell({ onLogout }: AppShellProps) {
           {viewMode === 'vacation' && <VacationResponder />}
           {viewMode === 'groups' && <GroupManager />}
           {viewMode === 'migration' && <MigrationManager />}
+          {viewMode === 'bandwidth' && <LowBandwidthSettings />}
         </main>
       </div>
     </div>
