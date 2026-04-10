@@ -3,8 +3,9 @@ import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Link from '@tiptap/extension-link';
 import Placeholder from '@tiptap/extension-placeholder';
-import { Send, X, Save } from 'lucide-react';
-import { sendMessage, saveDraft } from '../../api/messages';
+import { Send, X, Save, Clock, Undo2 } from 'lucide-react';
+import { saveDraft } from '../../api/messages';
+import { scheduledApi } from '../../api/scheduled';
 import { useMailStore } from '../../stores/mailStore';
 
 export function Composer() {
@@ -15,7 +16,11 @@ export function Composer() {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
   const [draftStatus, setDraftStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
+  const [undoState, setUndoState] = useState<{ cancelToken: string; countdown: number } | null>(null);
+  const [showSchedulePicker, setShowSchedulePicker] = useState(false);
+  const [scheduleDate, setScheduleDate] = useState('');
   const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const undoTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const editor = useEditor({
     extensions: [
@@ -67,6 +72,13 @@ export function Composer() {
     return () => { editor.off('update', handler); };
   }, [editor, scheduleDraftSave]);
 
+  // Added: Undo countdown cleanup
+  useEffect(() => {
+    return () => {
+      if (undoTimerRef.current) clearInterval(undoTimerRef.current);
+    };
+  }, []);
+
   const handleSend = async () => {
     if (!to.trim()) {
       setError('Recipients required');
@@ -79,20 +91,76 @@ export function Composer() {
     try {
       const htmlBody = editor?.getHTML() || '';
       const textBody = editor?.getText() || '';
+      const recipients = to.split(',').map((s) => s.trim()).filter(Boolean);
+      const ccList = cc ? cc.split(',').map((s) => s.trim()).filter(Boolean) : undefined;
 
-      await sendMessage({
+      // Use schedule-send with 10s delay for undo capability
+      const result = await scheduledApi.scheduleSend({
+        to: recipients,
+        cc: ccList,
+        subject,
+        html_body: htmlBody,
+        text_body: textBody,
+        delay_seconds: 10,
+      });
+
+      // Show undo toast with countdown
+      setUndoState({ cancelToken: result.cancel_token, countdown: 10 });
+      undoTimerRef.current = setInterval(() => {
+        setUndoState((prev) => {
+          if (!prev || prev.countdown <= 1) {
+            if (undoTimerRef.current) clearInterval(undoTimerRef.current);
+            return null;
+          }
+          return { ...prev, countdown: prev.countdown - 1 };
+        });
+      }, 1000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to send');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const handleUndo = async () => {
+    if (!undoState) return;
+    try {
+      await scheduledApi.cancelScheduled(undoState.cancelToken);
+      setUndoState(null);
+      if (undoTimerRef.current) clearInterval(undoTimerRef.current);
+    } catch {
+      setError('Failed to undo — message may have already been sent');
+    }
+  };
+
+  const handleScheduleSend = async () => {
+    if (!to.trim() || !scheduleDate) {
+      setError('Recipients and schedule date required');
+      return;
+    }
+
+    setSending(true);
+    setError('');
+
+    try {
+      const htmlBody = editor?.getHTML() || '';
+      const textBody = editor?.getText() || '';
+
+      await scheduledApi.scheduleSend({
         to: to.split(',').map((s) => s.trim()).filter(Boolean),
         cc: cc ? cc.split(',').map((s) => s.trim()).filter(Boolean) : undefined,
         subject,
         html_body: htmlBody,
         text_body: textBody,
+        scheduled_at: new Date(scheduleDate).toISOString(),
       });
 
       setViewMode('list');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to send');
+      setError(err instanceof Error ? err.message : 'Failed to schedule');
     } finally {
       setSending(false);
+      setShowSchedulePicker(false);
     }
   };
 
@@ -155,7 +223,50 @@ export function Composer() {
           <Send size={16} />
           {sending ? 'Sending...' : 'Send'}
         </button>
+        <button
+          className="btn btn--secondary"
+          onClick={() => setShowSchedulePicker(!showSchedulePicker)}
+          disabled={sending}
+        >
+          <Clock size={16} />
+          Schedule
+        </button>
       </div>
+
+      {showSchedulePicker && (
+        <div className="composer__schedule" style={{ padding: '8px 16px', borderTop: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <label style={{ fontSize: '13px' }}>Send at:</label>
+          <input
+            type="datetime-local"
+            value={scheduleDate}
+            onChange={(e) => setScheduleDate(e.target.value)}
+            min={new Date().toISOString().slice(0, 16)}
+            style={{ fontSize: '13px', padding: '4px 8px' }}
+          />
+          <button className="btn btn--primary btn--sm" onClick={handleScheduleSend} disabled={sending || !scheduleDate}>
+            Schedule Send
+          </button>
+        </div>
+      )}
+
+      {undoState && (
+        <div className="composer__undo-toast" style={{
+          position: 'fixed', bottom: '24px', left: '50%', transform: 'translateX(-50%)',
+          background: 'var(--color-bg-elevated, #333)', color: 'var(--color-text-inverse, #fff)',
+          padding: '12px 20px', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '12px',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.3)', zIndex: 1000,
+        }}>
+          <span>Message sent ({undoState.countdown}s)</span>
+          <button onClick={handleUndo} style={{
+            background: 'transparent', color: 'var(--color-primary, #4a90d9)',
+            border: '1px solid var(--color-primary, #4a90d9)', borderRadius: '4px',
+            padding: '4px 12px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px',
+          }}>
+            <Undo2 size={14} />
+            Undo
+          </button>
+        </div>
+      )}
     </div>
   );
 }

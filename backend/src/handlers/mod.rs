@@ -5,4 +5,5 @@ pub mod folders;
 pub mod health;
 pub mod messages;
 pub mod quota;
+pub mod scheduled;
 pub mod signatures;

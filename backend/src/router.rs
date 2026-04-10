@@ -81,6 +81,13 @@ pub fn create_router(state: AppState) -> Router {
             "/api/admin/users/{id}",
             delete(handlers::admin::users::delete_user),
         )
+        // Scheduled / undo-send
+        .route("/api/messages/schedule", post(handlers::scheduled::schedule_send))
+        .route("/api/messages/scheduled", get(handlers::scheduled::list_scheduled))
+        .route(
+            "/api/messages/cancel/{cancel_token}",
+            post(handlers::scheduled::cancel_scheduled),
+        )
         // Quota
         .route("/api/quota", get(handlers::quota::get_quota))
         .route("/api/quota/sync", post(handlers::quota::sync_quota))

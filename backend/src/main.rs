@@ -65,6 +65,14 @@ async fn main() -> anyhow::Result<()> {
 
     let addr: SocketAddr = format!("{}:{}", config.server.host, config.server.port).parse()?;
 
+    // Start background email scheduler (polls every 5 seconds)
+    let scheduler = services::email_scheduler::EmailScheduler::new(
+        std::sync::Arc::new(pool.clone()),
+        config.smtp.clone(),
+        5,
+    );
+    scheduler.start();
+
     let state = AppState {
         db: pool,
         config,
