@@ -159,3 +159,71 @@ pub async fn remove_member(
     GroupMember::remove(&state.db, id, &address).await?;
     Ok(StatusCode::NO_CONTENT)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_mailbox_id_valid_uuid() {
+        let claims = Claims {
+            sub: "550e8400-e29b-41d4-a716-446655440000".to_string(),
+            username: "test@example.com".to_string(),
+            is_admin: false,
+            exp: 0,
+            iat: 0,
+        };
+        let result = parse_mailbox_id(&claims);
+        assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap().to_string(),
+            "550e8400-e29b-41d4-a716-446655440000"
+        );
+    }
+
+    #[test]
+    fn test_parse_mailbox_id_invalid_uuid() {
+        let claims = Claims {
+            sub: "not-a-uuid".to_string(),
+            username: "test@example.com".to_string(),
+            is_admin: false,
+            exp: 0,
+            iat: 0,
+        };
+        let result = parse_mailbox_id(&claims);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_create_group_request_deserialization() {
+        let json = r#"{"name": "Team", "address": "team@example.com", "domain_id": "550e8400-e29b-41d4-a716-446655440000", "description": "Dev team"}"#;
+        let req: CreateGroupRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.name, "Team");
+        assert_eq!(req.address, "team@example.com");
+        assert_eq!(req.description, Some("Dev team".to_string()));
+    }
+
+    #[test]
+    fn test_add_member_request_deserialization() {
+        let json = r#"{"member_address": "alice@example.com"}"#;
+        let req: AddMemberRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.member_address, "alice@example.com");
+        assert!(req.mailbox_id.is_none());
+    }
+
+    #[test]
+    fn test_update_group_request_all_fields() {
+        let json = r#"{"name": "Updated", "description": "New desc"}"#;
+        let req: UpdateGroupRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.name, Some("Updated".to_string()));
+        assert_eq!(req.description, Some("New desc".to_string()));
+    }
+
+    #[test]
+    fn test_update_group_request_partial() {
+        let json = r#"{"name": "Just Name"}"#;
+        let req: UpdateGroupRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.name, Some("Just Name".to_string()));
+        assert!(req.description.is_none());
+    }
+}

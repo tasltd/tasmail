@@ -161,16 +161,18 @@ pub async fn status(
 
     Ok(Json(SmsOtpStatus {
         enabled,
-        phone_number: phone.map(|p| {
-            // Mask phone number for security
-            if p.len() > 6 {
-                format!("{}***{}", &p[..4], &p[p.len()-3..])
-            } else {
-                "***".to_string()
-            }
-        }),
+        phone_number: phone.map(|p| mask_phone(&p)),
         provider,
     }))
+}
+
+// Added: Phone masking helper extracted for testability
+fn mask_phone(p: &str) -> String {
+    if p.len() > 6 {
+        format!("{}***{}", &p[..4], &p[p.len()-3..])
+    } else {
+        "***".to_string()
+    }
 }
 
 /// POST /api/sms-otp/resend — Resend OTP code
@@ -220,4 +222,71 @@ pub async fn resend(
         .map_err(|e| AppError::Internal(e))?;
 
     Ok(StatusCode::OK)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_mask_phone_normal() {
+        assert_eq!(mask_phone("+233241234789"), "+233***789");
+    }
+
+    #[test]
+    fn test_mask_phone_short() {
+        assert_eq!(mask_phone("+2332"), "***");
+    }
+
+    #[test]
+    fn test_mask_phone_exactly_7_chars() {
+        assert_eq!(mask_phone("+233241"), "+233***241");
+    }
+
+    #[test]
+    fn test_enroll_request_deserialization() {
+        let json = r#"{"phone_number": "+233241234567", "provider": "hubtel"}"#;
+        let req: EnrollSmsRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.phone_number, "+233241234567");
+        assert_eq!(req.provider, Some("hubtel".to_string()));
+    }
+
+    #[test]
+    fn test_enroll_request_without_provider() {
+        let json = r#"{"phone_number": "+233241234567"}"#;
+        let req: EnrollSmsRequest = serde_json::from_str(json).unwrap();
+        assert!(req.provider.is_none());
+    }
+
+    #[test]
+    fn test_verify_request_deserialization() {
+        let json = r#"{"code": "123456"}"#;
+        let req: VerifySmsOtpRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.code, "123456");
+    }
+
+    #[test]
+    fn test_sms_otp_status_serialization() {
+        let status = SmsOtpStatus {
+            enabled: true,
+            phone_number: Some("+233***789".to_string()),
+            provider: Some("hubtel".to_string()),
+        };
+        let json = serde_json::to_value(&status).unwrap();
+        assert_eq!(json["enabled"], true);
+        assert_eq!(json["phone_number"], "+233***789");
+        assert_eq!(json["provider"], "hubtel");
+    }
+
+    #[test]
+    fn test_sms_otp_status_disabled() {
+        let status = SmsOtpStatus {
+            enabled: false,
+            phone_number: None,
+            provider: None,
+        };
+        let json = serde_json::to_value(&status).unwrap();
+        assert_eq!(json["enabled"], false);
+        assert!(json["phone_number"].is_null());
+    }
 }

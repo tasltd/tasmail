@@ -203,3 +203,60 @@ pub async fn status(
         backup_codes_remaining: remaining.0,
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_verify_request_deserialization() {
+        let json = r#"{"code": "123456"}"#;
+        let req: VerifyRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.code, "123456");
+    }
+
+    #[test]
+    fn test_verify_request_rejects_missing_code() {
+        let json = r#"{}"#;
+        assert!(serde_json::from_str::<VerifyRequest>(json).is_err());
+    }
+
+    #[test]
+    fn test_enroll_response_serialization() {
+        let resp = EnrollResponse {
+            secret: "JBSWY3DPEHPK3PXP".to_string(),
+            otpauth_url: "otpauth://totp/TASMail:user@example.com?secret=JBSWY3DPEHPK3PXP".to_string(),
+            backup_codes: vec!["abc123".to_string(), "def456".to_string()],
+        };
+        let json = serde_json::to_value(&resp).unwrap();
+        assert_eq!(json["secret"], "JBSWY3DPEHPK3PXP");
+        assert!(json["otpauth_url"].as_str().unwrap().starts_with("otpauth://"));
+        assert_eq!(json["backup_codes"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn test_two_factor_status_serialization() {
+        let status = TwoFactorStatus {
+            enabled: true,
+            verified_at: Some("2026-01-15T10:30:00+00:00".to_string()),
+            backup_codes_remaining: 8,
+        };
+        let json = serde_json::to_value(&status).unwrap();
+        assert_eq!(json["enabled"], true);
+        assert_eq!(json["backup_codes_remaining"], 8);
+        assert!(json["verified_at"].is_string());
+    }
+
+    #[test]
+    fn test_two_factor_status_disabled() {
+        let status = TwoFactorStatus {
+            enabled: false,
+            verified_at: None,
+            backup_codes_remaining: 0,
+        };
+        let json = serde_json::to_value(&status).unwrap();
+        assert_eq!(json["enabled"], false);
+        assert!(json["verified_at"].is_null());
+        assert_eq!(json["backup_codes_remaining"], 0);
+    }
+}

@@ -104,3 +104,74 @@ pub async fn cancel_migration(
     MigrationJob::cancel(&state.db, id).await?;
     Ok(StatusCode::OK)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_imap_migration_request_deserialization() {
+        let json = r#"{
+            "source_host": "imap.gmail.com",
+            "source_port": 993,
+            "source_user": "user@gmail.com",
+            "source_password": "app-password",
+            "source_use_ssl": true
+        }"#;
+        let req: CreateImapMigrationRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.source_host, "imap.gmail.com");
+        assert_eq!(req.source_port, Some(993));
+        assert_eq!(req.source_user, "user@gmail.com");
+        assert!(req.source_use_ssl.unwrap_or(false));
+    }
+
+    #[test]
+    fn test_imap_migration_request_minimal() {
+        let json = r#"{
+            "source_host": "imap.example.com",
+            "source_user": "user",
+            "source_password": "pass"
+        }"#;
+        let req: CreateImapMigrationRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.source_host, "imap.example.com");
+        assert!(req.source_port.is_none());
+        assert!(req.source_use_ssl.is_none());
+    }
+
+    #[test]
+    fn test_mbox_import_request_deserialization() {
+        let json = r#"{"mbox_file_path": "/tmp/mail.mbox"}"#;
+        let req: CreateMboxImportRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.mbox_file_path, "/tmp/mail.mbox");
+    }
+
+    #[test]
+    fn test_mbox_import_request_rejects_missing_path() {
+        let json = r#"{}"#;
+        assert!(serde_json::from_str::<CreateMboxImportRequest>(json).is_err());
+    }
+
+    #[test]
+    fn test_parse_mailbox_id_valid() {
+        let claims = Claims {
+            sub: "550e8400-e29b-41d4-a716-446655440000".to_string(),
+            username: "test@example.com".to_string(),
+            is_admin: false,
+            exp: 0,
+            iat: 0,
+        };
+        assert!(parse_mailbox_id(&claims).is_ok());
+    }
+
+    #[test]
+    fn test_parse_mailbox_id_invalid() {
+        let claims = Claims {
+            sub: "invalid".to_string(),
+            username: "test@example.com".to_string(),
+            is_admin: false,
+            exp: 0,
+            iat: 0,
+        };
+        assert!(parse_mailbox_id(&claims).is_err());
+    }
+}
