@@ -27,6 +27,7 @@ npm run lint                   # ESLint
 npm run test                   # Vitest (single run)
 npm run test:watch             # Vitest (watch mode)
 npx vitest run src/api/client.test.ts  # Run a single test file
+npm run preview                # Preview production build
 ```
 
 ### Database
@@ -54,7 +55,7 @@ Key patterns:
 - JWT access tokens (15min) + refresh tokens (7 days), stored in localStorage on frontend
 
 ### Frontend (`frontend/src/`)
-React 19 SPA with Vite 8, TypeScript 6:
+React 19 SPA with Vite 8, TypeScript 6, React Router 7, TanStack Query 5, Zustand 5:
 
 - **`api/client.ts`** — Singleton `ApiClient` class wrapping fetch with auto-refresh on 401. All API modules (`auth.ts`, `messages.ts`, `folders.ts`, etc.) use this client
 - **`stores/`** — Zustand stores: `mailStore` (selected folder/uid/viewMode), `uiStore` (theme, sidebar state)
@@ -74,8 +75,8 @@ PWA enabled via `vite-plugin-pwa` with Workbox runtime caching for API responses
 The dev server proxies `/api` → `http://127.0.0.1:3000` and `/ws` → `ws://127.0.0.1:3000`, so both backend and frontend can run on their own ports during development.
 
 ### Test Setup
-- **Frontend**: Vitest with jsdom environment, `@testing-library/react`, `fake-indexeddb`. Setup file: `src/test/setup.ts` (imports `@testing-library/jest-dom/vitest` for matcher extensions). Tests colocated with source (`*.test.ts` next to `*.ts`). Vitest config is in `vite.config.ts` under `test` key (globals enabled)
-- **Backend**: Standard `#[cfg(test)]` modules and `tokio-test`. Rust edition 2024. No integration test infrastructure yet
+- **Frontend**: Vitest 4 with jsdom environment, `@testing-library/react`, `fake-indexeddb`. Setup file: `src/test/setup.ts` (imports `@testing-library/jest-dom/vitest` for matcher extensions). 38 test files colocated with source (`*.test.ts` next to `*.ts`). Vitest config is in `vite.config.ts` under `test` key (globals enabled). Key test deps: `@testing-library/react` 16, `jsdom` 29
+- **Backend**: Standard `#[cfg(test)]` modules and `tokio-test`. Rust edition 2024. No integration test infrastructure yet. No E2E tests configured
 
 ## Configuration
 
