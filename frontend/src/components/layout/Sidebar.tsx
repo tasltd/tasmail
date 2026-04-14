@@ -13,7 +13,9 @@
 // Added: Brain icon for AI configuration sidebar entry (TMAIL-105)
 // Added: KeyRound icon for SAML SSO sidebar entry (TMAIL-101)
 // Added: LogIn icon for OIDC providers sidebar entry (TMAIL-99)
-import { PenSquare, FileSignature, Users, Shield, Plane, UsersRound, Upload, Gauge, Filter, Mailbox, ListTodo, CheckSquare, Webhook, Palette, Archive, Globe, FileUp, UserPlus, MessageSquare, Calendar, Network, Brain, KeyRound, LogIn } from 'lucide-react';
+// Added: Search icon for eDiscovery sidebar entry (TMAIL-137)
+// Added: ShieldCheck icon for DLP sidebar entry (TMAIL-108)
+import { PenSquare, FileSignature, Users, Shield, Plane, UsersRound, Upload, Gauge, Filter, Mailbox, ListTodo, CheckSquare, Webhook, Palette, Archive, Globe, FileUp, UserPlus, MessageSquare, Calendar, Network, Brain, KeyRound, LogIn, Search, ShieldCheck } from 'lucide-react';
 import { FolderTree } from '../mail/FolderTree';
 import { QuotaBar } from './QuotaBar';
 import { useMailStore } from '../../stores/mailStore';
@@ -198,6 +200,22 @@ export function Sidebar() {
         >
           <LogIn size={18} />
           <span className="folder-item__name">OIDC</span>
+        </button>
+        {/* Added: DLP navigation entry (TMAIL-108) */}
+        <button
+          className={`folder-item ${viewMode === 'dlp' ? 'folder-item--active' : ''}`}
+          onClick={() => setViewMode('dlp')}
+        >
+          <ShieldCheck size={18} />
+          <span className="folder-item__name">DLP</span>
+        </button>
+        {/* Added: eDiscovery navigation entry (TMAIL-137) */}
+        <button
+          className={`folder-item ${viewMode === 'ediscovery' ? 'folder-item--active' : ''}`}
+          onClick={() => setViewMode('ediscovery')}
+        >
+          <Search size={18} />
+          <span className="folder-item__name">eDiscovery</span>
         </button>
         <button
           className={`folder-item ${viewMode === 'bandwidth' ? 'folder-item--active' : ''}`}

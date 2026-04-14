@@ -16,7 +16,9 @@ import type { AdvancedSearchParams } from '../api/messages';
 // Added: 'ai-config' view mode for BYOK AI provider management (TMAIL-105)
 // Added: 'saml' view mode for SAML 2.0 SSO configuration management (TMAIL-101)
 // Added: 'oidc' view mode for OIDC identity provider management (TMAIL-99)
-type ViewMode = 'list' | 'reader' | 'compose' | 'search' | 'signatures' | 'contacts' | 'security' | 'vacation' | 'groups' | 'migration' | 'bandwidth' | 'filters' | 'shared' | 'queue' | 'tasks' | 'webhooks' | 'branding' | 'retention' | 'hostnames' | 'shared-files' | 'bulk-import' | 'chat' | 'calendar' | 'ldap' | 'ai-config' | 'saml' | 'oidc';
+// Added: 'ediscovery' view mode for eDiscovery compliance search (TMAIL-137)
+// Added: 'dlp' view mode for Data Loss Prevention rule management (TMAIL-108)
+type ViewMode = 'list' | 'reader' | 'compose' | 'search' | 'signatures' | 'contacts' | 'security' | 'vacation' | 'groups' | 'migration' | 'bandwidth' | 'filters' | 'shared' | 'queue' | 'tasks' | 'webhooks' | 'branding' | 'retention' | 'hostnames' | 'shared-files' | 'bulk-import' | 'chat' | 'calendar' | 'ldap' | 'ai-config' | 'saml' | 'oidc' | 'ediscovery' | 'dlp';
 
 interface MailState {
   selectedFolder: string;

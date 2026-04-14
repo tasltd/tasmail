@@ -59,4 +59,8 @@ pub mod saml;
 pub mod oidc;
 // Added: Semantic search handlers for pgvector similarity search (TMAIL-106)
 pub mod semantic_search;
+// Added: eDiscovery search handlers for compliance investigations (TMAIL-137)
+pub mod ediscovery;
+// Added: DLP rule and violation management handlers for TMAIL-108
+pub mod dlp;
 pub mod websocket;

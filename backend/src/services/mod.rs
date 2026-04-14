@@ -24,3 +24,5 @@ pub mod ics_generator;
 pub mod ai_client;
 // Added: Embedding generation and similarity search service for TMAIL-106
 pub mod embedding_service;
+// Added: DLP content scanner service for Data Loss Prevention (TMAIL-108)
+pub mod dlp_scanner;

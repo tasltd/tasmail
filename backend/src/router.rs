@@ -481,6 +481,42 @@ pub fn create_router(state: AppState) -> Router {
             "/api/search/index/stats",
             get(handlers::semantic_search::index_stats),
         )
+        // Added: eDiscovery search routes for compliance investigations (TMAIL-137)
+        .route(
+            "/api/admin/ediscovery",
+            get(handlers::ediscovery::list_searches)
+                .post(handlers::ediscovery::create_search),
+        )
+        .route(
+            "/api/admin/ediscovery/{id}",
+            get(handlers::ediscovery::get_search)
+                .delete(handlers::ediscovery::delete_search),
+        )
+        .route(
+            "/api/admin/ediscovery/{id}/execute",
+            post(handlers::ediscovery::execute_search),
+        )
+        .route(
+            "/api/admin/ediscovery/{id}/export",
+            post(handlers::ediscovery::export_results),
+        )
+        // Added: DLP rule and violation management routes for TMAIL-108
+        .route(
+            "/api/admin/dlp/rules",
+            get(handlers::dlp::list_rules).post(handlers::dlp::create_rule),
+        )
+        .route(
+            "/api/admin/dlp/rules/{id}",
+            put(handlers::dlp::update_rule).delete(handlers::dlp::delete_rule),
+        )
+        .route(
+            "/api/admin/dlp/violations",
+            get(handlers::dlp::list_violations),
+        )
+        .route(
+            "/api/admin/dlp/scan",
+            post(handlers::dlp::test_scan),
+        )
         // Audit log
         .route(
             "/api/admin/audit-log",

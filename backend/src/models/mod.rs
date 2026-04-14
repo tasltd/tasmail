@@ -54,3 +54,7 @@ pub mod saml_config;
 pub mod oidc_provider;
 // Added: Email embedding model for semantic search with pgvector (TMAIL-106)
 pub mod email_embedding;
+// Added: eDiscovery search model for compliance investigations (TMAIL-137)
+pub mod ediscovery;
+// Added: DLP rule and violation models for Data Loss Prevention scanning (TMAIL-108)
+pub mod dlp_rule;

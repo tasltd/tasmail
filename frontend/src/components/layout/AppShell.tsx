@@ -42,6 +42,10 @@ import { AiConfigManager } from '../settings/AiConfigManager';
 import { SamlManager } from '../settings/SamlManager';
 // Added: OIDC identity provider management component (TMAIL-99)
 import { OidcManager } from '../settings/OidcManager';
+// Added: eDiscovery search management component (TMAIL-137)
+import { EdiscoveryManager } from '../settings/EdiscoveryManager';
+// Added: DLP rule management component for Data Loss Prevention (TMAIL-108)
+import { DlpManager } from '../settings/DlpManager';
 import { useMailStore } from '../../stores/mailStore';
 import { useUiStore } from '../../stores/uiStore';
 // Added: Keyboard shortcuts hook and help dialog for TMAIL-121
@@ -112,6 +116,10 @@ export function AppShell({ onLogout }: AppShellProps) {
           {viewMode === 'saml' && <SamlManager />}
           {/* Added: OIDC provider management view (TMAIL-99) */}
           {viewMode === 'oidc' && <OidcManager />}
+          {/* Added: eDiscovery search management view (TMAIL-137) */}
+          {viewMode === 'ediscovery' && <EdiscoveryManager />}
+          {/* Added: DLP rule management view (TMAIL-108) */}
+          {viewMode === 'dlp' && <DlpManager />}
         </main>
       </div>
       {/* Added: Keyboard shortcut help dialog, toggled by '?' key */}
