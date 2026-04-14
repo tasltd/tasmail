@@ -32,3 +32,7 @@ pub mod webauthn_credential;
 pub mod retention_policy;
 // Added: Webhook model for outbound notifications (TMAIL-131)
 pub mod webhook;
+// Added: Custom hostname model for per-tenant SNI configuration (TMAIL-112)
+pub mod custom_hostname;
+// Added: PST import model for Outlook migration (TMAIL-115)
+pub mod pst_import;

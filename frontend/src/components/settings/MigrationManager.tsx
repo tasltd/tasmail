@@ -3,6 +3,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Upload, X, Server, FileArchive } from 'lucide-react';
 import { migrationApi } from '../../api/migration';
 import type { MigrationJob } from '../../types/migration';
+// Added: PST import section for Outlook migration (TMAIL-115)
+import { PstImportManager } from './PstImportManager';
 
 export function MigrationManager() {
   const queryClient = useQueryClient();
@@ -134,6 +136,9 @@ export function MigrationManager() {
       )}
 
       {isLoading && <p className="loading">Loading migration history...</p>}
+
+      {/* Added: PST Import section for Outlook migration (TMAIL-115) */}
+      <PstImportManager />
     </div>
   );
 }

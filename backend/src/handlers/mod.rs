@@ -37,4 +37,8 @@ pub mod webauthn;
 pub mod retention;
 // Added: Webhook management handlers for TMAIL-131
 pub mod webhooks;
+// Added: Custom hostname management handlers for per-tenant SNI (TMAIL-112)
+pub mod custom_hostnames;
+// Added: PST import handlers for Outlook migration (TMAIL-115)
+pub mod pst_import;
 pub mod websocket;

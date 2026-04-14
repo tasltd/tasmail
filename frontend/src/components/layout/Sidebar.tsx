@@ -4,7 +4,8 @@
 // Added: Webhook icon for webhooks sidebar entry (TMAIL-131)
 // Added: Palette icon for branding sidebar entry (TMAIL-111)
 // Added: Archive icon for retention sidebar entry (TMAIL-109)
-import { PenSquare, FileSignature, Users, Shield, Plane, UsersRound, Upload, Gauge, Filter, Mailbox, ListTodo, CheckSquare, Webhook, Palette, Archive } from 'lucide-react';
+// Added: Globe icon for custom hostnames sidebar entry (TMAIL-112)
+import { PenSquare, FileSignature, Users, Shield, Plane, UsersRound, Upload, Gauge, Filter, Mailbox, ListTodo, CheckSquare, Webhook, Palette, Archive, Globe } from 'lucide-react';
 import { FolderTree } from '../mail/FolderTree';
 import { QuotaBar } from './QuotaBar';
 import { useMailStore } from '../../stores/mailStore';
@@ -109,6 +110,14 @@ export function Sidebar() {
         >
           <Palette size={18} />
           <span className="folder-item__name">Branding</span>
+        </button>
+        {/* Added: Custom hostnames navigation entry (TMAIL-112) */}
+        <button
+          className={`folder-item ${viewMode === 'hostnames' ? 'folder-item--active' : ''}`}
+          onClick={() => setViewMode('hostnames')}
+        >
+          <Globe size={18} />
+          <span className="folder-item__name">Hostnames</span>
         </button>
         {/* Added: Retention navigation entry (TMAIL-109) */}
         <button

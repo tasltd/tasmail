@@ -24,6 +24,8 @@ import { WebhookManager } from '../settings/WebhookManager';
 import { BrandingManager } from '../settings/BrandingManager';
 // Added: Retention policy and legal hold management component (TMAIL-109)
 import { RetentionManager } from '../settings/RetentionManager';
+// Added: Custom hostname management component (TMAIL-112)
+import { HostnameManager } from '../settings/HostnameManager';
 import { useMailStore } from '../../stores/mailStore';
 import { useUiStore } from '../../stores/uiStore';
 // Added: Keyboard shortcuts hook and help dialog for TMAIL-121
@@ -76,6 +78,8 @@ export function AppShell({ onLogout }: AppShellProps) {
           {viewMode === 'branding' && <BrandingManager />}
           {/* Added: Retention policy and legal hold management view (TMAIL-109) */}
           {viewMode === 'retention' && <RetentionManager />}
+          {/* Added: Custom hostname management view (TMAIL-112) */}
+          {viewMode === 'hostnames' && <HostnameManager />}
         </main>
       </div>
       {/* Added: Keyboard shortcut help dialog, toggled by '?' key */}

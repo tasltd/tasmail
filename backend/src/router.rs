@@ -155,6 +155,13 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/migration/mbox", post(handlers::migration::start_mbox_import))
         .route("/api/migration/{id}", get(handlers::migration::get_migration))
         .route("/api/migration/{id}/cancel", post(handlers::migration::cancel_migration))
+        // Added: PST import routes for Outlook migration (TMAIL-115)
+        .route("/api/migration/pst/upload", post(handlers::pst_import::upload_pst))
+        .route("/api/migration/pst", get(handlers::pst_import::list_pst_imports))
+        .route(
+            "/api/migration/pst/{id}",
+            get(handlers::pst_import::get_pst_import).delete(handlers::pst_import::delete_pst_import),
+        )
         // Shared mailboxes
         .route(
             "/api/shared-mailboxes",
@@ -302,6 +309,22 @@ pub fn create_router(state: AppState) -> Router {
         .route(
             "/api/admin/legal-holds/{id}/release",
             put(handlers::retention::release_legal_hold),
+        )
+        // Added: Custom hostname management routes for per-tenant SNI (TMAIL-112)
+        .route(
+            "/api/admin/hostnames",
+            get(handlers::custom_hostnames::list_hostnames)
+                .post(handlers::custom_hostnames::create_hostname),
+        )
+        .route(
+            "/api/admin/hostnames/{id}",
+            get(handlers::custom_hostnames::get_hostname)
+                .put(handlers::custom_hostnames::update_hostname)
+                .delete(handlers::custom_hostnames::delete_hostname),
+        )
+        .route(
+            "/api/admin/hostnames/{id}/verify",
+            post(handlers::custom_hostnames::verify_hostname),
         )
         // Audit log
         .route(

@@ -7,7 +7,8 @@ import type { AdvancedSearchParams } from '../api/messages';
 // Added: 'webhooks' view mode for outbound webhook management (TMAIL-131)
 // Added: 'branding' view mode for white-label customization (TMAIL-111)
 // Added: 'retention' view mode for retention policies and legal holds (TMAIL-109)
-type ViewMode = 'list' | 'reader' | 'compose' | 'search' | 'signatures' | 'contacts' | 'security' | 'vacation' | 'groups' | 'migration' | 'bandwidth' | 'filters' | 'shared' | 'queue' | 'tasks' | 'webhooks' | 'branding' | 'retention';
+// Added: 'hostnames' view mode for custom hostname management (TMAIL-112)
+type ViewMode = 'list' | 'reader' | 'compose' | 'search' | 'signatures' | 'contacts' | 'security' | 'vacation' | 'groups' | 'migration' | 'bandwidth' | 'filters' | 'shared' | 'queue' | 'tasks' | 'webhooks' | 'branding' | 'retention' | 'hostnames';
 
 interface MailState {
   selectedFolder: string;

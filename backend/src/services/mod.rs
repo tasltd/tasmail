@@ -12,3 +12,5 @@ pub mod smtp_service;
 pub mod totp_service;
 // Added: Webhook dispatcher service for outbound notifications (TMAIL-131)
 pub mod webhook_dispatcher;
+// Added: PST file processor service for Outlook migration (TMAIL-115)
+pub mod pst_processor;
