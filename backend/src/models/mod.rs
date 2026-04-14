@@ -44,3 +44,7 @@ pub mod bulk_import;
 pub mod chat_integration;
 // Added: Calendar event and attendee models for meeting scheduling (TMAIL-127)
 pub mod calendar_event;
+// Added: LDAP/AD configuration and sync log models for TMAIL-100
+pub mod ldap_config;
+// Added: AI configuration model for BYOK AI integration (TMAIL-105)
+pub mod ai_config;

@@ -34,6 +34,10 @@ import { BulkImportManager } from '../settings/BulkImportManager';
 import { ChatIntegrationManager } from '../settings/ChatIntegrationManager';
 // Added: Calendar/meeting scheduling management component (TMAIL-127)
 import { CalendarManager } from '../settings/CalendarManager';
+// Added: LDAP/AD directory sync management component (TMAIL-100)
+import { LdapManager } from '../settings/LdapManager';
+// Added: AI configuration management component for BYOK AI integration (TMAIL-105)
+import { AiConfigManager } from '../settings/AiConfigManager';
 import { useMailStore } from '../../stores/mailStore';
 import { useUiStore } from '../../stores/uiStore';
 // Added: Keyboard shortcuts hook and help dialog for TMAIL-121
@@ -96,6 +100,10 @@ export function AppShell({ onLogout }: AppShellProps) {
           {viewMode === 'chat' && <ChatIntegrationManager />}
           {/* Added: Calendar/meeting scheduling view (TMAIL-127) */}
           {viewMode === 'calendar' && <CalendarManager />}
+          {/* Added: LDAP/AD directory sync management view (TMAIL-100) */}
+          {viewMode === 'ldap' && <LdapManager />}
+          {/* Added: AI configuration management view (TMAIL-105) */}
+          {viewMode === 'ai-config' && <AiConfigManager />}
         </main>
       </div>
       {/* Added: Keyboard shortcut help dialog, toggled by '?' key */}

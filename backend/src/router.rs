@@ -394,6 +394,40 @@ pub fn create_router(state: AppState) -> Router {
             "/api/calendar/events/{id}/ics",
             get(handlers::calendar::download_ics),
         )
+        // Added: LDAP/AD configuration management routes for TMAIL-100
+        .route(
+            "/api/admin/ldap",
+            get(handlers::ldap::list_ldap_configs).post(handlers::ldap::create_ldap_config),
+        )
+        .route(
+            "/api/admin/ldap/{id}",
+            put(handlers::ldap::update_ldap_config).delete(handlers::ldap::delete_ldap_config),
+        )
+        .route(
+            "/api/admin/ldap/{id}/sync",
+            post(handlers::ldap::trigger_sync),
+        )
+        .route(
+            "/api/admin/ldap/{id}/logs",
+            get(handlers::ldap::list_sync_logs),
+        )
+        // Added: AI configuration management routes for BYOK AI integration (TMAIL-105)
+        .route(
+            "/api/ai/config",
+            get(handlers::ai_config::list_ai_configs).post(handlers::ai_config::create_ai_config),
+        )
+        .route(
+            "/api/ai/config/{id}",
+            put(handlers::ai_config::update_ai_config).delete(handlers::ai_config::delete_ai_config),
+        )
+        .route(
+            "/api/ai/config/{id}/test",
+            post(handlers::ai_config::test_ai_config),
+        )
+        .route(
+            "/api/ai/summarize",
+            post(handlers::ai_config::summarize_email),
+        )
         // Audit log
         .route(
             "/api/admin/audit-log",

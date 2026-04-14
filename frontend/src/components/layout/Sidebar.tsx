@@ -9,7 +9,9 @@
 // Added: UserPlus icon for bulk import sidebar entry (TMAIL-136)
 // Added: MessageSquare icon for chat integrations sidebar entry (TMAIL-129)
 // Added: Calendar icon for calendar/meeting scheduling sidebar entry (TMAIL-127)
-import { PenSquare, FileSignature, Users, Shield, Plane, UsersRound, Upload, Gauge, Filter, Mailbox, ListTodo, CheckSquare, Webhook, Palette, Archive, Globe, FileUp, UserPlus, MessageSquare, Calendar } from 'lucide-react';
+// Added: Network icon for LDAP/AD directory sync sidebar entry (TMAIL-100)
+// Added: Brain icon for AI configuration sidebar entry (TMAIL-105)
+import { PenSquare, FileSignature, Users, Shield, Plane, UsersRound, Upload, Gauge, Filter, Mailbox, ListTodo, CheckSquare, Webhook, Palette, Archive, Globe, FileUp, UserPlus, MessageSquare, Calendar, Network, Brain } from 'lucide-react';
 import { FolderTree } from '../mail/FolderTree';
 import { QuotaBar } from './QuotaBar';
 import { useMailStore } from '../../stores/mailStore';
@@ -162,6 +164,22 @@ export function Sidebar() {
         >
           <FileUp size={18} />
           <span className="folder-item__name">Shared Files</span>
+        </button>
+        {/* Added: LDAP/AD directory sync navigation entry (TMAIL-100) */}
+        <button
+          className={`folder-item ${viewMode === 'ldap' ? 'folder-item--active' : ''}`}
+          onClick={() => setViewMode('ldap')}
+        >
+          <Network size={18} />
+          <span className="folder-item__name">LDAP / AD</span>
+        </button>
+        {/* Added: AI configuration navigation entry (TMAIL-105) */}
+        <button
+          className={`folder-item ${viewMode === 'ai-config' ? 'folder-item--active' : ''}`}
+          onClick={() => setViewMode('ai-config')}
+        >
+          <Brain size={18} />
+          <span className="folder-item__name">AI Config</span>
         </button>
         <button
           className={`folder-item ${viewMode === 'bandwidth' ? 'folder-item--active' : ''}`}
