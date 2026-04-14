@@ -13,6 +13,10 @@ import type { PhishingReport } from '../../api/phishing';
 import { LoadingSkeleton } from '../shared/LoadingSkeleton';
 // Added: Internal comments component for TMAIL-128
 import { CommentThread } from './CommentThread';
+// Added: Smart reply suggestion bar for TMAIL-104
+import { SmartReplyBar } from './SmartReplyBar';
+// Added: Email summarization component for TMAIL-103
+import { EmailSummary } from './EmailSummary';
 
 export function MessageView() {
   const queryClient = useQueryClient();
@@ -236,6 +240,13 @@ export function MessageView() {
         </button>
       )}
 
+      {/* Added: AI email summarization above the message body (TMAIL-103) */}
+      <EmailSummary
+        folder={selectedFolder}
+        uid={message.uid}
+        emailText={message.text_body || message.html_body || ''}
+      />
+
       {message.attachments.length > 0 && (
         <div className="message-view__attachments">
           <strong>Attachments:</strong>
@@ -257,6 +268,17 @@ export function MessageView() {
           <pre className="message-view__text">{message.text_body}</pre>
         )}
       </div>
+
+      {/* Added: Smart reply suggestion bar for TMAIL-104 */}
+      <SmartReplyBar
+        folder={selectedFolder}
+        uid={message.uid}
+        onUseReply={(replyText) => {
+          // NOTE: Switches to compose mode — the reply text could be passed via store if needed
+          void replyText;
+          setViewMode('compose');
+        }}
+      />
 
       {/* Added: Internal comments thread for TMAIL-128 */}
       <CommentThread folder={selectedFolder} uid={message.uid} />

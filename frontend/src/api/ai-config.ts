@@ -74,7 +74,38 @@ export async function testAiConfig(id: string): Promise<TestResult> {
   return apiClient.post<TestResult>(`/ai/config/${id}/test`, {});
 }
 
-// PURPOSE: Summarize an email using the user's active AI configuration
-export async function summarizeEmail(emailText: string): Promise<SummarizeResult> {
+// PURPOSE: Summarize a single email using the user's active AI configuration
+export async function summarizeEmail(_folder: string, _uid: number, emailText: string): Promise<SummarizeResult> {
   return apiClient.post<SummarizeResult>('/ai/summarize', { email_text: emailText });
+}
+
+// Added: Thread/conversation summary response for TMAIL-103
+export interface ThreadSummaryResult {
+  summary: string;
+  message_count: number;
+  provider: AiProvider;
+  model: string;
+}
+
+// Added: Summarize an email thread/conversation using multiple message UIDs (TMAIL-103)
+// PURPOSE: Fetches multiple emails via IMAP on the backend and produces a combined thread summary
+export async function summarizeThread(folder: string, uids: number[]): Promise<ThreadSummaryResult> {
+  return apiClient.post<ThreadSummaryResult>('/ai/thread-summary', { folder, uids });
+}
+
+// Added: Smart reply tone type for TMAIL-104
+export type SmartReplyTone = 'brief' | 'detailed' | 'decline';
+
+// Added: Smart reply response matching backend SmartReplyResponse struct
+export interface SmartReplyResult {
+  reply: string;
+  tone: SmartReplyTone;
+  provider: AiProvider;
+  model: string;
+}
+
+// Added: Generate an AI-powered reply suggestion for an email (TMAIL-104)
+// PURPOSE: Fetches the email via IMAP on the backend and generates a reply based on the selected tone
+export async function getSmartReply(folder: string, uid: number, tone: SmartReplyTone): Promise<SmartReplyResult> {
+  return apiClient.post<SmartReplyResult>('/ai/smart-reply', { folder, uid, tone });
 }

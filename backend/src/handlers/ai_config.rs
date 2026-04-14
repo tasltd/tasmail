@@ -11,7 +11,8 @@ use axum::{
 use crate::error::AppError;
 use crate::models::ai_config::{
     AiConfiguration, AiConfigurationResponse, CreateAiConfigRequest, SummarizeRequest,
-    UpdateAiConfigRequest, decrypt_api_key, derive_encryption_key, encrypt_api_key,
+    ThreadSummaryRequest, UpdateAiConfigRequest, decrypt_api_key, derive_encryption_key,
+    encrypt_api_key,
 };
 use crate::services::ai_client;
 use crate::services::auth_service::Claims;
@@ -212,6 +213,150 @@ pub async fn summarize_email(
     })))
 }
 
+// Added: Smart reply generation endpoint for TMAIL-104
+/// PURPOSE: Generate an AI-powered reply suggestion for an email
+/// POST /api/ai/smart-reply
+/// CONSTRAINTS: Requires at least one active AI config; fetches email via IMAP
+pub async fn smart_reply(
+    State(state): State<AppState>,
+    axum::Extension(claims): axum::Extension<Claims>,
+    Json(body): Json<crate::models::ai_config::SmartReplyRequest>,
+) -> Result<Json<crate::models::ai_config::SmartReplyResponse>, AppError> {
+    let user_id = parse_user_id(&claims)?;
+    let encryption_key = derive_encryption_key(&state.config.jwt.secret);
+
+    // Added: Find the user's active AI config
+    let config = AiConfiguration::find_active(&state.db, user_id)
+        .await?
+        .ok_or_else(|| {
+            AppError::BadRequest(
+                "No active AI configuration found. Please configure an AI provider in Settings > AI Config."
+                    .to_string(),
+            )
+        })?;
+
+    // Added: Fetch the email text via IMAP to use as context for the reply
+    let mailbox = crate::models::mailbox::Mailbox::find_by_id(&state.db, user_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("User mailbox not found".to_string()))?;
+
+    let imap_service = crate::services::imap_service::ImapService::new(state.config.imap.clone());
+    let message = imap_service
+        .get_message(&mailbox.username, &mailbox.password_hash, &body.folder, body.uid)
+        .await?;
+
+    // Added: Use text_body or fallback to stripped html_body
+    let email_text = message
+        .text_body
+        .or(message.html_body)
+        .unwrap_or_default();
+
+    if email_text.trim().is_empty() {
+        return Err(AppError::BadRequest("Email has no text content to generate a reply for".to_string()));
+    }
+
+    let api_key = decrypt_api_key(&config.api_key_encrypted, &encryption_key)
+        .map_err(|err| AppError::Internal(anyhow::anyhow!("Failed to decrypt API key: {}", err)))?;
+
+    let tone_str = ai_client::tone_to_str(&body.tone);
+    let reply_text = ai_client::suggest_reply(
+        &config.provider,
+        &api_key,
+        &config.model_name,
+        config.base_url.as_deref(),
+        config.max_tokens,
+        config.temperature,
+        &email_text,
+        tone_str,
+    )
+    .await
+    .map_err(|err| AppError::BadRequest(format!("AI smart reply failed: {}", err)))?;
+
+    Ok(Json(crate::models::ai_config::SmartReplyResponse {
+        reply: reply_text,
+        tone: body.tone,
+        provider: config.provider,
+        model: config.model_name,
+    }))
+}
+
+// Added: Thread/conversation summarization endpoint for TMAIL-103
+/// PURPOSE: Summarize an email thread by fetching multiple messages and producing a combined summary
+/// POST /api/ai/thread-summary
+/// CONSTRAINTS: Requires at least one active AI config; fetches emails via IMAP by folder+uids
+pub async fn thread_summary(
+    State(state): State<AppState>,
+    axum::Extension(claims): axum::Extension<Claims>,
+    Json(body): Json<ThreadSummaryRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let user_id = parse_user_id(&claims)?;
+    let encryption_key = derive_encryption_key(&state.config.jwt.secret);
+
+    if body.uids.is_empty() {
+        return Err(AppError::BadRequest("At least one message UID is required".to_string()));
+    }
+
+    // Added: Find the user's active AI config
+    let config = AiConfiguration::find_active(&state.db, user_id)
+        .await?
+        .ok_or_else(|| {
+            AppError::BadRequest(
+                "No active AI configuration found. Please configure an AI provider in Settings > AI Config."
+                    .to_string(),
+            )
+        })?;
+
+    // Added: Fetch each email from IMAP and collect their text bodies
+    let mailbox = crate::models::mailbox::Mailbox::find_by_id(&state.db, user_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("User mailbox not found".to_string()))?;
+
+    let imap_service = crate::services::imap_service::ImapService::new(state.config.imap.clone());
+    let mut email_texts: Vec<String> = Vec::with_capacity(body.uids.len());
+
+    for uid in &body.uids {
+        let message = imap_service
+            .get_message(&mailbox.username, &mailbox.password_hash, &body.folder, *uid)
+            .await?;
+
+        // Added: Use text_body or fallback to html_body
+        let text = message
+            .text_body
+            .or(message.html_body)
+            .unwrap_or_default();
+
+        if !text.trim().is_empty() {
+            email_texts.push(text);
+        }
+    }
+
+    if email_texts.is_empty() {
+        return Err(AppError::BadRequest("None of the selected emails have text content".to_string()));
+    }
+
+    let api_key = decrypt_api_key(&config.api_key_encrypted, &encryption_key)
+        .map_err(|err| AppError::Internal(anyhow::anyhow!("Failed to decrypt API key: {}", err)))?;
+
+    let summary = ai_client::summarize_thread(
+        &config.provider,
+        &api_key,
+        &config.model_name,
+        config.base_url.as_deref(),
+        config.max_tokens,
+        config.temperature,
+        &email_texts,
+    )
+    .await
+    .map_err(|err| AppError::BadRequest(format!("AI thread summarization failed: {}", err)))?;
+
+    Ok(Json(serde_json::json!({
+        "summary": summary,
+        "message_count": email_texts.len(),
+        "provider": config.provider,
+        "model": config.model_name
+    })))
+}
+
 fn parse_user_id(claims: &Claims) -> Result<uuid::Uuid, AppError> {
     claims
         .sub
@@ -246,5 +391,48 @@ mod tests {
             iat: 0,
         };
         assert!(parse_user_id(&claims).is_err());
+    }
+
+    // Added: Tests for ThreadSummaryRequest deserialization (TMAIL-103)
+    #[test]
+    fn test_thread_summary_request_deserialization() {
+        let json = serde_json::json!({
+            "folder": "INBOX",
+            "uids": [1, 2, 3]
+        });
+
+        let request: ThreadSummaryRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(request.folder, "INBOX");
+        assert_eq!(request.uids, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn test_thread_summary_request_empty_uids() {
+        let json = serde_json::json!({
+            "folder": "INBOX",
+            "uids": []
+        });
+
+        let request: ThreadSummaryRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(request.folder, "INBOX");
+        assert!(request.uids.is_empty());
+    }
+
+    #[test]
+    fn test_thread_summary_request_missing_folder_fails() {
+        let json = serde_json::json!({
+            "uids": [1, 2]
+        });
+        let result = serde_json::from_value::<ThreadSummaryRequest>(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_thread_summary_request_missing_uids_fails() {
+        let json = serde_json::json!({
+            "folder": "INBOX"
+        });
+        let result = serde_json::from_value::<ThreadSummaryRequest>(json);
+        assert!(result.is_err());
     }
 }

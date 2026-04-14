@@ -89,6 +89,42 @@ pub struct SummarizeRequest {
     pub email_text: String,
 }
 
+// Added: Request body for thread/conversation summarization (TMAIL-103)
+/// PURPOSE: Summarize an entire email thread by fetching multiple messages
+/// CONSTRAINTS: uids must contain at least 2 message UIDs for a meaningful thread summary
+#[derive(Debug, Deserialize)]
+pub struct ThreadSummaryRequest {
+    pub folder: String,
+    pub uids: Vec<u32>,
+}
+
+// Added: Smart reply tone options for TMAIL-104
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum SmartReplyTone {
+    Brief,
+    Detailed,
+    Decline,
+}
+
+/// PURPOSE: Request body for the smart reply endpoint (TMAIL-104)
+/// CONSTRAINTS: folder + uid identify the email via IMAP; tone controls reply style
+#[derive(Debug, Deserialize)]
+pub struct SmartReplyRequest {
+    pub folder: String,
+    pub uid: u32,
+    pub tone: SmartReplyTone,
+}
+
+/// PURPOSE: Response body for the smart reply endpoint (TMAIL-104)
+#[derive(Debug, Serialize)]
+pub struct SmartReplyResponse {
+    pub reply: String,
+    pub tone: SmartReplyTone,
+    pub provider: AiProvider,
+    pub model: String,
+}
+
 /// PURPOSE: Encrypt an API key using AES-256-GCM
 /// CONSTRAINTS: encryption_key must be exactly 32 bytes
 /// NOTE: Returns base64-encoded nonce (12 bytes) + ciphertext
@@ -508,6 +544,78 @@ mod tests {
 
         let request: SummarizeRequest = serde_json::from_value(json).unwrap();
         assert_eq!(request.email_text, "Hello, this is a test email about the quarterly report.");
+    }
+
+    // Added: Smart reply request/response tests for TMAIL-104
+    #[test]
+    fn test_smart_reply_tone_serialization() {
+        let brief = SmartReplyTone::Brief;
+        let json = serde_json::to_value(&brief).unwrap();
+        assert_eq!(json, "brief");
+
+        let detailed = SmartReplyTone::Detailed;
+        let json = serde_json::to_value(&detailed).unwrap();
+        assert_eq!(json, "detailed");
+
+        let decline = SmartReplyTone::Decline;
+        let json = serde_json::to_value(&decline).unwrap();
+        assert_eq!(json, "decline");
+    }
+
+    #[test]
+    fn test_smart_reply_tone_deserialization() {
+        let tone: SmartReplyTone = serde_json::from_str("\"brief\"").unwrap();
+        assert_eq!(tone, SmartReplyTone::Brief);
+
+        let tone: SmartReplyTone = serde_json::from_str("\"detailed\"").unwrap();
+        assert_eq!(tone, SmartReplyTone::Detailed);
+
+        let tone: SmartReplyTone = serde_json::from_str("\"decline\"").unwrap();
+        assert_eq!(tone, SmartReplyTone::Decline);
+    }
+
+    #[test]
+    fn test_smart_reply_tone_invalid_deserialization() {
+        let result = serde_json::from_str::<SmartReplyTone>("\"casual\"");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_smart_reply_request_deserialization() {
+        let json = serde_json::json!({
+            "folder": "INBOX",
+            "uid": 42,
+            "tone": "brief"
+        });
+        let request: SmartReplyRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(request.folder, "INBOX");
+        assert_eq!(request.uid, 42);
+        assert_eq!(request.tone, SmartReplyTone::Brief);
+    }
+
+    #[test]
+    fn test_smart_reply_request_missing_tone_fails() {
+        let json = serde_json::json!({
+            "folder": "INBOX",
+            "uid": 42
+        });
+        let result = serde_json::from_value::<SmartReplyRequest>(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_smart_reply_response_serialization() {
+        let response = SmartReplyResponse {
+            reply: "Thank you for your email.".to_string(),
+            tone: SmartReplyTone::Brief,
+            provider: AiProvider::Openai,
+            model: "gpt-4o".to_string(),
+        };
+        let json = serde_json::to_value(&response).unwrap();
+        assert_eq!(json["reply"], "Thank you for your email.");
+        assert_eq!(json["tone"], "brief");
+        assert_eq!(json["provider"], "openai");
+        assert_eq!(json["model"], "gpt-4o");
     }
 
     #[test]

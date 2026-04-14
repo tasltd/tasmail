@@ -428,6 +428,16 @@ pub fn create_router(state: AppState) -> Router {
             "/api/ai/summarize",
             post(handlers::ai_config::summarize_email),
         )
+        // Added: Smart reply generation route for TMAIL-104
+        .route(
+            "/api/ai/smart-reply",
+            post(handlers::ai_config::smart_reply),
+        )
+        // Added: Thread/conversation summarization route for TMAIL-103
+        .route(
+            "/api/ai/thread-summary",
+            post(handlers::ai_config::thread_summary),
+        )
         // Audit log
         .route(
             "/api/admin/audit-log",

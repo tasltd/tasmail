@@ -244,7 +244,32 @@ pub async fn summarize_email(
     .await
 }
 
-/// PURPOSE: Generate reply suggestions for an email
+// Added: Thread/conversation summarization for TMAIL-103
+/// PURPOSE: Summarize an email thread by concatenating multiple email texts and producing a combined summary
+/// CONSTRAINTS: emails vec must not be empty; each entry is separated by "---" for clarity to the AI model
+pub async fn summarize_thread(
+    provider: &AiProvider,
+    api_key: &str,
+    model: &str,
+    base_url: Option<&str>,
+    max_tokens: i32,
+    temperature: f32,
+    emails: &[String],
+) -> Result<String, String> {
+    if emails.is_empty() {
+        return Err("No emails provided for thread summarization".to_string());
+    }
+    // Added: Join all email texts with separator for the AI to understand thread boundaries
+    let combined_text = emails.join("\n\n---\n\n");
+    let system_prompt = "You are an email assistant. Summarize the following email conversation thread concisely. Identify the key topics discussed, decisions made, action items, and any open questions. Present the summary as a cohesive overview of the thread.";
+    call_ai_provider(
+        provider, api_key, model, base_url, system_prompt, &combined_text, max_tokens, temperature,
+    )
+    .await
+}
+
+/// PURPOSE: Generate reply suggestions for an email with tone control (TMAIL-104)
+/// CONSTRAINTS: tone must be one of "brief", "detailed", or "decline"
 pub async fn suggest_reply(
     provider: &AiProvider,
     api_key: &str,
@@ -253,12 +278,29 @@ pub async fn suggest_reply(
     max_tokens: i32,
     temperature: f32,
     email_text: &str,
+    tone: &str,
 ) -> Result<String, String> {
-    let system_prompt = "You are an email assistant. Generate a professional, concise reply to the following email. Keep it brief and to the point.";
+    // Added: Tone-specific system prompts for smart reply generation
+    let system_prompt = match tone {
+        "brief" => "You are an email assistant. Write a brief, professional reply to the following email. Keep it to 2-3 sentences maximum. Be polite and to the point.",
+        "detailed" => "You are an email assistant. Write a thorough, detailed reply to the following email. Address all points raised, provide relevant context, and be comprehensive while remaining professional.",
+        "decline" => "You are an email assistant. Write a polite, professional reply declining or respectfully saying no to the request in the following email. Be gracious but firm, and suggest alternatives if appropriate.",
+        _ => "You are an email assistant. Generate a professional, concise reply to the following email. Keep it brief and to the point.",
+    };
     call_ai_provider(
         provider, api_key, model, base_url, system_prompt, email_text, max_tokens, temperature,
     )
     .await
+}
+
+/// PURPOSE: Map SmartReplyTone enum to string for prompt selection (TMAIL-104)
+pub fn tone_to_str(tone: &crate::models::ai_config::SmartReplyTone) -> &'static str {
+    use crate::models::ai_config::SmartReplyTone;
+    match tone {
+        SmartReplyTone::Brief => "brief",
+        SmartReplyTone::Detailed => "detailed",
+        SmartReplyTone::Decline => "decline",
+    }
 }
 
 #[cfg(test)]
@@ -448,5 +490,41 @@ mod tests {
         });
         let text = extract_response_text(&AiProvider::Custom, &response).unwrap();
         assert_eq!(text, "Custom provider response.");
+    }
+
+    // Added: Tests for tone_to_str helper (TMAIL-104)
+    #[test]
+    fn test_tone_to_str_brief() {
+        use crate::models::ai_config::SmartReplyTone;
+        assert_eq!(tone_to_str(&SmartReplyTone::Brief), "brief");
+    }
+
+    #[test]
+    fn test_tone_to_str_detailed() {
+        use crate::models::ai_config::SmartReplyTone;
+        assert_eq!(tone_to_str(&SmartReplyTone::Detailed), "detailed");
+    }
+
+    #[test]
+    fn test_tone_to_str_decline() {
+        use crate::models::ai_config::SmartReplyTone;
+        assert_eq!(tone_to_str(&SmartReplyTone::Decline), "decline");
+    }
+
+    // Added: Test for summarize_thread empty emails validation (TMAIL-103)
+    #[tokio::test]
+    async fn test_summarize_thread_empty_emails_returns_error() {
+        let result = summarize_thread(
+            &AiProvider::Openai,
+            "sk-test",
+            "gpt-4o",
+            None,
+            500,
+            0.7,
+            &[],
+        )
+        .await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("No emails provided"));
     }
 }

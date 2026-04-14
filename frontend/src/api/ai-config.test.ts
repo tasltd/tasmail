@@ -8,6 +8,8 @@ import {
   deleteAiConfig,
   testAiConfig,
   summarizeEmail,
+  summarizeThread,
+  getSmartReply,
 } from './ai-config';
 import { apiClient } from './client';
 
@@ -87,17 +89,57 @@ describe('ai-config API', () => {
   });
 
   describe('summarizeEmail', () => {
+    // Added: Updated test to include folder and uid params (TMAIL-103)
     it('calls POST /ai/summarize with email text', async () => {
       vi.mocked(apiClient.post).mockResolvedValue({
         summary: 'This email discusses the quarterly report.',
         provider: 'openai',
         model: 'gpt-4o',
       });
-      const result = await summarizeEmail('Hello, here is the quarterly report...');
+      const result = await summarizeEmail('INBOX', 42, 'Hello, here is the quarterly report...');
       expect(apiClient.post).toHaveBeenCalledWith('/ai/summarize', {
         email_text: 'Hello, here is the quarterly report...',
       });
       expect(result.summary).toBe('This email discusses the quarterly report.');
+    });
+  });
+
+  // Added: Thread summarization API test for TMAIL-103
+  describe('summarizeThread', () => {
+    it('calls POST /ai/thread-summary with folder and uids', async () => {
+      vi.mocked(apiClient.post).mockResolvedValue({
+        summary: 'The thread discusses project deadlines and task assignments.',
+        message_count: 3,
+        provider: 'anthropic',
+        model: 'claude-sonnet-4-20250514',
+      });
+      const result = await summarizeThread('INBOX', [10, 11, 12]);
+      expect(apiClient.post).toHaveBeenCalledWith('/ai/thread-summary', {
+        folder: 'INBOX',
+        uids: [10, 11, 12],
+      });
+      expect(result.summary).toBe('The thread discusses project deadlines and task assignments.');
+      expect(result.message_count).toBe(3);
+    });
+  });
+
+  // Added: Smart reply API test for TMAIL-104
+  describe('getSmartReply', () => {
+    it('calls POST /ai/smart-reply with folder, uid, and tone', async () => {
+      vi.mocked(apiClient.post).mockResolvedValue({
+        reply: 'Thank you for your message. I will review the report.',
+        tone: 'brief',
+        provider: 'openai',
+        model: 'gpt-4o',
+      });
+      const result = await getSmartReply('INBOX', 42, 'brief');
+      expect(apiClient.post).toHaveBeenCalledWith('/ai/smart-reply', {
+        folder: 'INBOX',
+        uid: 42,
+        tone: 'brief',
+      });
+      expect(result.reply).toBe('Thank you for your message. I will review the report.');
+      expect(result.tone).toBe('brief');
     });
   });
 });
