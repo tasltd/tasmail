@@ -2,7 +2,9 @@
 // Added: ListTodo icon for email queue sidebar entry (TMAIL-58)
 // Added: CheckSquare icon for tasks sidebar entry (TMAIL-126)
 // Added: Webhook icon for webhooks sidebar entry (TMAIL-131)
-import { PenSquare, FileSignature, Users, Shield, Plane, UsersRound, Upload, Gauge, Filter, Mailbox, ListTodo, CheckSquare, Webhook } from 'lucide-react';
+// Added: Palette icon for branding sidebar entry (TMAIL-111)
+// Added: Archive icon for retention sidebar entry (TMAIL-109)
+import { PenSquare, FileSignature, Users, Shield, Plane, UsersRound, Upload, Gauge, Filter, Mailbox, ListTodo, CheckSquare, Webhook, Palette, Archive } from 'lucide-react';
 import { FolderTree } from '../mail/FolderTree';
 import { QuotaBar } from './QuotaBar';
 import { useMailStore } from '../../stores/mailStore';
@@ -99,6 +101,22 @@ export function Sidebar() {
         >
           <ListTodo size={18} />
           <span className="folder-item__name">Queue</span>
+        </button>
+        {/* Added: Branding navigation entry (TMAIL-111) */}
+        <button
+          className={`folder-item ${viewMode === 'branding' ? 'folder-item--active' : ''}`}
+          onClick={() => setViewMode('branding')}
+        >
+          <Palette size={18} />
+          <span className="folder-item__name">Branding</span>
+        </button>
+        {/* Added: Retention navigation entry (TMAIL-109) */}
+        <button
+          className={`folder-item ${viewMode === 'retention' ? 'folder-item--active' : ''}`}
+          onClick={() => setViewMode('retention')}
+        >
+          <Archive size={18} />
+          <span className="folder-item__name">Retention</span>
         </button>
         <button
           className={`folder-item ${viewMode === 'bandwidth' ? 'folder-item--active' : ''}`}

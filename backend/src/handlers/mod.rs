@@ -1,6 +1,8 @@
 pub mod admin;
 // Added: Attachment upload/download/stats handlers for TMAIL-59
 pub mod attachments;
+// Added: Branding handlers for white-label customization (TMAIL-111)
+pub mod branding;
 pub mod auth;
 pub mod auto_reply;
 // Added: Email comment handlers for TMAIL-128
@@ -31,6 +33,8 @@ pub mod templates;
 pub mod two_factor;
 // Added: WebAuthn/FIDO2 passkey handlers for TMAIL-83
 pub mod webauthn;
+// Added: Retention policy and legal hold handlers for TMAIL-109
+pub mod retention;
 // Added: Webhook management handlers for TMAIL-131
 pub mod webhooks;
 pub mod websocket;

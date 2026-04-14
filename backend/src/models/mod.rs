@@ -1,5 +1,7 @@
 // Added: Attachment storage model for TMAIL-59
 pub mod attachment;
+// Added: Branding model for white-label customization (TMAIL-111)
+pub mod branding;
 // Added: Email comment model for TMAIL-128
 pub mod email_comment;
 pub mod audit_log;
@@ -26,5 +28,7 @@ pub mod signature;
 pub mod email_task;
 // Added: WebAuthn credential model for TMAIL-83
 pub mod webauthn_credential;
+// Added: Retention policy and legal hold models for TMAIL-109
+pub mod retention_policy;
 // Added: Webhook model for outbound notifications (TMAIL-131)
 pub mod webhook;

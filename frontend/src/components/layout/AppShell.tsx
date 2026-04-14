@@ -20,6 +20,10 @@ import { QueueManager } from '../settings/QueueManager';
 import { TaskManager } from '../settings/TaskManager';
 // Added: Webhook management component (TMAIL-131)
 import { WebhookManager } from '../settings/WebhookManager';
+// Added: Branding management component (TMAIL-111)
+import { BrandingManager } from '../settings/BrandingManager';
+// Added: Retention policy and legal hold management component (TMAIL-109)
+import { RetentionManager } from '../settings/RetentionManager';
 import { useMailStore } from '../../stores/mailStore';
 import { useUiStore } from '../../stores/uiStore';
 // Added: Keyboard shortcuts hook and help dialog for TMAIL-121
@@ -68,6 +72,10 @@ export function AppShell({ onLogout }: AppShellProps) {
           {viewMode === 'tasks' && <TaskManager />}
           {/* Added: Webhook management view (TMAIL-131) */}
           {viewMode === 'webhooks' && <WebhookManager />}
+          {/* Added: Branding management view (TMAIL-111) */}
+          {viewMode === 'branding' && <BrandingManager />}
+          {/* Added: Retention policy and legal hold management view (TMAIL-109) */}
+          {viewMode === 'retention' && <RetentionManager />}
         </main>
       </div>
       {/* Added: Keyboard shortcut help dialog, toggled by '?' key */}

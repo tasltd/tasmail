@@ -24,7 +24,9 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/health", get(handlers::health::health_check))
         .route("/api/auth/login", post(handlers::auth::login))
         .route("/api/auth/refresh", post(handlers::auth::refresh))
-        .route("/ws", get(handlers::websocket::ws_handler));
+        .route("/ws", get(handlers::websocket::ws_handler))
+        // Added: Public branding endpoint — frontend needs it before login (TMAIL-111)
+        .route("/api/branding", get(handlers::branding::get_branding));
 
     // Protected routes (auth required)
     let protected_routes = Router::new()
@@ -276,6 +278,30 @@ pub fn create_router(state: AppState) -> Router {
         .route(
             "/api/webhooks/{id}/deliveries",
             get(handlers::webhooks::list_deliveries),
+        )
+        // Added: Admin branding management routes (TMAIL-111)
+        .route("/api/admin/branding", put(handlers::branding::update_branding))
+        .route("/api/admin/branding/reset", post(handlers::branding::reset_branding))
+        // Added: Retention policy management routes for TMAIL-109
+        .route(
+            "/api/admin/retention",
+            get(handlers::retention::list_retention_policies)
+                .post(handlers::retention::create_retention_policy),
+        )
+        .route(
+            "/api/admin/retention/{id}",
+            put(handlers::retention::update_retention_policy)
+                .delete(handlers::retention::delete_retention_policy),
+        )
+        // Added: Legal hold management routes for TMAIL-109
+        .route(
+            "/api/admin/legal-holds",
+            get(handlers::retention::list_legal_holds)
+                .post(handlers::retention::create_legal_hold),
+        )
+        .route(
+            "/api/admin/legal-holds/{id}/release",
+            put(handlers::retention::release_legal_hold),
         )
         // Audit log
         .route(
