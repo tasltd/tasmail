@@ -619,6 +619,39 @@ pub fn create_router(state: AppState) -> Router {
             "/api/contacts/merge",
             post(handlers::contact_groups::merge_contacts),
         )
+        // Added: POP3 configuration management routes for Dovecot POP3 access (TMAIL-133)
+        .route(
+            "/api/pop3/config",
+            get(handlers::pop3_config::get_pop3_config)
+                .put(handlers::pop3_config::update_pop3_config)
+                .delete(handlers::pop3_config::delete_pop3_config),
+        )
+        .route(
+            "/api/pop3/status",
+            get(handlers::pop3_config::get_pop3_status),
+        )
+        // Added: Email archive policy and config management routes for Piler integration (TMAIL-107)
+        .route(
+            "/api/admin/archive/policies",
+            get(handlers::archive::list_policies).post(handlers::archive::create_policy),
+        )
+        .route(
+            "/api/admin/archive/policies/{id}",
+            put(handlers::archive::update_policy).delete(handlers::archive::delete_policy),
+        )
+        .route(
+            "/api/admin/archive/config",
+            get(handlers::archive::get_config).put(handlers::archive::update_config),
+        )
+        // Added: User archive search and history routes (TMAIL-107)
+        .route(
+            "/api/archive/search",
+            post(handlers::archive::search_archive),
+        )
+        .route(
+            "/api/archive/search/history",
+            get(handlers::archive::search_history),
+        )
         // Audit log
         .route(
             "/api/admin/audit-log",

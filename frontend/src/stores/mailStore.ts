@@ -22,7 +22,9 @@ import type { AdvancedSearchParams } from '../api/messages';
 // Added: 'smtp-config' view mode for BYO-SMTP configuration management (TMAIL-48)
 // Added: 'plugins' view mode for plugin/extension management (TMAIL-132)
 // Added: 'contacts-app' view mode for full contacts management app (TMAIL-119)
-type ViewMode = 'list' | 'reader' | 'compose' | 'search' | 'signatures' | 'contacts' | 'security' | 'vacation' | 'groups' | 'migration' | 'bandwidth' | 'filters' | 'shared' | 'queue' | 'tasks' | 'webhooks' | 'branding' | 'retention' | 'hostnames' | 'shared-files' | 'bulk-import' | 'chat' | 'calendar' | 'ldap' | 'ai-config' | 'saml' | 'oidc' | 'ediscovery' | 'dlp' | 'dane' | 'smtp-config' | 'plugins' | 'contacts-app';
+// Added: 'pop3' view mode for POP3 configuration management (TMAIL-133)
+// Added: 'archive' view mode for email archive management with Piler (TMAIL-107)
+type ViewMode = 'list' | 'reader' | 'compose' | 'search' | 'signatures' | 'contacts' | 'security' | 'vacation' | 'groups' | 'migration' | 'bandwidth' | 'filters' | 'shared' | 'queue' | 'tasks' | 'webhooks' | 'branding' | 'retention' | 'hostnames' | 'shared-files' | 'bulk-import' | 'chat' | 'calendar' | 'ldap' | 'ai-config' | 'saml' | 'oidc' | 'ediscovery' | 'dlp' | 'dane' | 'smtp-config' | 'plugins' | 'contacts-app' | 'pop3' | 'archive';
 
 interface MailState {
   selectedFolder: string;

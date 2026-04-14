@@ -54,6 +54,10 @@ import { SmtpConfigManager } from '../settings/SmtpConfigManager';
 import { PluginManager } from '../settings/PluginManager';
 // Added: Contacts App management component with groups, import/export, merge (TMAIL-119)
 import { ContactsApp } from '../settings/ContactsApp';
+// Added: POP3 configuration management component for Dovecot POP3 access (TMAIL-133)
+import { Pop3ConfigManager } from '../settings/Pop3ConfigManager';
+// Added: Email archive management component for Piler integration (TMAIL-107)
+import { ArchiveManager } from '../settings/ArchiveManager';
 import { useMailStore } from '../../stores/mailStore';
 import { useUiStore } from '../../stores/uiStore';
 // Added: Keyboard shortcuts hook and help dialog for TMAIL-121
@@ -136,6 +140,10 @@ export function AppShell({ onLogout }: AppShellProps) {
           {viewMode === 'plugins' && <PluginManager />}
           {/* Added: Contacts App management view (TMAIL-119) */}
           {viewMode === 'contacts-app' && <ContactsApp />}
+          {/* Added: POP3 configuration management view (TMAIL-133) */}
+          {viewMode === 'pop3' && <Pop3ConfigManager />}
+          {/* Added: Email archive management view (TMAIL-107) */}
+          {viewMode === 'archive' && <ArchiveManager />}
         </main>
       </div>
       {/* Added: Keyboard shortcut help dialog, toggled by '?' key */}

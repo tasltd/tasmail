@@ -74,3 +74,7 @@ pub mod smtp_config;
 pub mod plugins;
 // Added: Contact group and vCard import/export/merge handlers (TMAIL-119)
 pub mod contact_groups;
+// Added: POP3 configuration management handlers for Dovecot POP3 access (TMAIL-133)
+pub mod pop3_config;
+// Added: Email archive handlers for Piler integration (TMAIL-107)
+pub mod archive;

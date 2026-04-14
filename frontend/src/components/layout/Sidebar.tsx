@@ -19,7 +19,9 @@
 // Added: Send icon for BYO-SMTP configuration sidebar entry (TMAIL-48)
 // Added: Puzzle icon for plugin management sidebar entry (TMAIL-132)
 // Added: BookUser icon for contacts app sidebar entry (TMAIL-119)
-import { PenSquare, FileSignature, Users, Shield, Plane, UsersRound, Upload, Gauge, Filter, Mailbox, ListTodo, CheckSquare, Webhook, Palette, Archive, Globe, FileUp, UserPlus, MessageSquare, Calendar, Network, Brain, KeyRound, LogIn, Search, ShieldCheck, ShieldAlert, Send, Puzzle, BookUser } from 'lucide-react';
+// Added: Download icon for POP3 configuration sidebar entry (TMAIL-133)
+// Added: HardDrive icon for email archive sidebar entry (TMAIL-107)
+import { PenSquare, FileSignature, Users, Shield, Plane, UsersRound, Upload, Gauge, Filter, Mailbox, ListTodo, CheckSquare, Webhook, Palette, Archive, Globe, FileUp, UserPlus, MessageSquare, Calendar, Network, Brain, KeyRound, LogIn, Search, ShieldCheck, ShieldAlert, Send, Puzzle, BookUser, Download, HardDrive } from 'lucide-react';
 import { FolderTree } from '../mail/FolderTree';
 import { QuotaBar } from './QuotaBar';
 import { useMailStore } from '../../stores/mailStore';
@@ -252,6 +254,22 @@ export function Sidebar() {
         >
           <BookUser size={18} />
           <span className="folder-item__name">Contacts App</span>
+        </button>
+        {/* Added: POP3 configuration navigation entry (TMAIL-133) */}
+        <button
+          className={`folder-item ${viewMode === 'pop3' ? 'folder-item--active' : ''}`}
+          onClick={() => setViewMode('pop3')}
+        >
+          <Download size={18} />
+          <span className="folder-item__name">POP3</span>
+        </button>
+        {/* Added: Email archive navigation entry (TMAIL-107) */}
+        <button
+          className={`folder-item ${viewMode === 'archive' ? 'folder-item--active' : ''}`}
+          onClick={() => setViewMode('archive')}
+        >
+          <HardDrive size={18} />
+          <span className="folder-item__name">Archive</span>
         </button>
         <button
           className={`folder-item ${viewMode === 'bandwidth' ? 'folder-item--active' : ''}`}

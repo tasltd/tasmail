@@ -68,3 +68,7 @@ pub mod smtp_config;
 pub mod plugin;
 // Added: Contact group model for organizing contacts into labeled groups (TMAIL-119)
 pub mod contact_group;
+// Added: POP3 configuration model for Dovecot POP3 access (TMAIL-133)
+pub mod pop3_config;
+// Added: Email archive model for Piler archiving integration (TMAIL-107)
+pub mod archive;
