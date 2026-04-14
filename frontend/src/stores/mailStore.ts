@@ -8,7 +8,9 @@ import type { AdvancedSearchParams } from '../api/messages';
 // Added: 'branding' view mode for white-label customization (TMAIL-111)
 // Added: 'retention' view mode for retention policies and legal holds (TMAIL-109)
 // Added: 'hostnames' view mode for custom hostname management (TMAIL-112)
-type ViewMode = 'list' | 'reader' | 'compose' | 'search' | 'signatures' | 'contacts' | 'security' | 'vacation' | 'groups' | 'migration' | 'bandwidth' | 'filters' | 'shared' | 'queue' | 'tasks' | 'webhooks' | 'branding' | 'retention' | 'hostnames';
+// Added: 'shared-files' view mode for large file sharing management (TMAIL-138)
+// Added: 'bulk-import' view mode for bulk user provisioning (TMAIL-136)
+type ViewMode = 'list' | 'reader' | 'compose' | 'search' | 'signatures' | 'contacts' | 'security' | 'vacation' | 'groups' | 'migration' | 'bandwidth' | 'filters' | 'shared' | 'queue' | 'tasks' | 'webhooks' | 'branding' | 'retention' | 'hostnames' | 'shared-files' | 'bulk-import';
 
 interface MailState {
   selectedFolder: string;

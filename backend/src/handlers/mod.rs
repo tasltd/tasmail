@@ -41,4 +41,8 @@ pub mod webhooks;
 pub mod custom_hostnames;
 // Added: PST import handlers for Outlook migration (TMAIL-115)
 pub mod pst_import;
+// Added: Shared file upload/download handlers for large file sharing (TMAIL-138)
+pub mod shared_files;
+// Added: Bulk user import handlers for CSV provisioning (TMAIL-136)
+pub mod bulk_import;
 pub mod websocket;

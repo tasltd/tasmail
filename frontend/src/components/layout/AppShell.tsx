@@ -26,6 +26,10 @@ import { BrandingManager } from '../settings/BrandingManager';
 import { RetentionManager } from '../settings/RetentionManager';
 // Added: Custom hostname management component (TMAIL-112)
 import { HostnameManager } from '../settings/HostnameManager';
+// Added: Shared file management component for large file sharing (TMAIL-138)
+import { SharedFileManager } from '../settings/SharedFileManager';
+// Added: Bulk user import management component (TMAIL-136)
+import { BulkImportManager } from '../settings/BulkImportManager';
 import { useMailStore } from '../../stores/mailStore';
 import { useUiStore } from '../../stores/uiStore';
 // Added: Keyboard shortcuts hook and help dialog for TMAIL-121
@@ -80,6 +84,10 @@ export function AppShell({ onLogout }: AppShellProps) {
           {viewMode === 'retention' && <RetentionManager />}
           {/* Added: Custom hostname management view (TMAIL-112) */}
           {viewMode === 'hostnames' && <HostnameManager />}
+          {/* Added: Shared file management view (TMAIL-138) */}
+          {viewMode === 'shared-files' && <SharedFileManager />}
+          {/* Added: Bulk user import management view (TMAIL-136) */}
+          {viewMode === 'bulk-import' && <BulkImportManager />}
         </main>
       </div>
       {/* Added: Keyboard shortcut help dialog, toggled by '?' key */}

@@ -5,7 +5,9 @@
 // Added: Palette icon for branding sidebar entry (TMAIL-111)
 // Added: Archive icon for retention sidebar entry (TMAIL-109)
 // Added: Globe icon for custom hostnames sidebar entry (TMAIL-112)
-import { PenSquare, FileSignature, Users, Shield, Plane, UsersRound, Upload, Gauge, Filter, Mailbox, ListTodo, CheckSquare, Webhook, Palette, Archive, Globe } from 'lucide-react';
+// Added: FileUp icon for shared files sidebar entry (TMAIL-138)
+// Added: UserPlus icon for bulk import sidebar entry (TMAIL-136)
+import { PenSquare, FileSignature, Users, Shield, Plane, UsersRound, Upload, Gauge, Filter, Mailbox, ListTodo, CheckSquare, Webhook, Palette, Archive, Globe, FileUp, UserPlus } from 'lucide-react';
 import { FolderTree } from '../mail/FolderTree';
 import { QuotaBar } from './QuotaBar';
 import { useMailStore } from '../../stores/mailStore';
@@ -126,6 +128,22 @@ export function Sidebar() {
         >
           <Archive size={18} />
           <span className="folder-item__name">Retention</span>
+        </button>
+        {/* Added: Bulk import navigation entry (TMAIL-136) */}
+        <button
+          className={`folder-item ${viewMode === 'bulk-import' ? 'folder-item--active' : ''}`}
+          onClick={() => setViewMode('bulk-import')}
+        >
+          <UserPlus size={18} />
+          <span className="folder-item__name">Bulk Import</span>
+        </button>
+        {/* Added: Shared files navigation entry (TMAIL-138) */}
+        <button
+          className={`folder-item ${viewMode === 'shared-files' ? 'folder-item--active' : ''}`}
+          onClick={() => setViewMode('shared-files')}
+        >
+          <FileUp size={18} />
+          <span className="folder-item__name">Shared Files</span>
         </button>
         <button
           className={`folder-item ${viewMode === 'bandwidth' ? 'folder-item--active' : ''}`}

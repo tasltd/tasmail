@@ -26,7 +26,9 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/auth/refresh", post(handlers::auth::refresh))
         .route("/ws", get(handlers::websocket::ws_handler))
         // Added: Public branding endpoint — frontend needs it before login (TMAIL-111)
-        .route("/api/branding", get(handlers::branding::get_branding));
+        .route("/api/branding", get(handlers::branding::get_branding))
+        // Added: Public download endpoint for shared files (TMAIL-138)
+        .route("/api/dl/{token}", get(handlers::shared_files::download_by_token));
 
     // Protected routes (auth required)
     let protected_routes = Router::new()
@@ -325,6 +327,37 @@ pub fn create_router(state: AppState) -> Router {
         .route(
             "/api/admin/hostnames/{id}/verify",
             post(handlers::custom_hostnames::verify_hostname),
+        )
+        // Added: Shared file management routes for large file sharing (TMAIL-138)
+        .route(
+            "/api/shared-files/upload",
+            post(handlers::shared_files::upload_shared_file),
+        )
+        .route(
+            "/api/shared-files",
+            get(handlers::shared_files::list_shared_files),
+        )
+        .route(
+            "/api/shared-files/{id}",
+            get(handlers::shared_files::get_shared_file)
+                .delete(handlers::shared_files::delete_shared_file),
+        )
+        // Added: Bulk user import routes for CSV provisioning (TMAIL-136)
+        .route(
+            "/api/admin/users/bulk-import",
+            post(handlers::bulk_import::upload_bulk_csv),
+        )
+        .route(
+            "/api/admin/users/bulk-imports",
+            get(handlers::bulk_import::list_bulk_imports),
+        )
+        .route(
+            "/api/admin/users/bulk-imports/{id}",
+            get(handlers::bulk_import::get_bulk_import),
+        )
+        .route(
+            "/api/admin/users/bulk-import/template",
+            get(handlers::bulk_import::download_template),
         )
         // Audit log
         .route(

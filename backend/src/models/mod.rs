@@ -36,3 +36,7 @@ pub mod webhook;
 pub mod custom_hostname;
 // Added: PST import model for Outlook migration (TMAIL-115)
 pub mod pst_import;
+// Added: Shared file model for large file sharing via download links (TMAIL-138)
+pub mod shared_file;
+// Added: Bulk user import model for CSV provisioning (TMAIL-136)
+pub mod bulk_import;

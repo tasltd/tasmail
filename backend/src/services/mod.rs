@@ -14,3 +14,5 @@ pub mod totp_service;
 pub mod webhook_dispatcher;
 // Added: PST file processor service for Outlook migration (TMAIL-115)
 pub mod pst_processor;
+// Added: CSV parser and validator for bulk user import (TMAIL-136)
+pub mod csv_processor;
