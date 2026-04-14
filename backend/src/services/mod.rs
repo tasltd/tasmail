@@ -22,3 +22,5 @@ pub mod chat_notifier;
 pub mod ics_generator;
 // Added: AI API client abstraction for BYOK AI integration (TMAIL-105)
 pub mod ai_client;
+// Added: Embedding generation and similarity search service for TMAIL-106
+pub mod embedding_service;

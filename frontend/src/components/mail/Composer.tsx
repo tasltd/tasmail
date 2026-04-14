@@ -3,10 +3,12 @@ import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Link from '@tiptap/extension-link';
 import Placeholder from '@tiptap/extension-placeholder';
-import { Send, X, Save, Clock, Undo2 } from 'lucide-react';
+import { Send, X, Save, Clock, Undo2, Sparkles } from 'lucide-react';
 import { saveDraft } from '../../api/messages';
 import { scheduledApi } from '../../api/scheduled';
 import { useMailStore } from '../../stores/mailStore';
+// Added: Import AiComposePanel for AI-powered draft generation (TMAIL-134)
+import { AiComposePanel } from './AiComposePanel';
 
 export function Composer() {
   const setViewMode = useMailStore((s) => s.setViewMode);
@@ -19,6 +21,8 @@ export function Composer() {
   const [undoState, setUndoState] = useState<{ cancelToken: string; countdown: number } | null>(null);
   const [showSchedulePicker, setShowSchedulePicker] = useState(false);
   const [scheduleDate, setScheduleDate] = useState('');
+  // Added: AI compose panel toggle state (TMAIL-134)
+  const [showAiCompose, setShowAiCompose] = useState(false);
   const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const undoTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -133,6 +137,15 @@ export function Composer() {
     }
   };
 
+  // Added: Handler for when user accepts an AI-generated draft (TMAIL-134)
+  const handleUseDraft = useCallback((draftSubject: string, draftBody: string) => {
+    setSubject(draftSubject);
+    if (editor) {
+      editor.commands.setContent(draftBody.replace(/\n/g, '<br>'));
+    }
+    setShowAiCompose(false);
+  }, [editor]);
+
   const handleScheduleSend = async () => {
     if (!to.trim() || !scheduleDate) {
       setError('Recipients and schedule date required');
@@ -231,7 +244,24 @@ export function Composer() {
           <Clock size={16} />
           Schedule
         </button>
+        {/* Added: AI Compose toggle button for TMAIL-134 */}
+        <button
+          className="btn btn--secondary"
+          data-testid="ai-compose-toggle"
+          onClick={() => setShowAiCompose(!showAiCompose)}
+          disabled={sending}
+        >
+          <Sparkles size={16} />
+          AI Compose
+        </button>
       </div>
+
+      {/* Added: AI Compose panel that appears when toggled (TMAIL-134) */}
+      {showAiCompose && (
+        <div style={{ padding: '12px 16px', borderTop: '1px solid var(--color-border)' }}>
+          <AiComposePanel onUseDraft={handleUseDraft} />
+        </div>
+      )}
 
       {showSchedulePicker && (
         <div className="composer__schedule" style={{ padding: '8px 16px', borderTop: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', gap: '8px' }}>

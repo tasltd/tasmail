@@ -357,6 +357,58 @@ pub async fn thread_summary(
     })))
 }
 
+// Added: AI compose (full draft generation) endpoint for TMAIL-134
+/// PURPOSE: Generate a complete email draft (subject + body) from a user prompt
+/// POST /api/ai/compose
+/// CONSTRAINTS: Requires at least one active AI config; prompt must not be empty
+pub async fn compose_email(
+    State(state): State<AppState>,
+    axum::Extension(claims): axum::Extension<Claims>,
+    Json(body): Json<crate::models::ai_config::ComposeEmailRequest>,
+) -> Result<Json<crate::models::ai_config::ComposeEmailResponse>, AppError> {
+    let user_id = parse_user_id(&claims)?;
+    let encryption_key = derive_encryption_key(&state.config.jwt.secret);
+
+    if body.prompt.trim().is_empty() {
+        return Err(AppError::BadRequest("Prompt is required for email composition".to_string()));
+    }
+
+    // Added: Find the user's active AI config
+    let config = AiConfiguration::find_active(&state.db, user_id)
+        .await?
+        .ok_or_else(|| {
+            AppError::BadRequest(
+                "No active AI configuration found. Please configure an AI provider in Settings > AI Config."
+                    .to_string(),
+            )
+        })?;
+
+    let api_key = decrypt_api_key(&config.api_key_encrypted, &encryption_key)
+        .map_err(|err| AppError::Internal(anyhow::anyhow!("Failed to decrypt API key: {}", err)))?;
+
+    let (subject, email_body) = ai_client::compose_email(
+        &config.provider,
+        &api_key,
+        &config.model_name,
+        config.base_url.as_deref(),
+        config.max_tokens,
+        config.temperature,
+        &body.prompt,
+        body.context.as_deref(),
+        body.tone.as_deref(),
+        body.length.as_deref(),
+    )
+    .await
+    .map_err(|err| AppError::BadRequest(format!("AI compose failed: {}", err)))?;
+
+    Ok(Json(crate::models::ai_config::ComposeEmailResponse {
+        subject,
+        body: email_body,
+        provider: config.provider,
+        model: config.model_name,
+    }))
+}
+
 fn parse_user_id(claims: &Claims) -> Result<uuid::Uuid, AppError> {
     claims
         .sub
@@ -433,6 +485,44 @@ mod tests {
             "folder": "INBOX"
         });
         let result = serde_json::from_value::<ThreadSummaryRequest>(json);
+        assert!(result.is_err());
+    }
+
+    // Added: ComposeEmailRequest deserialization tests for TMAIL-134
+    #[test]
+    fn test_compose_email_request_deserialization() {
+        let json = serde_json::json!({
+            "prompt": "Write a thank-you email to the client",
+            "context": "They helped with the migration",
+            "tone": "professional",
+            "length": "short"
+        });
+        let request: crate::models::ai_config::ComposeEmailRequest =
+            serde_json::from_value(json).unwrap();
+        assert_eq!(request.prompt, "Write a thank-you email to the client");
+        assert_eq!(request.tone.as_deref(), Some("professional"));
+        assert_eq!(request.length.as_deref(), Some("short"));
+    }
+
+    #[test]
+    fn test_compose_email_request_minimal() {
+        let json = serde_json::json!({
+            "prompt": "Schedule a team standup"
+        });
+        let request: crate::models::ai_config::ComposeEmailRequest =
+            serde_json::from_value(json).unwrap();
+        assert_eq!(request.prompt, "Schedule a team standup");
+        assert!(request.context.is_none());
+        assert!(request.tone.is_none());
+        assert!(request.length.is_none());
+    }
+
+    #[test]
+    fn test_compose_email_request_missing_prompt_fails() {
+        let json = serde_json::json!({
+            "tone": "casual"
+        });
+        let result = serde_json::from_value::<crate::models::ai_config::ComposeEmailRequest>(json);
         assert!(result.is_err());
     }
 }

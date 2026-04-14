@@ -125,6 +125,26 @@ pub struct SmartReplyResponse {
     pub model: String,
 }
 
+// Added: Compose email request/response types for AI draft generation (TMAIL-134)
+/// PURPOSE: Request body for AI compose (full draft generation) endpoint
+/// CONSTRAINTS: prompt is required; tone/length have known valid values
+#[derive(Debug, Deserialize)]
+pub struct ComposeEmailRequest {
+    pub prompt: String,
+    pub context: Option<String>,
+    pub tone: Option<String>,
+    pub length: Option<String>,
+}
+
+/// PURPOSE: Response body for AI compose endpoint with generated subject and body
+#[derive(Debug, Serialize)]
+pub struct ComposeEmailResponse {
+    pub subject: String,
+    pub body: String,
+    pub provider: AiProvider,
+    pub model: String,
+}
+
 /// PURPOSE: Encrypt an API key using AES-256-GCM
 /// CONSTRAINTS: encryption_key must be exactly 32 bytes
 /// NOTE: Returns base64-encoded nonce (12 bytes) + ciphertext
@@ -614,6 +634,58 @@ mod tests {
         let json = serde_json::to_value(&response).unwrap();
         assert_eq!(json["reply"], "Thank you for your email.");
         assert_eq!(json["tone"], "brief");
+        assert_eq!(json["provider"], "openai");
+        assert_eq!(json["model"], "gpt-4o");
+    }
+
+    // Added: ComposeEmailRequest deserialization tests for TMAIL-134
+    #[test]
+    fn test_compose_email_request_full_deserialization() {
+        let json = serde_json::json!({
+            "prompt": "Write a follow-up email about the project deadline",
+            "context": "We discussed moving the deadline to next Friday",
+            "tone": "professional",
+            "length": "medium"
+        });
+        let request: ComposeEmailRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(request.prompt, "Write a follow-up email about the project deadline");
+        assert_eq!(request.context.as_deref(), Some("We discussed moving the deadline to next Friday"));
+        assert_eq!(request.tone.as_deref(), Some("professional"));
+        assert_eq!(request.length.as_deref(), Some("medium"));
+    }
+
+    #[test]
+    fn test_compose_email_request_minimal_deserialization() {
+        let json = serde_json::json!({
+            "prompt": "Ask about meeting time"
+        });
+        let request: ComposeEmailRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(request.prompt, "Ask about meeting time");
+        assert!(request.context.is_none());
+        assert!(request.tone.is_none());
+        assert!(request.length.is_none());
+    }
+
+    #[test]
+    fn test_compose_email_request_missing_prompt_fails() {
+        let json = serde_json::json!({
+            "tone": "casual"
+        });
+        let result = serde_json::from_value::<ComposeEmailRequest>(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_compose_email_response_serialization() {
+        let response = ComposeEmailResponse {
+            subject: "Meeting Follow-Up".to_string(),
+            body: "Hi team,\n\nJust following up on our discussion.".to_string(),
+            provider: AiProvider::Openai,
+            model: "gpt-4o".to_string(),
+        };
+        let json = serde_json::to_value(&response).unwrap();
+        assert_eq!(json["subject"], "Meeting Follow-Up");
+        assert_eq!(json["body"], "Hi team,\n\nJust following up on our discussion.");
         assert_eq!(json["provider"], "openai");
         assert_eq!(json["model"], "gpt-4o");
     }

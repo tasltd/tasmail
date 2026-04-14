@@ -445,6 +445,11 @@ pub fn create_router(state: AppState) -> Router {
             "/api/ai/thread-summary",
             post(handlers::ai_config::thread_summary),
         )
+        // Added: AI compose (full draft generation) route for TMAIL-134
+        .route(
+            "/api/ai/compose",
+            post(handlers::ai_config::compose_email),
+        )
         // Added: SAML 2.0 SSO admin configuration routes for TMAIL-101
         .route(
             "/api/admin/saml",
@@ -462,6 +467,19 @@ pub fn create_router(state: AppState) -> Router {
         .route(
             "/api/admin/oidc/{id}",
             put(handlers::oidc::update_oidc_provider).delete(handlers::oidc::delete_oidc_provider),
+        )
+        // Added: Semantic search routes for pgvector similarity search (TMAIL-106)
+        .route(
+            "/api/search/semantic",
+            post(handlers::semantic_search::semantic_search),
+        )
+        .route(
+            "/api/search/index",
+            post(handlers::semantic_search::index_email),
+        )
+        .route(
+            "/api/search/index/stats",
+            get(handlers::semantic_search::index_stats),
         )
         // Audit log
         .route(

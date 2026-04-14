@@ -10,6 +10,7 @@ import {
   summarizeEmail,
   summarizeThread,
   getSmartReply,
+  composeEmail,
 } from './ai-config';
 import { apiClient } from './client';
 
@@ -120,6 +121,32 @@ describe('ai-config API', () => {
       });
       expect(result.summary).toBe('The thread discusses project deadlines and task assignments.');
       expect(result.message_count).toBe(3);
+    });
+  });
+
+  // Added: Compose email API test for TMAIL-134
+  describe('composeEmail', () => {
+    it('calls POST /ai/compose with prompt and options', async () => {
+      vi.mocked(apiClient.post).mockResolvedValue({
+        subject: 'Meeting Follow-Up',
+        body: 'Hi team,\n\nJust following up on our discussion.',
+        provider: 'openai',
+        model: 'gpt-4o',
+      });
+      const result = await composeEmail(
+        'Write a follow-up about the meeting',
+        'We discussed deadlines',
+        'professional',
+        'medium',
+      );
+      expect(apiClient.post).toHaveBeenCalledWith('/ai/compose', {
+        prompt: 'Write a follow-up about the meeting',
+        context: 'We discussed deadlines',
+        tone: 'professional',
+        length: 'medium',
+      });
+      expect(result.subject).toBe('Meeting Follow-Up');
+      expect(result.body).toContain('following up');
     });
   });
 

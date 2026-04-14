@@ -1,10 +1,12 @@
 import { useState, useCallback } from 'react';
-import { Search, Menu, LogOut, Moon, Sun, WifiOff, SlidersHorizontal } from 'lucide-react';
+import { Search, Menu, LogOut, Moon, Sun, WifiOff, SlidersHorizontal, Sparkles } from 'lucide-react';
 import { useUiStore } from '../../stores/uiStore';
 import { useMailStore } from '../../stores/mailStore';
 import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 // Added: Import AdvancedSearch panel for TMAIL-32
 import { AdvancedSearch } from '../mail/AdvancedSearch';
+// Added: Import SemanticSearchPanel for TMAIL-106
+import { SemanticSearchPanel } from '../mail/SemanticSearchPanel';
 
 interface TopBarProps {
   onLogout: () => void;
@@ -19,6 +21,8 @@ export function TopBar({ onLogout }: TopBarProps) {
   const [inputValue, setInputValue] = useState('');
   // Added: Toggle state for advanced search filter panel
   const [showFilters, setShowFilters] = useState(false);
+  // Added: Toggle state for semantic search panel (TMAIL-106)
+  const [showSemanticSearch, setShowSemanticSearch] = useState(false);
 
   const handleSearch = useCallback(
     (e: React.FormEvent) => {
@@ -55,9 +59,21 @@ export function TopBar({ onLogout }: TopBarProps) {
           >
             <SlidersHorizontal size={18} />
           </button>
+          {/* Added: Semantic search toggle button for TMAIL-106 */}
+          <button
+            type="button"
+            className={`btn btn--icon topbar__semantic-toggle ${showSemanticSearch ? 'topbar__semantic-toggle--active' : ''}`}
+            onClick={() => setShowSemanticSearch((prev) => !prev)}
+            title="Toggle semantic search"
+            data-testid="semantic-search-toggle"
+          >
+            <Sparkles size={18} />
+          </button>
         </form>
         {/* Added: Advanced search filter panel */}
         <AdvancedSearch visible={showFilters} />
+        {/* Added: Semantic search panel for TMAIL-106 */}
+        {showSemanticSearch && <SemanticSearchPanel />}
       </div>
 
       <div className="topbar__actions">

@@ -268,6 +268,89 @@ pub async fn summarize_thread(
     .await
 }
 
+// Added: AI compose email (full draft generation) for TMAIL-134
+/// PURPOSE: Generate a complete email draft (subject + body) from a user prompt
+/// CONSTRAINTS: Response must contain "Subject:" and "Body:" markers for parsing
+pub async fn compose_email(
+    provider: &AiProvider,
+    api_key: &str,
+    model: &str,
+    base_url: Option<&str>,
+    max_tokens: i32,
+    temperature: f32,
+    prompt: &str,
+    context: Option<&str>,
+    tone: Option<&str>,
+    length: Option<&str>,
+) -> Result<(String, String), String> {
+    // Added: Build tone and length instructions for the system prompt
+    let tone_instruction = match tone {
+        Some("professional") => "Use a professional, business-appropriate tone.",
+        Some("casual") => "Use a casual, conversational tone.",
+        Some("friendly") => "Use a warm, friendly tone.",
+        Some("formal") => "Use a formal, official tone.",
+        _ => "Use a professional tone.",
+    };
+
+    let length_instruction = match length {
+        Some("short") => "Keep the email brief — 2-3 sentences for the body.",
+        Some("medium") => "Write a moderate-length email — about 1-2 paragraphs.",
+        Some("long") => "Write a detailed, comprehensive email — 3+ paragraphs as needed.",
+        _ => "Write a moderate-length email.",
+    };
+
+    let system_prompt = format!(
+        "You are an email composition assistant. Generate a complete email with a subject line and body text. \
+         {} {} \
+         Format your response exactly as:\n\
+         Subject: <the subject line>\n\
+         Body:\n<the email body>\n\n\
+         Do not include any other text outside this format.",
+        tone_instruction, length_instruction
+    );
+
+    // Added: Include optional context in the user message
+    let user_message = match context {
+        Some(ctx) if !ctx.trim().is_empty() => {
+            format!("Write an email about: {}\n\nAdditional context: {}", prompt, ctx)
+        }
+        _ => format!("Write an email about: {}", prompt),
+    };
+
+    let response_text = call_ai_provider(
+        provider, api_key, model, base_url, &system_prompt, &user_message, max_tokens, temperature,
+    )
+    .await?;
+
+    // Added: Parse the "Subject:" and "Body:" markers from the AI response
+    parse_compose_response(&response_text)
+}
+
+/// PURPOSE: Parse AI compose response into subject and body parts
+/// CONSTRAINTS: Expects "Subject: ..." and "Body:\n..." format
+fn parse_compose_response(response: &str) -> Result<(String, String), String> {
+    // Added: Find subject line (everything after "Subject:" until newline)
+    let subject = if let Some(subject_start) = response.find("Subject:") {
+        let after_marker = &response[subject_start + "Subject:".len()..];
+        let subject_end = after_marker.find('\n').unwrap_or(after_marker.len());
+        after_marker[..subject_end].trim().to_string()
+    } else {
+        // NOTE: Fallback — use first line as subject if marker not found
+        response.lines().next().unwrap_or("(No subject)").trim().to_string()
+    };
+
+    // Added: Find body text (everything after "Body:" marker)
+    let body = if let Some(body_start) = response.find("Body:") {
+        response[body_start + "Body:".len()..].trim().to_string()
+    } else {
+        // NOTE: Fallback — use everything after the first line as body
+        let first_newline = response.find('\n').unwrap_or(0);
+        response[first_newline..].trim().to_string()
+    };
+
+    Ok((subject, body))
+}
+
 /// PURPOSE: Generate reply suggestions for an email with tone control (TMAIL-104)
 /// CONSTRAINTS: tone must be one of "brief", "detailed", or "decline"
 pub async fn suggest_reply(
@@ -509,6 +592,41 @@ mod tests {
     fn test_tone_to_str_decline() {
         use crate::models::ai_config::SmartReplyTone;
         assert_eq!(tone_to_str(&SmartReplyTone::Decline), "decline");
+    }
+
+    // Added: Tests for parse_compose_response (TMAIL-134)
+    #[test]
+    fn test_parse_compose_response_standard_format() {
+        let response = "Subject: Meeting Follow-Up\nBody:\nHi team,\n\nJust following up on our discussion.";
+        let (subject, body) = parse_compose_response(response).unwrap();
+        assert_eq!(subject, "Meeting Follow-Up");
+        assert_eq!(body, "Hi team,\n\nJust following up on our discussion.");
+    }
+
+    #[test]
+    fn test_parse_compose_response_with_extra_whitespace() {
+        let response = "Subject:   Project Update  \nBody:\n  Here is the update.  ";
+        let (subject, body) = parse_compose_response(response).unwrap();
+        assert_eq!(subject, "Project Update");
+        assert_eq!(body, "Here is the update.");
+    }
+
+    #[test]
+    fn test_parse_compose_response_missing_markers_fallback() {
+        // NOTE: When markers are missing, first line becomes subject, rest becomes body
+        let response = "Important Notice\nPlease review the attached document.";
+        let (subject, body) = parse_compose_response(response).unwrap();
+        assert_eq!(subject, "Important Notice");
+        assert_eq!(body, "Please review the attached document.");
+    }
+
+    #[test]
+    fn test_parse_compose_response_subject_only_marker() {
+        let response = "Subject: Quick Question\nHello, I wanted to ask about the timeline.";
+        let (subject, body) = parse_compose_response(response).unwrap();
+        assert_eq!(subject, "Quick Question");
+        // NOTE: Without Body: marker, fallback uses everything after first line
+        assert_eq!(body, "Hello, I wanted to ask about the timeline.");
     }
 
     // Added: Test for summarize_thread empty emails validation (TMAIL-103)

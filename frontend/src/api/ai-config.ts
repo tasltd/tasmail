@@ -93,6 +93,27 @@ export async function summarizeThread(folder: string, uids: number[]): Promise<T
   return apiClient.post<ThreadSummaryResult>('/ai/thread-summary', { folder, uids });
 }
 
+// Added: Compose email types and function for AI draft generation (TMAIL-134)
+export type ComposeTone = 'professional' | 'casual' | 'friendly' | 'formal';
+export type ComposeLength = 'short' | 'medium' | 'long';
+
+export interface ComposeEmailResult {
+  subject: string;
+  body: string;
+  provider: AiProvider;
+  model: string;
+}
+
+// PURPOSE: Generate a complete email draft (subject + body) using AI from a user prompt
+export async function composeEmail(
+  prompt: string,
+  context?: string,
+  tone?: ComposeTone,
+  length?: ComposeLength,
+): Promise<ComposeEmailResult> {
+  return apiClient.post<ComposeEmailResult>('/ai/compose', { prompt, context, tone, length });
+}
+
 // Added: Smart reply tone type for TMAIL-104
 export type SmartReplyTone = 'brief' | 'detailed' | 'decline';
 

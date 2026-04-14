@@ -52,3 +52,5 @@ pub mod ai_config;
 pub mod saml_config;
 // Added: OIDC provider model for Sign in with Google/Microsoft (TMAIL-99)
 pub mod oidc_provider;
+// Added: Email embedding model for semantic search with pgvector (TMAIL-106)
+pub mod email_embedding;

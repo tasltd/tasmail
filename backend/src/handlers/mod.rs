@@ -57,4 +57,6 @@ pub mod ai_config;
 pub mod saml;
 // Added: OIDC identity provider handlers for Sign in with Google/Microsoft (TMAIL-99)
 pub mod oidc;
+// Added: Semantic search handlers for pgvector similarity search (TMAIL-106)
+pub mod semantic_search;
 pub mod websocket;
