@@ -53,4 +53,8 @@ pub mod calendar;
 pub mod ldap;
 // Added: AI configuration management handlers for BYOK AI integration (TMAIL-105)
 pub mod ai_config;
+// Added: SAML 2.0 SSO configuration and authentication handlers (TMAIL-101)
+pub mod saml;
+// Added: OIDC identity provider handlers for Sign in with Google/Microsoft (TMAIL-99)
+pub mod oidc;
 pub mod websocket;

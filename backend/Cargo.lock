@@ -2897,6 +2897,7 @@ dependencies = [
  "csv",
  "data-encoding",
  "dotenvy",
+ "flate2",
  "futures",
  "hex",
  "hmac",
@@ -2922,6 +2923,7 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
+ "urlencoding",
  "uuid",
 ]
 

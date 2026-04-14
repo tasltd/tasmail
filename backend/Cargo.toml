@@ -58,6 +58,9 @@ csv = "1"
 reqwest = { version = "0.12", features = ["json"] }
 # Added: AES-256-GCM encryption for AI API keys at rest (TMAIL-105)
 aes-gcm = "0.10"
+# Added: SAML AuthnRequest deflate compression and URL encoding for TMAIL-101
+flate2 = "1"
+urlencoding = "2"
 
 [dev-dependencies]
 tokio-test = "0.4"

@@ -38,6 +38,10 @@ import { CalendarManager } from '../settings/CalendarManager';
 import { LdapManager } from '../settings/LdapManager';
 // Added: AI configuration management component for BYOK AI integration (TMAIL-105)
 import { AiConfigManager } from '../settings/AiConfigManager';
+// Added: SAML 2.0 SSO configuration management component (TMAIL-101)
+import { SamlManager } from '../settings/SamlManager';
+// Added: OIDC identity provider management component (TMAIL-99)
+import { OidcManager } from '../settings/OidcManager';
 import { useMailStore } from '../../stores/mailStore';
 import { useUiStore } from '../../stores/uiStore';
 // Added: Keyboard shortcuts hook and help dialog for TMAIL-121
@@ -104,6 +108,10 @@ export function AppShell({ onLogout }: AppShellProps) {
           {viewMode === 'ldap' && <LdapManager />}
           {/* Added: AI configuration management view (TMAIL-105) */}
           {viewMode === 'ai-config' && <AiConfigManager />}
+          {/* Added: SAML SSO configuration management view (TMAIL-101) */}
+          {viewMode === 'saml' && <SamlManager />}
+          {/* Added: OIDC provider management view (TMAIL-99) */}
+          {viewMode === 'oidc' && <OidcManager />}
         </main>
       </div>
       {/* Added: Keyboard shortcut help dialog, toggled by '?' key */}

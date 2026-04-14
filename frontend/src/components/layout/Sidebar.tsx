@@ -11,7 +11,9 @@
 // Added: Calendar icon for calendar/meeting scheduling sidebar entry (TMAIL-127)
 // Added: Network icon for LDAP/AD directory sync sidebar entry (TMAIL-100)
 // Added: Brain icon for AI configuration sidebar entry (TMAIL-105)
-import { PenSquare, FileSignature, Users, Shield, Plane, UsersRound, Upload, Gauge, Filter, Mailbox, ListTodo, CheckSquare, Webhook, Palette, Archive, Globe, FileUp, UserPlus, MessageSquare, Calendar, Network, Brain } from 'lucide-react';
+// Added: KeyRound icon for SAML SSO sidebar entry (TMAIL-101)
+// Added: LogIn icon for OIDC providers sidebar entry (TMAIL-99)
+import { PenSquare, FileSignature, Users, Shield, Plane, UsersRound, Upload, Gauge, Filter, Mailbox, ListTodo, CheckSquare, Webhook, Palette, Archive, Globe, FileUp, UserPlus, MessageSquare, Calendar, Network, Brain, KeyRound, LogIn } from 'lucide-react';
 import { FolderTree } from '../mail/FolderTree';
 import { QuotaBar } from './QuotaBar';
 import { useMailStore } from '../../stores/mailStore';
@@ -180,6 +182,22 @@ export function Sidebar() {
         >
           <Brain size={18} />
           <span className="folder-item__name">AI Config</span>
+        </button>
+        {/* Added: SAML SSO navigation entry (TMAIL-101) */}
+        <button
+          className={`folder-item ${viewMode === 'saml' ? 'folder-item--active' : ''}`}
+          onClick={() => setViewMode('saml')}
+        >
+          <KeyRound size={18} />
+          <span className="folder-item__name">SAML SSO</span>
+        </button>
+        {/* Added: OIDC providers navigation entry (TMAIL-99) */}
+        <button
+          className={`folder-item ${viewMode === 'oidc' ? 'folder-item--active' : ''}`}
+          onClick={() => setViewMode('oidc')}
+        >
+          <LogIn size={18} />
+          <span className="folder-item__name">OIDC</span>
         </button>
         <button
           className={`folder-item ${viewMode === 'bandwidth' ? 'folder-item--active' : ''}`}

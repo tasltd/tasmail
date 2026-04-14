@@ -28,7 +28,14 @@ pub fn create_router(state: AppState) -> Router {
         // Added: Public branding endpoint — frontend needs it before login (TMAIL-111)
         .route("/api/branding", get(handlers::branding::get_branding))
         // Added: Public download endpoint for shared files (TMAIL-138)
-        .route("/api/dl/{token}", get(handlers::shared_files::download_by_token));
+        .route("/api/dl/{token}", get(handlers::shared_files::download_by_token))
+        // Added: Public SAML SSO login and callback routes for TMAIL-101
+        .route("/api/auth/saml/{id}/login", get(handlers::saml::saml_login))
+        .route("/api/auth/saml/callback", post(handlers::saml::saml_callback))
+        // Added: Public OIDC login routes for Sign in with Google/Microsoft (TMAIL-99)
+        .route("/api/auth/oidc/providers", get(handlers::oidc::list_login_providers))
+        .route("/api/auth/oidc/{id}/authorize", get(handlers::oidc::get_authorize_url))
+        .route("/api/auth/oidc/callback", post(handlers::oidc::oidc_callback));
 
     // Protected routes (auth required)
     let protected_routes = Router::new()
@@ -437,6 +444,24 @@ pub fn create_router(state: AppState) -> Router {
         .route(
             "/api/ai/thread-summary",
             post(handlers::ai_config::thread_summary),
+        )
+        // Added: SAML 2.0 SSO admin configuration routes for TMAIL-101
+        .route(
+            "/api/admin/saml",
+            get(handlers::saml::list_saml_configs).post(handlers::saml::create_saml_config),
+        )
+        .route(
+            "/api/admin/saml/{id}",
+            put(handlers::saml::update_saml_config).delete(handlers::saml::delete_saml_config),
+        )
+        // Added: Admin OIDC provider management routes for TMAIL-99
+        .route(
+            "/api/admin/oidc",
+            get(handlers::oidc::list_oidc_providers).post(handlers::oidc::create_oidc_provider),
+        )
+        .route(
+            "/api/admin/oidc/{id}",
+            put(handlers::oidc::update_oidc_provider).delete(handlers::oidc::delete_oidc_provider),
         )
         // Audit log
         .route(
