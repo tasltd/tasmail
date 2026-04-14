@@ -207,6 +207,28 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/webauthn/authenticate/complete", post(handlers::webauthn::authenticate_complete))
         .route("/api/webauthn/credentials", get(handlers::webauthn::list_credentials))
         .route("/api/webauthn/credentials/{id}", delete(handlers::webauthn::delete_credential))
+        // Added: Attachment storage routes for TMAIL-59
+        .route(
+            "/api/attachments",
+            get(handlers::attachments::list_attachments).post(handlers::attachments::upload_attachment),
+        )
+        .route(
+            "/api/attachments/stats",
+            get(handlers::attachments::attachment_stats),
+        )
+        .route(
+            "/api/attachments/{id}/download",
+            get(handlers::attachments::download_attachment),
+        )
+        .route(
+            "/api/attachments/{id}",
+            delete(handlers::attachments::delete_attachment),
+        )
+        // Added: Email queue management routes for TMAIL-58
+        .route("/api/queue", get(handlers::queue::list_queue))
+        .route("/api/queue/stats", get(handlers::queue::queue_stats))
+        .route("/api/queue/{id}", delete(handlers::queue::cancel_queued))
+        .route("/api/queue/{id}/retry", post(handlers::queue::retry_queued))
         // Audit log
         .route(
             "/api/admin/audit-log",

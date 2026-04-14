@@ -2,7 +2,8 @@ import { create } from 'zustand';
 import type { AdvancedSearchParams } from '../api/messages';
 
 // Added: 'shared' view mode for shared mailbox management (TMAIL-96)
-type ViewMode = 'list' | 'reader' | 'compose' | 'search' | 'signatures' | 'contacts' | 'security' | 'vacation' | 'groups' | 'migration' | 'bandwidth' | 'filters' | 'shared';
+// Added: 'queue' view mode for email queue management (TMAIL-58)
+type ViewMode = 'list' | 'reader' | 'compose' | 'search' | 'signatures' | 'contacts' | 'security' | 'vacation' | 'groups' | 'migration' | 'bandwidth' | 'filters' | 'shared' | 'queue';
 
 interface MailState {
   selectedFolder: string;

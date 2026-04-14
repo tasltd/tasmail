@@ -1,6 +1,10 @@
+// Added: Attachment storage model for TMAIL-59
+pub mod attachment;
 pub mod audit_log;
 pub mod auto_reply;
 pub mod contact;
+// Added: Email queue model for TMAIL-58
+pub mod email_queue;
 pub mod distribution_group;
 pub mod domain;
 pub mod email_delegation;

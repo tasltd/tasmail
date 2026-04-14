@@ -8,6 +8,9 @@ pub struct Config {
     pub imap: ImapConfig,
     pub smtp: SmtpConfig,
     pub jwt: JwtConfig,
+    // Added: Attachment storage configuration for TMAIL-59
+    #[serde(default)]
+    pub storage: StorageConfig,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -43,6 +46,36 @@ pub struct JwtConfig {
     pub secret: String,
     pub access_token_expiry_secs: u64,
     pub refresh_token_expiry_secs: u64,
+}
+
+/// Added: Attachment storage and ClamAV scanning configuration for TMAIL-59
+/// PURPOSE: Controls where attachments are stored on disk, max upload size, and ClamAV socket path
+#[derive(Debug, Deserialize, Clone)]
+pub struct StorageConfig {
+    #[serde(default = "default_attachment_dir")]
+    pub attachment_dir: String,
+    #[serde(default = "default_max_file_size")]
+    pub max_file_size: u64,
+    #[serde(default)]
+    pub clamav_socket: Option<String>,
+}
+
+fn default_attachment_dir() -> String {
+    "./data/attachments".to_string()
+}
+
+fn default_max_file_size() -> u64 {
+    25 * 1024 * 1024 // 25 MB
+}
+
+impl Default for StorageConfig {
+    fn default() -> Self {
+        Self {
+            attachment_dir: default_attachment_dir(),
+            max_file_size: default_max_file_size(),
+            clamav_socket: None,
+        }
+    }
 }
 
 impl Config {
@@ -102,6 +135,16 @@ impl Config {
                     .ok()
                     .and_then(|p| p.parse().ok())
                     .unwrap_or(604800), // 7 days
+            },
+            // Added: Storage config from env vars for TMAIL-59
+            storage: StorageConfig {
+                attachment_dir: std::env::var("ATTACHMENT_DIR")
+                    .unwrap_or_else(|_| default_attachment_dir()),
+                max_file_size: std::env::var("MAX_FILE_SIZE")
+                    .ok()
+                    .and_then(|p| p.parse().ok())
+                    .unwrap_or_else(default_max_file_size),
+                clamav_socket: std::env::var("CLAMAV_SOCKET").ok(),
             },
         })
     }
@@ -176,6 +219,10 @@ refresh_token_expiry_secs = 86400
         assert_eq!(config.jwt.secret, "test-secret-key");
         assert_eq!(config.jwt.access_token_expiry_secs, 300);
         assert_eq!(config.jwt.refresh_token_expiry_secs, 86400);
+        // Added: Storage config defaults when [storage] section omitted from TOML
+        assert_eq!(config.storage.attachment_dir, "./data/attachments");
+        assert_eq!(config.storage.max_file_size, 25 * 1024 * 1024);
+        assert!(config.storage.clamav_socket.is_none());
     }
 
     #[test]
@@ -186,6 +233,14 @@ refresh_token_expiry_secs = 86400
 
         let result = Config::load(tmp.path());
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_config_storage_defaults() {
+        // Added: Verify storage config defaults from env
+        let config = Config::from_env().unwrap();
+        assert_eq!(config.storage.attachment_dir, "./data/attachments");
+        assert_eq!(config.storage.max_file_size, 25 * 1024 * 1024);
     }
 
     #[test]

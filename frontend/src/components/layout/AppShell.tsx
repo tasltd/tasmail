@@ -14,6 +14,8 @@ import { LowBandwidthSettings } from '../settings/LowBandwidthSettings';
 import { FilterManager } from '../settings/FilterManager';
 // Added: Shared mailbox management component (TMAIL-96)
 import { SharedMailboxManager } from '../settings/SharedMailboxManager';
+// Added: Email queue management component (TMAIL-58)
+import { QueueManager } from '../settings/QueueManager';
 import { useMailStore } from '../../stores/mailStore';
 import { useUiStore } from '../../stores/uiStore';
 // Added: Keyboard shortcuts hook and help dialog for TMAIL-121
@@ -56,6 +58,8 @@ export function AppShell({ onLogout }: AppShellProps) {
           {viewMode === 'filters' && <FilterManager />}
           {/* Added: Shared mailbox ACL management view (TMAIL-96) */}
           {viewMode === 'shared' && <SharedMailboxManager />}
+          {/* Added: Email queue management view (TMAIL-58) */}
+          {viewMode === 'queue' && <QueueManager />}
         </main>
       </div>
       {/* Added: Keyboard shortcut help dialog, toggled by '?' key */}

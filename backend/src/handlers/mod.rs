@@ -1,8 +1,12 @@
 pub mod admin;
+// Added: Attachment upload/download/stats handlers for TMAIL-59
+pub mod attachments;
 pub mod auth;
 pub mod auto_reply;
 pub mod contacts;
 pub mod delegation;
+// Added: Email queue management handlers for TMAIL-58
+pub mod queue;
 // Added: EML import/export handlers for TMAIL-68
 pub mod eml;
 pub mod folders;

@@ -73,6 +73,14 @@ async fn main() -> anyhow::Result<()> {
     );
     scheduler.start();
 
+    // Added: Start background queue processor for retry-enabled email sending (TMAIL-58)
+    let queue_processor = services::queue_processor::QueueProcessor::new(
+        std::sync::Arc::new(pool.clone()),
+        config.smtp.clone(),
+        5,
+    );
+    queue_processor.start();
+
     let state = AppState {
         db: pool,
         config,
