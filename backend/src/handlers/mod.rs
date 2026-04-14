@@ -25,8 +25,12 @@ pub mod sms_otp;
 pub mod sieve;
 pub mod signatures;
 pub mod snooze;
+// Added: Email task/to-do handlers for TMAIL-126
+pub mod tasks;
 pub mod templates;
 pub mod two_factor;
 // Added: WebAuthn/FIDO2 passkey handlers for TMAIL-83
 pub mod webauthn;
+// Added: Webhook management handlers for TMAIL-131
+pub mod webhooks;
 pub mod websocket;

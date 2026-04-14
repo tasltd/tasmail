@@ -1,6 +1,8 @@
 // Added: Mailbox icon for shared mailboxes sidebar entry (TMAIL-96)
 // Added: ListTodo icon for email queue sidebar entry (TMAIL-58)
-import { PenSquare, FileSignature, Users, Shield, Plane, UsersRound, Upload, Gauge, Filter, Mailbox, ListTodo } from 'lucide-react';
+// Added: CheckSquare icon for tasks sidebar entry (TMAIL-126)
+// Added: Webhook icon for webhooks sidebar entry (TMAIL-131)
+import { PenSquare, FileSignature, Users, Shield, Plane, UsersRound, Upload, Gauge, Filter, Mailbox, ListTodo, CheckSquare, Webhook } from 'lucide-react';
 import { FolderTree } from '../mail/FolderTree';
 import { QuotaBar } from './QuotaBar';
 import { useMailStore } from '../../stores/mailStore';
@@ -73,6 +75,22 @@ export function Sidebar() {
         >
           <Mailbox size={18} />
           <span className="folder-item__name">Shared Mailboxes</span>
+        </button>
+        {/* Added: Tasks navigation entry (TMAIL-126) */}
+        <button
+          className={`folder-item ${viewMode === 'tasks' ? 'folder-item--active' : ''}`}
+          onClick={() => setViewMode('tasks')}
+        >
+          <CheckSquare size={18} />
+          <span className="folder-item__name">Tasks</span>
+        </button>
+        {/* Added: Webhooks navigation entry (TMAIL-131) */}
+        <button
+          className={`folder-item ${viewMode === 'webhooks' ? 'folder-item--active' : ''}`}
+          onClick={() => setViewMode('webhooks')}
+        >
+          <Webhook size={18} />
+          <span className="folder-item__name">Webhooks</span>
         </button>
         {/* Added: Email queue navigation entry (TMAIL-58) */}
         <button

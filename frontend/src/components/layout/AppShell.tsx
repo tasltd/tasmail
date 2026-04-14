@@ -16,6 +16,10 @@ import { FilterManager } from '../settings/FilterManager';
 import { SharedMailboxManager } from '../settings/SharedMailboxManager';
 // Added: Email queue management component (TMAIL-58)
 import { QueueManager } from '../settings/QueueManager';
+// Added: Task/to-do management component (TMAIL-126)
+import { TaskManager } from '../settings/TaskManager';
+// Added: Webhook management component (TMAIL-131)
+import { WebhookManager } from '../settings/WebhookManager';
 import { useMailStore } from '../../stores/mailStore';
 import { useUiStore } from '../../stores/uiStore';
 // Added: Keyboard shortcuts hook and help dialog for TMAIL-121
@@ -60,6 +64,10 @@ export function AppShell({ onLogout }: AppShellProps) {
           {viewMode === 'shared' && <SharedMailboxManager />}
           {/* Added: Email queue management view (TMAIL-58) */}
           {viewMode === 'queue' && <QueueManager />}
+          {/* Added: Task/to-do management view (TMAIL-126) */}
+          {viewMode === 'tasks' && <TaskManager />}
+          {/* Added: Webhook management view (TMAIL-131) */}
+          {viewMode === 'webhooks' && <WebhookManager />}
         </main>
       </div>
       {/* Added: Keyboard shortcut help dialog, toggled by '?' key */}

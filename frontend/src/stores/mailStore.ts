@@ -3,7 +3,9 @@ import type { AdvancedSearchParams } from '../api/messages';
 
 // Added: 'shared' view mode for shared mailbox management (TMAIL-96)
 // Added: 'queue' view mode for email queue management (TMAIL-58)
-type ViewMode = 'list' | 'reader' | 'compose' | 'search' | 'signatures' | 'contacts' | 'security' | 'vacation' | 'groups' | 'migration' | 'bandwidth' | 'filters' | 'shared' | 'queue';
+// Added: 'tasks' view mode for task/to-do management (TMAIL-126)
+// Added: 'webhooks' view mode for outbound webhook management (TMAIL-131)
+type ViewMode = 'list' | 'reader' | 'compose' | 'search' | 'signatures' | 'contacts' | 'security' | 'vacation' | 'groups' | 'migration' | 'bandwidth' | 'filters' | 'shared' | 'queue' | 'tasks' | 'webhooks';
 
 interface MailState {
   selectedFolder: string;

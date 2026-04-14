@@ -10,3 +10,5 @@ pub mod queue_processor;
 pub mod sms_service;
 pub mod smtp_service;
 pub mod totp_service;
+// Added: Webhook dispatcher service for outbound notifications (TMAIL-131)
+pub mod webhook_dispatcher;

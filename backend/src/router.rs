@@ -251,6 +251,32 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/queue/stats", get(handlers::queue::queue_stats))
         .route("/api/queue/{id}", delete(handlers::queue::cancel_queued))
         .route("/api/queue/{id}/retry", post(handlers::queue::retry_queued))
+        // Added: Email tasks/to-do routes for TMAIL-126
+        .route(
+            "/api/tasks",
+            get(handlers::tasks::list_tasks).post(handlers::tasks::create_task),
+        )
+        .route(
+            "/api/tasks/{id}",
+            get(handlers::tasks::get_task)
+                .put(handlers::tasks::update_task)
+                .delete(handlers::tasks::delete_task),
+        )
+        // Added: Outbound webhook management routes for TMAIL-131
+        .route(
+            "/api/webhooks",
+            get(handlers::webhooks::list_webhooks).post(handlers::webhooks::create_webhook),
+        )
+        .route(
+            "/api/webhooks/{id}",
+            get(handlers::webhooks::get_webhook)
+                .put(handlers::webhooks::update_webhook)
+                .delete(handlers::webhooks::delete_webhook),
+        )
+        .route(
+            "/api/webhooks/{id}/deliveries",
+            get(handlers::webhooks::list_deliveries),
+        )
         // Audit log
         .route(
             "/api/admin/audit-log",

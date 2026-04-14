@@ -47,6 +47,8 @@ rand = "0.9"
 base64 = "0.22"
 futures = "0.3"
 sha2 = "0.10"
+hmac = "0.12"
+hex = "0.4"
 totp-rs = { version = "5", features = ["gen_secret", "otpauth"] }
 data-encoding = "2"
 thiserror = "2"

@@ -2783,6 +2783,8 @@ dependencies = [
  "data-encoding",
  "dotenvy",
  "futures",
+ "hex",
+ "hmac",
  "imap-proto",
  "jsonwebtoken",
  "lettre",
