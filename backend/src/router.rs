@@ -544,6 +544,45 @@ pub fn create_router(state: AppState) -> Router {
             "/api/dane/verifications",
             get(handlers::dane::list_verifications),
         )
+        // Added: BYO-SMTP configuration management routes for TMAIL-48
+        .route(
+            "/api/smtp-configs",
+            get(handlers::smtp_config::list_smtp_configs)
+                .post(handlers::smtp_config::create_smtp_config),
+        )
+        .route(
+            "/api/smtp-configs/{id}",
+            get(handlers::smtp_config::get_smtp_config)
+                .put(handlers::smtp_config::update_smtp_config)
+                .delete(handlers::smtp_config::delete_smtp_config),
+        )
+        .route(
+            "/api/smtp-configs/{id}/test",
+            post(handlers::smtp_config::test_smtp_config),
+        )
+        .route(
+            "/api/smtp-configs/{id}/default",
+            post(handlers::smtp_config::set_default_smtp),
+        )
+        // Added: Plugin management routes for extensible plugin architecture (TMAIL-132)
+        .route(
+            "/api/plugins",
+            get(handlers::plugins::list_plugins).post(handlers::plugins::create_plugin),
+        )
+        .route(
+            "/api/plugins/{id}",
+            get(handlers::plugins::get_plugin)
+                .put(handlers::plugins::update_plugin)
+                .delete(handlers::plugins::delete_plugin),
+        )
+        .route(
+            "/api/plugins/{id}/executions",
+            get(handlers::plugins::list_executions),
+        )
+        .route(
+            "/api/plugins/{id}/test",
+            post(handlers::plugins::test_plugin),
+        )
         // Audit log
         .route(
             "/api/admin/audit-log",

@@ -62,3 +62,7 @@ pub mod dlp_rule;
 pub mod nlp_search;
 // Added: DANE policy and verification models for TMAIL-125
 pub mod dane;
+// Added: SMTP configuration model for BYO-SMTP (TMAIL-48)
+pub mod smtp_config;
+// Added: Plugin model for extensible plugin/extension architecture (TMAIL-132)
+pub mod plugin;

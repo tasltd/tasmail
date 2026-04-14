@@ -16,7 +16,9 @@
 // Added: Search icon for eDiscovery sidebar entry (TMAIL-137)
 // Added: ShieldCheck icon for DLP sidebar entry (TMAIL-108)
 // Added: ShieldAlert icon for DANE sidebar entry (TMAIL-125)
-import { PenSquare, FileSignature, Users, Shield, Plane, UsersRound, Upload, Gauge, Filter, Mailbox, ListTodo, CheckSquare, Webhook, Palette, Archive, Globe, FileUp, UserPlus, MessageSquare, Calendar, Network, Brain, KeyRound, LogIn, Search, ShieldCheck, ShieldAlert } from 'lucide-react';
+// Added: Send icon for BYO-SMTP configuration sidebar entry (TMAIL-48)
+// Added: Puzzle icon for plugin management sidebar entry (TMAIL-132)
+import { PenSquare, FileSignature, Users, Shield, Plane, UsersRound, Upload, Gauge, Filter, Mailbox, ListTodo, CheckSquare, Webhook, Palette, Archive, Globe, FileUp, UserPlus, MessageSquare, Calendar, Network, Brain, KeyRound, LogIn, Search, ShieldCheck, ShieldAlert, Send, Puzzle } from 'lucide-react';
 import { FolderTree } from '../mail/FolderTree';
 import { QuotaBar } from './QuotaBar';
 import { useMailStore } from '../../stores/mailStore';
@@ -225,6 +227,22 @@ export function Sidebar() {
         >
           <ShieldAlert size={18} />
           <span className="folder-item__name">DANE</span>
+        </button>
+        {/* Added: BYO-SMTP configuration navigation entry (TMAIL-48) */}
+        <button
+          className={`folder-item ${viewMode === 'smtp-config' ? 'folder-item--active' : ''}`}
+          onClick={() => setViewMode('smtp-config')}
+        >
+          <Send size={18} />
+          <span className="folder-item__name">SMTP</span>
+        </button>
+        {/* Added: Plugins navigation entry (TMAIL-132) */}
+        <button
+          className={`folder-item ${viewMode === 'plugins' ? 'folder-item--active' : ''}`}
+          onClick={() => setViewMode('plugins')}
+        >
+          <Puzzle size={18} />
+          <span className="folder-item__name">Plugins</span>
         </button>
         <button
           className={`folder-item ${viewMode === 'bandwidth' ? 'folder-item--active' : ''}`}

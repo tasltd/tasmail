@@ -48,6 +48,10 @@ import { EdiscoveryManager } from '../settings/EdiscoveryManager';
 import { DlpManager } from '../settings/DlpManager';
 // Added: DANE/TLSA policy and verification management component (TMAIL-125)
 import { DaneManager } from '../settings/DaneManager';
+// Added: BYO-SMTP configuration management component (TMAIL-48)
+import { SmtpConfigManager } from '../settings/SmtpConfigManager';
+// Added: Plugin management component for extensible plugin architecture (TMAIL-132)
+import { PluginManager } from '../settings/PluginManager';
 import { useMailStore } from '../../stores/mailStore';
 import { useUiStore } from '../../stores/uiStore';
 // Added: Keyboard shortcuts hook and help dialog for TMAIL-121
@@ -124,6 +128,10 @@ export function AppShell({ onLogout }: AppShellProps) {
           {viewMode === 'dlp' && <DlpManager />}
           {/* Added: DANE/TLSA policy and verification management view (TMAIL-125) */}
           {viewMode === 'dane' && <DaneManager />}
+          {/* Added: BYO-SMTP configuration management view (TMAIL-48) */}
+          {viewMode === 'smtp-config' && <SmtpConfigManager />}
+          {/* Added: Plugin management view (TMAIL-132) */}
+          {viewMode === 'plugins' && <PluginManager />}
         </main>
       </div>
       {/* Added: Keyboard shortcut help dialog, toggled by '?' key */}

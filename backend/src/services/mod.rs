@@ -30,3 +30,7 @@ pub mod dlp_scanner;
 pub mod nlp_parser;
 // Added: DANE TLSA record lookup and verification service for TMAIL-125
 pub mod dane_service;
+// Added: SMTP connection tester service for BYO-SMTP (TMAIL-48)
+pub mod smtp_tester;
+// Added: Plugin executor service for hook-based plugin execution (TMAIL-132)
+pub mod plugin_executor;

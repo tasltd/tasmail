@@ -68,3 +68,7 @@ pub mod nlp_search;
 // Added: DANE policy and verification handlers for TMAIL-125
 pub mod dane;
 pub mod websocket;
+// Added: SMTP configuration management handlers for BYO-SMTP (TMAIL-48)
+pub mod smtp_config;
+// Added: Plugin management handlers for extensible plugin architecture (TMAIL-132)
+pub mod plugins;

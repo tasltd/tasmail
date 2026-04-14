@@ -19,7 +19,9 @@ import type { AdvancedSearchParams } from '../api/messages';
 // Added: 'ediscovery' view mode for eDiscovery compliance search (TMAIL-137)
 // Added: 'dlp' view mode for Data Loss Prevention rule management (TMAIL-108)
 // Added: 'dane' view mode for DANE/TLSA policy and verification management (TMAIL-125)
-type ViewMode = 'list' | 'reader' | 'compose' | 'search' | 'signatures' | 'contacts' | 'security' | 'vacation' | 'groups' | 'migration' | 'bandwidth' | 'filters' | 'shared' | 'queue' | 'tasks' | 'webhooks' | 'branding' | 'retention' | 'hostnames' | 'shared-files' | 'bulk-import' | 'chat' | 'calendar' | 'ldap' | 'ai-config' | 'saml' | 'oidc' | 'ediscovery' | 'dlp' | 'dane';
+// Added: 'smtp-config' view mode for BYO-SMTP configuration management (TMAIL-48)
+// Added: 'plugins' view mode for plugin/extension management (TMAIL-132)
+type ViewMode = 'list' | 'reader' | 'compose' | 'search' | 'signatures' | 'contacts' | 'security' | 'vacation' | 'groups' | 'migration' | 'bandwidth' | 'filters' | 'shared' | 'queue' | 'tasks' | 'webhooks' | 'branding' | 'retention' | 'hostnames' | 'shared-files' | 'bulk-import' | 'chat' | 'calendar' | 'ldap' | 'ai-config' | 'saml' | 'oidc' | 'ediscovery' | 'dlp' | 'dane' | 'smtp-config' | 'plugins';
 
 interface MailState {
   selectedFolder: string;
