@@ -49,6 +49,15 @@ pub fn create_router(state: AppState) -> Router {
             "/api/folders/{folder}/messages/{uid}/flag",
             post(handlers::messages::flag_message),
         )
+        // Added: Email comments on messages for TMAIL-128
+        .route(
+            "/api/folders/{folder}/messages/{uid}/comments",
+            get(handlers::comments::list_comments).post(handlers::comments::create_comment),
+        )
+        .route(
+            "/api/comments/{id}",
+            put(handlers::comments::update_comment).delete(handlers::comments::delete_comment),
+        )
         // Added: EML export (download) and import (upload) for TMAIL-68
         .route(
             "/api/folders/{folder}/messages/{uid}/eml",
@@ -223,6 +232,19 @@ pub fn create_router(state: AppState) -> Router {
         .route(
             "/api/attachments/{id}",
             delete(handlers::attachments::delete_attachment),
+        )
+        // Added: Phishing scan and report routes for TMAIL-124
+        .route(
+            "/api/folders/{folder}/messages/{uid}/phishing",
+            get(handlers::phishing::get_phishing_report),
+        )
+        .route(
+            "/api/folders/{folder}/messages/{uid}/phishing/scan",
+            post(handlers::phishing::scan_message),
+        )
+        .route(
+            "/api/phishing/{id}/action",
+            put(handlers::phishing::update_action),
         )
         // Added: Email queue management routes for TMAIL-58
         .route("/api/queue", get(handlers::queue::list_queue))

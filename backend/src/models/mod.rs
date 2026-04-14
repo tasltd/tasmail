@@ -1,5 +1,7 @@
 // Added: Attachment storage model for TMAIL-59
 pub mod attachment;
+// Added: Email comment model for TMAIL-128
+pub mod email_comment;
 pub mod audit_log;
 pub mod auto_reply;
 pub mod contact;
@@ -11,6 +13,8 @@ pub mod email_delegation;
 pub mod email_template;
 pub mod mailbox;
 pub mod migration_job;
+// Added: Phishing report model for TMAIL-124
+pub mod phishing_report;
 pub mod quota;
 pub mod scheduled_email;
 pub mod session;

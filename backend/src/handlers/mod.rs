@@ -3,6 +3,8 @@ pub mod admin;
 pub mod attachments;
 pub mod auth;
 pub mod auto_reply;
+// Added: Email comment handlers for TMAIL-128
+pub mod comments;
 pub mod contacts;
 pub mod delegation;
 // Added: Email queue management handlers for TMAIL-58
@@ -13,6 +15,8 @@ pub mod folders;
 pub mod groups;
 pub mod health;
 pub mod messages;
+// Added: Phishing scan and report handlers for TMAIL-124
+pub mod phishing;
 pub mod migration;
 pub mod quota;
 pub mod scheduled;
