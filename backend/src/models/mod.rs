@@ -14,3 +14,5 @@ pub mod sieve_rule;
 pub mod snoozed_email;
 pub mod shared_mailbox;
 pub mod signature;
+// Added: WebAuthn credential model for TMAIL-83
+pub mod webauthn_credential;

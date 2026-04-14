@@ -200,6 +200,13 @@ pub fn create_router(state: AppState) -> Router {
             put(handlers::sieve::update_rule).delete(handlers::sieve::delete_rule),
         )
         .route("/api/filters/reorder", post(handlers::sieve::reorder_rules))
+        // Added: WebAuthn/FIDO2 passkey routes for TMAIL-83
+        .route("/api/webauthn/register/begin", post(handlers::webauthn::register_begin))
+        .route("/api/webauthn/register/complete", post(handlers::webauthn::register_complete))
+        .route("/api/webauthn/authenticate/begin", post(handlers::webauthn::authenticate_begin))
+        .route("/api/webauthn/authenticate/complete", post(handlers::webauthn::authenticate_complete))
+        .route("/api/webauthn/credentials", get(handlers::webauthn::list_credentials))
+        .route("/api/webauthn/credentials/{id}", delete(handlers::webauthn::delete_credential))
         // Audit log
         .route(
             "/api/admin/audit-log",

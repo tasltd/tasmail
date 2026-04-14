@@ -19,4 +19,6 @@ pub mod signatures;
 pub mod snooze;
 pub mod templates;
 pub mod two_factor;
+// Added: WebAuthn/FIDO2 passkey handlers for TMAIL-83
+pub mod webauthn;
 pub mod websocket;

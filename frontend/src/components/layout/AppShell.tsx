@@ -12,6 +12,8 @@ import { GroupManager } from '../settings/GroupManager';
 import { MigrationManager } from '../settings/MigrationManager';
 import { LowBandwidthSettings } from '../settings/LowBandwidthSettings';
 import { FilterManager } from '../settings/FilterManager';
+// Added: Shared mailbox management component (TMAIL-96)
+import { SharedMailboxManager } from '../settings/SharedMailboxManager';
 import { useMailStore } from '../../stores/mailStore';
 import { useUiStore } from '../../stores/uiStore';
 // Added: Keyboard shortcuts hook and help dialog for TMAIL-121
@@ -52,6 +54,8 @@ export function AppShell({ onLogout }: AppShellProps) {
           {viewMode === 'migration' && <MigrationManager />}
           {viewMode === 'bandwidth' && <LowBandwidthSettings />}
           {viewMode === 'filters' && <FilterManager />}
+          {/* Added: Shared mailbox ACL management view (TMAIL-96) */}
+          {viewMode === 'shared' && <SharedMailboxManager />}
         </main>
       </div>
       {/* Added: Keyboard shortcut help dialog, toggled by '?' key */}

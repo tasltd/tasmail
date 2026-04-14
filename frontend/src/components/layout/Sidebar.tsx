@@ -1,4 +1,5 @@
-import { PenSquare, FileSignature, Users, Shield, Plane, UsersRound, Upload, Gauge, Filter } from 'lucide-react';
+// Added: Mailbox icon for shared mailboxes sidebar entry (TMAIL-96)
+import { PenSquare, FileSignature, Users, Shield, Plane, UsersRound, Upload, Gauge, Filter, Mailbox } from 'lucide-react';
 import { FolderTree } from '../mail/FolderTree';
 import { QuotaBar } from './QuotaBar';
 import { useMailStore } from '../../stores/mailStore';
@@ -63,6 +64,14 @@ export function Sidebar() {
         >
           <Filter size={18} />
           <span className="folder-item__name">Filters</span>
+        </button>
+        {/* Added: Shared mailboxes navigation entry (TMAIL-96) */}
+        <button
+          className={`folder-item ${viewMode === 'shared' ? 'folder-item--active' : ''}`}
+          onClick={() => setViewMode('shared')}
+        >
+          <Mailbox size={18} />
+          <span className="folder-item__name">Shared Mailboxes</span>
         </button>
         <button
           className={`folder-item ${viewMode === 'bandwidth' ? 'folder-item--active' : ''}`}
