@@ -45,4 +45,8 @@ pub mod pst_import;
 pub mod shared_files;
 // Added: Bulk user import handlers for CSV provisioning (TMAIL-136)
 pub mod bulk_import;
+// Added: Chat integration management handlers for TMAIL-129
+pub mod chat_integrations;
+// Added: Calendar event handlers for meeting scheduling (TMAIL-127)
+pub mod calendar;
 pub mod websocket;

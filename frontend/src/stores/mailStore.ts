@@ -10,7 +10,9 @@ import type { AdvancedSearchParams } from '../api/messages';
 // Added: 'hostnames' view mode for custom hostname management (TMAIL-112)
 // Added: 'shared-files' view mode for large file sharing management (TMAIL-138)
 // Added: 'bulk-import' view mode for bulk user provisioning (TMAIL-136)
-type ViewMode = 'list' | 'reader' | 'compose' | 'search' | 'signatures' | 'contacts' | 'security' | 'vacation' | 'groups' | 'migration' | 'bandwidth' | 'filters' | 'shared' | 'queue' | 'tasks' | 'webhooks' | 'branding' | 'retention' | 'hostnames' | 'shared-files' | 'bulk-import';
+// Added: 'chat' view mode for team chat integration management (TMAIL-129)
+// Added: 'calendar' view mode for meeting scheduling (TMAIL-127)
+type ViewMode = 'list' | 'reader' | 'compose' | 'search' | 'signatures' | 'contacts' | 'security' | 'vacation' | 'groups' | 'migration' | 'bandwidth' | 'filters' | 'shared' | 'queue' | 'tasks' | 'webhooks' | 'branding' | 'retention' | 'hostnames' | 'shared-files' | 'bulk-import' | 'chat' | 'calendar';
 
 interface MailState {
   selectedFolder: string;

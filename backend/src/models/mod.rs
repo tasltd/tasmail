@@ -40,3 +40,7 @@ pub mod pst_import;
 pub mod shared_file;
 // Added: Bulk user import model for CSV provisioning (TMAIL-136)
 pub mod bulk_import;
+// Added: Chat integration model for team chat webhooks (TMAIL-129)
+pub mod chat_integration;
+// Added: Calendar event and attendee models for meeting scheduling (TMAIL-127)
+pub mod calendar_event;

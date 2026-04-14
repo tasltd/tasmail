@@ -359,6 +359,41 @@ pub fn create_router(state: AppState) -> Router {
             "/api/admin/users/bulk-import/template",
             get(handlers::bulk_import::download_template),
         )
+        // Added: Chat integration management routes for TMAIL-129
+        .route(
+            "/api/chat-integrations",
+            get(handlers::chat_integrations::list_chat_integrations)
+                .post(handlers::chat_integrations::create_chat_integration),
+        )
+        .route(
+            "/api/chat-integrations/{id}",
+            get(handlers::chat_integrations::get_chat_integration)
+                .put(handlers::chat_integrations::update_chat_integration)
+                .delete(handlers::chat_integrations::delete_chat_integration),
+        )
+        .route(
+            "/api/chat-integrations/{id}/test",
+            post(handlers::chat_integrations::test_chat_integration),
+        )
+        // Added: Calendar event management routes for meeting scheduling (TMAIL-127)
+        .route(
+            "/api/calendar/events",
+            get(handlers::calendar::list_events).post(handlers::calendar::create_event),
+        )
+        .route(
+            "/api/calendar/events/{id}",
+            get(handlers::calendar::get_event)
+                .put(handlers::calendar::update_event)
+                .delete(handlers::calendar::cancel_event),
+        )
+        .route(
+            "/api/calendar/events/{id}/rsvp",
+            post(handlers::calendar::rsvp_event),
+        )
+        .route(
+            "/api/calendar/events/{id}/ics",
+            get(handlers::calendar::download_ics),
+        )
         // Audit log
         .route(
             "/api/admin/audit-log",

@@ -16,3 +16,7 @@ pub mod webhook_dispatcher;
 pub mod pst_processor;
 // Added: CSV parser and validator for bulk user import (TMAIL-136)
 pub mod csv_processor;
+// Added: Chat notifier service for team chat webhook integrations (TMAIL-129)
+pub mod chat_notifier;
+// Added: ICS calendar file generator for meeting scheduling (TMAIL-127)
+pub mod ics_generator;

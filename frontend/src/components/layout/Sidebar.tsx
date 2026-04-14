@@ -7,7 +7,9 @@
 // Added: Globe icon for custom hostnames sidebar entry (TMAIL-112)
 // Added: FileUp icon for shared files sidebar entry (TMAIL-138)
 // Added: UserPlus icon for bulk import sidebar entry (TMAIL-136)
-import { PenSquare, FileSignature, Users, Shield, Plane, UsersRound, Upload, Gauge, Filter, Mailbox, ListTodo, CheckSquare, Webhook, Palette, Archive, Globe, FileUp, UserPlus } from 'lucide-react';
+// Added: MessageSquare icon for chat integrations sidebar entry (TMAIL-129)
+// Added: Calendar icon for calendar/meeting scheduling sidebar entry (TMAIL-127)
+import { PenSquare, FileSignature, Users, Shield, Plane, UsersRound, Upload, Gauge, Filter, Mailbox, ListTodo, CheckSquare, Webhook, Palette, Archive, Globe, FileUp, UserPlus, MessageSquare, Calendar } from 'lucide-react';
 import { FolderTree } from '../mail/FolderTree';
 import { QuotaBar } from './QuotaBar';
 import { useMailStore } from '../../stores/mailStore';
@@ -89,6 +91,14 @@ export function Sidebar() {
           <CheckSquare size={18} />
           <span className="folder-item__name">Tasks</span>
         </button>
+        {/* Added: Chat integrations navigation entry (TMAIL-129) */}
+        <button
+          className={`folder-item ${viewMode === 'chat' ? 'folder-item--active' : ''}`}
+          onClick={() => setViewMode('chat')}
+        >
+          <MessageSquare size={18} />
+          <span className="folder-item__name">Chat</span>
+        </button>
         {/* Added: Webhooks navigation entry (TMAIL-131) */}
         <button
           className={`folder-item ${viewMode === 'webhooks' ? 'folder-item--active' : ''}`}
@@ -136,6 +146,14 @@ export function Sidebar() {
         >
           <UserPlus size={18} />
           <span className="folder-item__name">Bulk Import</span>
+        </button>
+        {/* Added: Calendar navigation entry (TMAIL-127) */}
+        <button
+          className={`folder-item ${viewMode === 'calendar' ? 'folder-item--active' : ''}`}
+          onClick={() => setViewMode('calendar')}
+        >
+          <Calendar size={18} />
+          <span className="folder-item__name">Calendar</span>
         </button>
         {/* Added: Shared files navigation entry (TMAIL-138) */}
         <button

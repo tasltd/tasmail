@@ -30,6 +30,10 @@ import { HostnameManager } from '../settings/HostnameManager';
 import { SharedFileManager } from '../settings/SharedFileManager';
 // Added: Bulk user import management component (TMAIL-136)
 import { BulkImportManager } from '../settings/BulkImportManager';
+// Added: Chat integration management component (TMAIL-129)
+import { ChatIntegrationManager } from '../settings/ChatIntegrationManager';
+// Added: Calendar/meeting scheduling management component (TMAIL-127)
+import { CalendarManager } from '../settings/CalendarManager';
 import { useMailStore } from '../../stores/mailStore';
 import { useUiStore } from '../../stores/uiStore';
 // Added: Keyboard shortcuts hook and help dialog for TMAIL-121
@@ -88,6 +92,10 @@ export function AppShell({ onLogout }: AppShellProps) {
           {viewMode === 'shared-files' && <SharedFileManager />}
           {/* Added: Bulk user import management view (TMAIL-136) */}
           {viewMode === 'bulk-import' && <BulkImportManager />}
+          {/* Added: Chat integration management view (TMAIL-129) */}
+          {viewMode === 'chat' && <ChatIntegrationManager />}
+          {/* Added: Calendar/meeting scheduling view (TMAIL-127) */}
+          {viewMode === 'calendar' && <CalendarManager />}
         </main>
       </div>
       {/* Added: Keyboard shortcut help dialog, toggled by '?' key */}
