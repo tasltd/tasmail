@@ -72,3 +72,5 @@ pub mod websocket;
 pub mod smtp_config;
 // Added: Plugin management handlers for extensible plugin architecture (TMAIL-132)
 pub mod plugins;
+// Added: Contact group and vCard import/export/merge handlers (TMAIL-119)
+pub mod contact_groups;

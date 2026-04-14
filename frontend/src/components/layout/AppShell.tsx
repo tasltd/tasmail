@@ -52,6 +52,8 @@ import { DaneManager } from '../settings/DaneManager';
 import { SmtpConfigManager } from '../settings/SmtpConfigManager';
 // Added: Plugin management component for extensible plugin architecture (TMAIL-132)
 import { PluginManager } from '../settings/PluginManager';
+// Added: Contacts App management component with groups, import/export, merge (TMAIL-119)
+import { ContactsApp } from '../settings/ContactsApp';
 import { useMailStore } from '../../stores/mailStore';
 import { useUiStore } from '../../stores/uiStore';
 // Added: Keyboard shortcuts hook and help dialog for TMAIL-121
@@ -132,6 +134,8 @@ export function AppShell({ onLogout }: AppShellProps) {
           {viewMode === 'smtp-config' && <SmtpConfigManager />}
           {/* Added: Plugin management view (TMAIL-132) */}
           {viewMode === 'plugins' && <PluginManager />}
+          {/* Added: Contacts App management view (TMAIL-119) */}
+          {viewMode === 'contacts-app' && <ContactsApp />}
         </main>
       </div>
       {/* Added: Keyboard shortcut help dialog, toggled by '?' key */}

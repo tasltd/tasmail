@@ -583,6 +583,42 @@ pub fn create_router(state: AppState) -> Router {
             "/api/plugins/{id}/test",
             post(handlers::plugins::test_plugin),
         )
+        // Added: Contact group management routes for TMAIL-119
+        .route(
+            "/api/contact-groups",
+            get(handlers::contact_groups::list_groups)
+                .post(handlers::contact_groups::create_group),
+        )
+        .route(
+            "/api/contact-groups/{id}",
+            put(handlers::contact_groups::update_group)
+                .delete(handlers::contact_groups::delete_group),
+        )
+        .route(
+            "/api/contact-groups/{id}/members",
+            post(handlers::contact_groups::add_member),
+        )
+        .route(
+            "/api/contact-groups/{id}/members/{contact_id}",
+            delete(handlers::contact_groups::remove_member),
+        )
+        .route(
+            "/api/contact-groups/{id}/contacts",
+            get(handlers::contact_groups::list_group_contacts),
+        )
+        // Added: vCard import/export and contact merge routes for TMAIL-119
+        .route(
+            "/api/contacts/import-vcard",
+            post(handlers::contact_groups::import_vcard),
+        )
+        .route(
+            "/api/contacts/export-vcard",
+            get(handlers::contact_groups::export_vcard),
+        )
+        .route(
+            "/api/contacts/merge",
+            post(handlers::contact_groups::merge_contacts),
+        )
         // Audit log
         .route(
             "/api/admin/audit-log",

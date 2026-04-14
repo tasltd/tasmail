@@ -21,7 +21,8 @@ import type { AdvancedSearchParams } from '../api/messages';
 // Added: 'dane' view mode for DANE/TLSA policy and verification management (TMAIL-125)
 // Added: 'smtp-config' view mode for BYO-SMTP configuration management (TMAIL-48)
 // Added: 'plugins' view mode for plugin/extension management (TMAIL-132)
-type ViewMode = 'list' | 'reader' | 'compose' | 'search' | 'signatures' | 'contacts' | 'security' | 'vacation' | 'groups' | 'migration' | 'bandwidth' | 'filters' | 'shared' | 'queue' | 'tasks' | 'webhooks' | 'branding' | 'retention' | 'hostnames' | 'shared-files' | 'bulk-import' | 'chat' | 'calendar' | 'ldap' | 'ai-config' | 'saml' | 'oidc' | 'ediscovery' | 'dlp' | 'dane' | 'smtp-config' | 'plugins';
+// Added: 'contacts-app' view mode for full contacts management app (TMAIL-119)
+type ViewMode = 'list' | 'reader' | 'compose' | 'search' | 'signatures' | 'contacts' | 'security' | 'vacation' | 'groups' | 'migration' | 'bandwidth' | 'filters' | 'shared' | 'queue' | 'tasks' | 'webhooks' | 'branding' | 'retention' | 'hostnames' | 'shared-files' | 'bulk-import' | 'chat' | 'calendar' | 'ldap' | 'ai-config' | 'saml' | 'oidc' | 'ediscovery' | 'dlp' | 'dane' | 'smtp-config' | 'plugins' | 'contacts-app';
 
 interface MailState {
   selectedFolder: string;

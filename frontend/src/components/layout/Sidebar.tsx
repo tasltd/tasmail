@@ -18,7 +18,8 @@
 // Added: ShieldAlert icon for DANE sidebar entry (TMAIL-125)
 // Added: Send icon for BYO-SMTP configuration sidebar entry (TMAIL-48)
 // Added: Puzzle icon for plugin management sidebar entry (TMAIL-132)
-import { PenSquare, FileSignature, Users, Shield, Plane, UsersRound, Upload, Gauge, Filter, Mailbox, ListTodo, CheckSquare, Webhook, Palette, Archive, Globe, FileUp, UserPlus, MessageSquare, Calendar, Network, Brain, KeyRound, LogIn, Search, ShieldCheck, ShieldAlert, Send, Puzzle } from 'lucide-react';
+// Added: BookUser icon for contacts app sidebar entry (TMAIL-119)
+import { PenSquare, FileSignature, Users, Shield, Plane, UsersRound, Upload, Gauge, Filter, Mailbox, ListTodo, CheckSquare, Webhook, Palette, Archive, Globe, FileUp, UserPlus, MessageSquare, Calendar, Network, Brain, KeyRound, LogIn, Search, ShieldCheck, ShieldAlert, Send, Puzzle, BookUser } from 'lucide-react';
 import { FolderTree } from '../mail/FolderTree';
 import { QuotaBar } from './QuotaBar';
 import { useMailStore } from '../../stores/mailStore';
@@ -243,6 +244,14 @@ export function Sidebar() {
         >
           <Puzzle size={18} />
           <span className="folder-item__name">Plugins</span>
+        </button>
+        {/* Added: Contacts App navigation entry (TMAIL-119) */}
+        <button
+          className={`folder-item ${viewMode === 'contacts-app' ? 'folder-item--active' : ''}`}
+          onClick={() => setViewMode('contacts-app')}
+        >
+          <BookUser size={18} />
+          <span className="folder-item__name">Contacts App</span>
         </button>
         <button
           className={`folder-item ${viewMode === 'bandwidth' ? 'folder-item--active' : ''}`}

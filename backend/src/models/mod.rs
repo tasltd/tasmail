@@ -66,3 +66,5 @@ pub mod dane;
 pub mod smtp_config;
 // Added: Plugin model for extensible plugin/extension architecture (TMAIL-132)
 pub mod plugin;
+// Added: Contact group model for organizing contacts into labeled groups (TMAIL-119)
+pub mod contact_group;

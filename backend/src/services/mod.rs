@@ -34,3 +34,5 @@ pub mod dane_service;
 pub mod smtp_tester;
 // Added: Plugin executor service for hook-based plugin execution (TMAIL-132)
 pub mod plugin_executor;
+// Added: vCard import/export service for contact management (TMAIL-119)
+pub mod vcard_service;
