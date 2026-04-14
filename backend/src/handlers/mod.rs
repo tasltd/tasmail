@@ -63,4 +63,8 @@ pub mod semantic_search;
 pub mod ediscovery;
 // Added: DLP rule and violation management handlers for TMAIL-108
 pub mod dlp;
+// Added: NLP search handlers for AI-powered natural language email search (TMAIL-135)
+pub mod nlp_search;
+// Added: DANE policy and verification handlers for TMAIL-125
+pub mod dane;
 pub mod websocket;

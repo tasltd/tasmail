@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { Search, Menu, LogOut, Moon, Sun, WifiOff, SlidersHorizontal, Sparkles } from 'lucide-react';
+import { Search, Menu, LogOut, Moon, Sun, WifiOff, SlidersHorizontal, Sparkles, BrainCircuit } from 'lucide-react';
 import { useUiStore } from '../../stores/uiStore';
 import { useMailStore } from '../../stores/mailStore';
 import { useOnlineStatus } from '../../hooks/useOnlineStatus';
@@ -7,6 +7,8 @@ import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 import { AdvancedSearch } from '../mail/AdvancedSearch';
 // Added: Import SemanticSearchPanel for TMAIL-106
 import { SemanticSearchPanel } from '../mail/SemanticSearchPanel';
+// Added: Import NlpSearchPanel for TMAIL-135
+import { NlpSearchPanel } from '../mail/NlpSearchPanel';
 
 interface TopBarProps {
   onLogout: () => void;
@@ -23,6 +25,8 @@ export function TopBar({ onLogout }: TopBarProps) {
   const [showFilters, setShowFilters] = useState(false);
   // Added: Toggle state for semantic search panel (TMAIL-106)
   const [showSemanticSearch, setShowSemanticSearch] = useState(false);
+  // Added: Toggle state for NLP search panel (TMAIL-135)
+  const [showNlpSearch, setShowNlpSearch] = useState(false);
 
   const handleSearch = useCallback(
     (e: React.FormEvent) => {
@@ -69,11 +73,23 @@ export function TopBar({ onLogout }: TopBarProps) {
           >
             <Sparkles size={18} />
           </button>
+          {/* Added: NLP search toggle button for TMAIL-135 */}
+          <button
+            type="button"
+            className={`btn btn--icon topbar__nlp-toggle ${showNlpSearch ? 'topbar__nlp-toggle--active' : ''}`}
+            onClick={() => setShowNlpSearch((prev) => !prev)}
+            title="Toggle AI search"
+            data-testid="nlp-search-toggle"
+          >
+            <BrainCircuit size={18} />
+          </button>
         </form>
         {/* Added: Advanced search filter panel */}
         <AdvancedSearch visible={showFilters} />
         {/* Added: Semantic search panel for TMAIL-106 */}
         {showSemanticSearch && <SemanticSearchPanel />}
+        {/* Added: NLP search panel for TMAIL-135 */}
+        {showNlpSearch && <NlpSearchPanel />}
       </div>
 
       <div className="topbar__actions">

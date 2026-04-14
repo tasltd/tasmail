@@ -26,3 +26,7 @@ pub mod ai_client;
 pub mod embedding_service;
 // Added: DLP content scanner service for Data Loss Prevention (TMAIL-108)
 pub mod dlp_scanner;
+// Added: NLP query parser service for AI-powered natural language search (TMAIL-135)
+pub mod nlp_parser;
+// Added: DANE TLSA record lookup and verification service for TMAIL-125
+pub mod dane_service;

@@ -15,7 +15,8 @@
 // Added: LogIn icon for OIDC providers sidebar entry (TMAIL-99)
 // Added: Search icon for eDiscovery sidebar entry (TMAIL-137)
 // Added: ShieldCheck icon for DLP sidebar entry (TMAIL-108)
-import { PenSquare, FileSignature, Users, Shield, Plane, UsersRound, Upload, Gauge, Filter, Mailbox, ListTodo, CheckSquare, Webhook, Palette, Archive, Globe, FileUp, UserPlus, MessageSquare, Calendar, Network, Brain, KeyRound, LogIn, Search, ShieldCheck } from 'lucide-react';
+// Added: ShieldAlert icon for DANE sidebar entry (TMAIL-125)
+import { PenSquare, FileSignature, Users, Shield, Plane, UsersRound, Upload, Gauge, Filter, Mailbox, ListTodo, CheckSquare, Webhook, Palette, Archive, Globe, FileUp, UserPlus, MessageSquare, Calendar, Network, Brain, KeyRound, LogIn, Search, ShieldCheck, ShieldAlert } from 'lucide-react';
 import { FolderTree } from '../mail/FolderTree';
 import { QuotaBar } from './QuotaBar';
 import { useMailStore } from '../../stores/mailStore';
@@ -216,6 +217,14 @@ export function Sidebar() {
         >
           <Search size={18} />
           <span className="folder-item__name">eDiscovery</span>
+        </button>
+        {/* Added: DANE navigation entry (TMAIL-125) */}
+        <button
+          className={`folder-item ${viewMode === 'dane' ? 'folder-item--active' : ''}`}
+          onClick={() => setViewMode('dane')}
+        >
+          <ShieldAlert size={18} />
+          <span className="folder-item__name">DANE</span>
         </button>
         <button
           className={`folder-item ${viewMode === 'bandwidth' ? 'folder-item--active' : ''}`}

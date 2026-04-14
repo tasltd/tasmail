@@ -58,3 +58,7 @@ pub mod email_embedding;
 pub mod ediscovery;
 // Added: DLP rule and violation models for Data Loss Prevention scanning (TMAIL-108)
 pub mod dlp_rule;
+// Added: NLP search history model for AI-powered natural language search (TMAIL-135)
+pub mod nlp_search;
+// Added: DANE policy and verification models for TMAIL-125
+pub mod dane;

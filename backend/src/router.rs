@@ -500,6 +500,16 @@ pub fn create_router(state: AppState) -> Router {
             "/api/admin/ediscovery/{id}/export",
             post(handlers::ediscovery::export_results),
         )
+        // Added: NLP search routes for AI-powered natural language email search (TMAIL-135)
+        .route(
+            "/api/search/nlp",
+            post(handlers::nlp_search::nlp_search),
+        )
+        .route(
+            "/api/search/nlp/history",
+            get(handlers::nlp_search::list_nlp_history)
+                .delete(handlers::nlp_search::clear_nlp_history),
+        )
         // Added: DLP rule and violation management routes for TMAIL-108
         .route(
             "/api/admin/dlp/rules",
@@ -516,6 +526,23 @@ pub fn create_router(state: AppState) -> Router {
         .route(
             "/api/admin/dlp/scan",
             post(handlers::dlp::test_scan),
+        )
+        // Added: DANE policy and verification routes for TMAIL-125
+        .route(
+            "/api/admin/dane",
+            get(handlers::dane::list_policies).post(handlers::dane::create_policy),
+        )
+        .route(
+            "/api/admin/dane/{id}",
+            delete(handlers::dane::delete_policy),
+        )
+        .route(
+            "/api/admin/dane/lookup",
+            post(handlers::dane::lookup_tlsa),
+        )
+        .route(
+            "/api/dane/verifications",
+            get(handlers::dane::list_verifications),
         )
         // Audit log
         .route(
