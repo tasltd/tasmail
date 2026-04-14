@@ -8,5 +8,7 @@ pub mod migration_job;
 pub mod quota;
 pub mod scheduled_email;
 pub mod session;
+pub mod sieve_rule;
+pub mod snoozed_email;
 pub mod shared_mailbox;
 pub mod signature;

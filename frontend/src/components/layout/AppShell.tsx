@@ -11,6 +11,7 @@ import { VacationResponder } from '../settings/VacationResponder';
 import { GroupManager } from '../settings/GroupManager';
 import { MigrationManager } from '../settings/MigrationManager';
 import { LowBandwidthSettings } from '../settings/LowBandwidthSettings';
+import { FilterManager } from '../settings/FilterManager';
 import { useMailStore } from '../../stores/mailStore';
 import { useUiStore } from '../../stores/uiStore';
 
@@ -45,6 +46,7 @@ export function AppShell({ onLogout }: AppShellProps) {
           {viewMode === 'groups' && <GroupManager />}
           {viewMode === 'migration' && <MigrationManager />}
           {viewMode === 'bandwidth' && <LowBandwidthSettings />}
+          {viewMode === 'filters' && <FilterManager />}
         </main>
       </div>
     </div>

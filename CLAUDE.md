@@ -75,7 +75,7 @@ PWA enabled via `vite-plugin-pwa` with Workbox runtime caching for API responses
 The dev server proxies `/api` → `http://127.0.0.1:3000` and `/ws` → `ws://127.0.0.1:3000`, so both backend and frontend can run on their own ports during development.
 
 ### Test Setup
-- **Frontend**: Vitest 4 with jsdom environment, `@testing-library/react`, `fake-indexeddb`. Setup file: `src/test/setup.ts` (imports `@testing-library/jest-dom/vitest` for matcher extensions). 38 test files colocated with source (`*.test.ts` next to `*.ts`). Vitest config is in `vite.config.ts` under `test` key (globals enabled). Key test deps: `@testing-library/react` 16, `jsdom` 29
+- **Frontend**: Vitest 4 with jsdom environment, `@testing-library/react`, `fake-indexeddb`. Setup file: `src/test/setup.ts` (imports `@testing-library/jest-dom/vitest` for matcher extensions). 44 test files colocated with source (`*.test.ts` next to `*.ts`). Vitest config is in `vite.config.ts` under `test` key (globals enabled). Key test deps: `@testing-library/react` 16, `jsdom` 29
 - **Backend**: Standard `#[cfg(test)]` modules and `tokio-test`. Rust edition 2024. No integration test infrastructure yet. No E2E tests configured
 
 ## Configuration

@@ -19,10 +19,12 @@ pub fn create_router(state: AppState) -> Router {
         .allow_headers(Any);
 
     // Public routes (no auth required)
+    // NOTE: WebSocket route is public — auth is handled via token query param during handshake
     let public_routes = Router::new()
         .route("/api/health", get(handlers::health::health_check))
         .route("/api/auth/login", post(handlers::auth::login))
-        .route("/api/auth/refresh", post(handlers::auth::refresh));
+        .route("/api/auth/refresh", post(handlers::auth::refresh))
+        .route("/ws", get(handlers::websocket::ws_handler));
 
     // Protected routes (auth required)
     let protected_routes = Router::new()
@@ -146,6 +148,23 @@ pub fn create_router(state: AppState) -> Router {
             "/api/shared-mailboxes/{mailbox_id}/acl/{user_id}",
             delete(handlers::shared::revoke_access),
         )
+        // Added: Email snooze
+        .route("/api/messages/snooze", post(handlers::snooze::snooze_message))
+        .route("/api/messages/snoozed", get(handlers::snooze::list_snoozed))
+        .route(
+            "/api/messages/snooze/{id}",
+            delete(handlers::snooze::cancel_snooze),
+        )
+        // Added: Sieve filter rules
+        .route(
+            "/api/filters",
+            get(handlers::sieve::list_rules).post(handlers::sieve::create_rule),
+        )
+        .route(
+            "/api/filters/{id}",
+            put(handlers::sieve::update_rule).delete(handlers::sieve::delete_rule),
+        )
+        .route("/api/filters/reorder", post(handlers::sieve::reorder_rules))
         // Audit log
         .route(
             "/api/admin/audit-log",
