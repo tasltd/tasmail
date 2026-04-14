@@ -16,10 +16,16 @@ vi.mock('../../stores/uiStore', () => ({
 }));
 
 const mockSetSearchQuery = vi.fn();
+// Changed: Added advancedSearch fields required by AdvancedSearch child component
+const mockSetAdvancedSearch = vi.fn();
 vi.mock('../../stores/mailStore', () => ({
   useMailStore: (selector: (s: Record<string, unknown>) => unknown) =>
     selector({
+      searchQuery: '',
+      selectedFolder: 'INBOX',
+      advancedSearch: null,
       setSearchQuery: mockSetSearchQuery,
+      setAdvancedSearch: mockSetAdvancedSearch,
     }),
 }));
 

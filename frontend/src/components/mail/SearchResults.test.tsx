@@ -3,12 +3,17 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { SearchResults } from './SearchResults';
 
 const mockUseSearch = vi.fn();
+const mockUseAdvancedSearch = vi.fn();
 vi.mock('../../hooks/useMailbox', () => ({
   useSearch: (...args: unknown[]) => mockUseSearch(...args),
+  // Added: Mock for advanced search hook (TMAIL-32)
+  useAdvancedSearch: (...args: unknown[]) => mockUseAdvancedSearch(...args),
 }));
 
 const mockSetSearchQuery = vi.fn();
 const mockSetSelectedUid = vi.fn();
+// Changed: Added advancedSearch and setAdvancedSearch for TMAIL-32
+const mockSetAdvancedSearch = vi.fn();
 vi.mock('../../stores/mailStore', () => ({
   useMailStore: (selector: (s: Record<string, unknown>) => unknown) =>
     selector({
@@ -16,6 +21,8 @@ vi.mock('../../stores/mailStore', () => ({
       selectedFolder: 'INBOX',
       setSearchQuery: mockSetSearchQuery,
       setSelectedUid: mockSetSelectedUid,
+      advancedSearch: null,
+      setAdvancedSearch: mockSetAdvancedSearch,
     }),
 }));
 
@@ -26,6 +33,8 @@ vi.mock('../../utils/date', () => ({
 describe('SearchResults', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Added: Default return for advanced search hook (not active by default)
+    mockUseAdvancedSearch.mockReturnValue({ data: undefined, isLoading: false, error: null });
   });
 
   it('shows loading skeleton when isLoading', () => {

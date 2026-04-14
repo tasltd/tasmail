@@ -39,6 +39,71 @@ describe('message API functions', () => {
       await searchMessages('hello world');
       expect(apiClient.get).toHaveBeenCalledWith('/search?q=hello+world');
     });
+
+    // Added: Tests for advanced search params serialization (TMAIL-32)
+    it('serializes AdvancedSearchParams with all fields', async () => {
+      vi.mocked(apiClient.get).mockResolvedValue({ messages: [], total: 0, query: '', folder: '' });
+
+      await searchMessages({
+        query: 'report',
+        folder: 'INBOX',
+        from: 'alice@example.com',
+        to: 'bob@example.com',
+        subject: 'Monthly',
+        dateFrom: '2026-01-01',
+        dateTo: '2026-03-31',
+        hasAttachment: true,
+        isUnread: true,
+        isStarred: false,
+      });
+
+      const calledUrl = vi.mocked(apiClient.get).mock.calls[0]?.[0] as string;
+      const searchParams = new URLSearchParams(calledUrl.replace('/search?', ''));
+      expect(searchParams.get('q')).toBe('report');
+      expect(searchParams.get('folder')).toBe('INBOX');
+      expect(searchParams.get('from')).toBe('alice@example.com');
+      expect(searchParams.get('to')).toBe('bob@example.com');
+      expect(searchParams.get('subject')).toBe('Monthly');
+      expect(searchParams.get('date_from')).toBe('2026-01-01');
+      expect(searchParams.get('date_to')).toBe('2026-03-31');
+      expect(searchParams.get('has_attachment')).toBe('true');
+      expect(searchParams.get('is_unread')).toBe('true');
+      expect(searchParams.get('is_starred')).toBeNull();
+    });
+
+    it('omits empty advanced search fields from params', async () => {
+      vi.mocked(apiClient.get).mockResolvedValue({ messages: [], total: 0, query: '', folder: '' });
+
+      await searchMessages({
+        query: 'test',
+        from: 'sender@mail.com',
+      });
+
+      const calledUrl = vi.mocked(apiClient.get).mock.calls[0]?.[0] as string;
+      const searchParams = new URLSearchParams(calledUrl.replace('/search?', ''));
+      expect(searchParams.get('q')).toBe('test');
+      expect(searchParams.get('from')).toBe('sender@mail.com');
+      expect(searchParams.has('to')).toBe(false);
+      expect(searchParams.has('subject')).toBe(false);
+      expect(searchParams.has('date_from')).toBe(false);
+      expect(searchParams.has('has_attachment')).toBe(false);
+    });
+
+    it('handles advanced params with only boolean filters', async () => {
+      vi.mocked(apiClient.get).mockResolvedValue({ messages: [], total: 0, query: '', folder: '' });
+
+      await searchMessages({
+        query: '',
+        hasAttachment: true,
+        isStarred: true,
+      });
+
+      const calledUrl = vi.mocked(apiClient.get).mock.calls[0]?.[0] as string;
+      const searchParams = new URLSearchParams(calledUrl.replace('/search?', ''));
+      expect(searchParams.has('q')).toBe(false);
+      expect(searchParams.get('has_attachment')).toBe('true');
+      expect(searchParams.get('is_starred')).toBe('true');
+    });
   });
 
   describe('deleteMessage', () => {

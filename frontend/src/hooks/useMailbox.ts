@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { fetchFolders } from '../api/folders';
 import { fetchMessages, fetchMessage, searchMessages } from '../api/messages';
+import type { AdvancedSearchParams } from '../api/messages';
 import { useMailStore } from '../stores/mailStore';
 import { offlineCache } from '../utils/offline-cache';
 import type { Folder, MessageListResponse, FullMessage } from '../types/mail';
@@ -85,12 +86,35 @@ export function useCurrentMessage() {
   return useMessage(folder, uid);
 }
 
-// Added: Search hook with debounced query
+// Added: Search hook with debounced query — supports simple or advanced params
 export function useSearch(query: string, folder?: string) {
   return useQuery({
     queryKey: ['search', query, folder],
     queryFn: () => searchMessages(query, folder),
     enabled: query.length >= 2,
+    staleTime: 30_000,
+  });
+}
+
+// Added: Advanced search hook for TMAIL-32 — enables when query >= 2 chars or any filter is set
+export function useAdvancedSearch(params: AdvancedSearchParams | null) {
+  // NOTE: Determine if any advanced filter (beyond query) is active
+  const hasAdvancedFilters = params != null && (
+    !!params.from ||
+    !!params.to ||
+    !!params.subject ||
+    !!params.dateFrom ||
+    !!params.dateTo ||
+    !!params.hasAttachment ||
+    !!params.isUnread ||
+    !!params.isStarred
+  );
+  const hasQuery = (params?.query?.length ?? 0) >= 2;
+
+  return useQuery({
+    queryKey: ['advancedSearch', params],
+    queryFn: () => searchMessages(params!),
+    enabled: params != null && (hasQuery || hasAdvancedFilters),
     staleTime: 30_000,
   });
 }
