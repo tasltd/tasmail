@@ -1,10 +1,12 @@
-import { ArrowLeft, Reply, Forward, Trash2, FolderInput, Star } from 'lucide-react';
+import { ArrowLeft, Reply, Forward, Trash2, FolderInput, Star, Download } from 'lucide-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useCurrentMessage } from '../../hooks/useMailbox';
 import { useMailStore } from '../../stores/mailStore';
 import { formatFullDate } from '../../utils/date';
 import { sanitizeHtml } from '../../utils/sanitize';
 import { deleteMessage, moveMessage, flagMessage } from '../../api/messages';
+// Added: EML export for TMAIL-68
+import { exportEml, downloadEml } from '../../api/eml';
 import { LoadingSkeleton } from '../shared/LoadingSkeleton';
 
 export function MessageView() {
@@ -43,6 +45,14 @@ export function MessageView() {
     },
   });
 
+  // Added: EML export mutation — downloads the raw email as a .eml file (TMAIL-68)
+  const exportEmlMut = useMutation({
+    mutationFn: () => exportEml(selectedFolder, message!.uid),
+    onSuccess: (blob) => {
+      downloadEml(blob, message!.uid);
+    },
+  });
+
   if (isLoading) return <LoadingSkeleton rows={8} />;
   if (error) return <div className="message-view__error">Failed to load message</div>;
   if (!message) return null;
@@ -74,6 +84,15 @@ export function MessageView() {
           title={isFlagged ? 'Unstar' : 'Star'}
         >
           <Star size={20} />
+        </button>
+        {/* Added: Download .eml button for TMAIL-68 */}
+        <button
+          className="btn btn--icon"
+          onClick={() => exportEmlMut.mutate()}
+          disabled={exportEmlMut.isPending}
+          title="Download .eml"
+        >
+          <Download size={20} />
         </button>
         <button
           className="btn btn--icon"

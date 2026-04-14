@@ -66,6 +66,12 @@ impl ImapService {
         Self { config }
     }
 
+    // Added: Public accessor for IMAP config — used by EML import/export handlers
+    // that need direct IMAP connections outside the service's own methods
+    pub fn imap_config(&self) -> &ImapConfig {
+        &self.config
+    }
+
     /// Connect and authenticate to the IMAP server
     async fn connect(&self, username: &str, password: &str) -> Result<ImapSession, AppError> {
         let tcp_stream = TcpStream::connect((&*self.config.host, self.config.port))

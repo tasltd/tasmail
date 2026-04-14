@@ -114,7 +114,8 @@ describe('MessageList', () => {
     const checkbox = screen.getByLabelText('Conversations');
     fireEvent.click(checkbox);
 
-    const rows = screen.getAllByRole('button');
+    // Changed: Filter to only message-row buttons (excludes toolbar buttons like EML import)
+    const rows = screen.getAllByRole('button').filter((el) => el.className.includes('message-row'));
     // First row (uid=1) should be unread
     expect(rows[0].className).toContain('message-row--unread');
     // Second row (uid=2) should be read

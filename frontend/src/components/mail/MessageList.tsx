@@ -1,7 +1,13 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef } from 'react';
+import { Upload } from 'lucide-react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useCurrentMessages } from '../../hooks/useMailbox';
 import { useMailStore } from '../../stores/mailStore';
+// Added: Import drag hook for message drag-and-drop (TMAIL-122)
+import { useMessageDrag } from '../../hooks/useDragAndDrop';
 import { formatMessageDate } from '../../utils/date';
+// Added: EML import for TMAIL-68
+import { importEml } from '../../api/eml';
 import { LoadingSkeleton } from '../shared/LoadingSkeleton';
 import type { MessageEnvelope } from '../../types/mail';
 
@@ -45,17 +51,22 @@ function groupByThread(messages: MessageEnvelope[]): ThreadGroup[] {
 function MessageRow({ message }: { message: MessageEnvelope }) {
   const selectedUid = useMailStore((s) => s.selectedUid);
   const setSelectedUid = useMailStore((s) => s.setSelectedUid);
+  const selectedFolder = useMailStore((s) => s.selectedFolder);
+  // Added: Drag handlers for message drag-and-drop (TMAIL-122)
+  const { isDragging, ...dragHandlers } = useMessageDrag(message.uid, selectedFolder);
 
   const isRead = message.flags.some((f) => f.includes('Seen'));
   const isActive = selectedUid === message.uid;
 
   return (
     <div
-      className={`message-row ${isActive ? 'message-row--active' : ''} ${!isRead ? 'message-row--unread' : ''}`}
+      // Changed: Added drag handlers and dragging class for visual feedback (TMAIL-122)
+      className={`message-row ${isActive ? 'message-row--active' : ''} ${!isRead ? 'message-row--unread' : ''} ${isDragging ? 'message-row--dragging' : ''}`}
       onClick={() => setSelectedUid(message.uid)}
       role="button"
       tabIndex={0}
       onKeyDown={(e) => e.key === 'Enter' && setSelectedUid(message.uid)}
+      {...dragHandlers}
     >
       <div className="message-row__from">{message.from || '(unknown)'}</div>
       <div className="message-row__subject">{message.subject || '(no subject)'}</div>
@@ -119,8 +130,33 @@ function ThreadRow({ thread }: { thread: ThreadGroup }) {
 }
 
 export function MessageList() {
+  const queryClient = useQueryClient();
   const { data, isLoading, error } = useCurrentMessages();
+  const selectedFolder = useMailStore((s) => s.selectedFolder);
   const [threaded, setThreaded] = useState(true);
+  // Added: Hidden file input ref for EML import (TMAIL-68)
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Added: EML import mutation — uploads .eml file to current folder (TMAIL-68)
+  const importEmlMut = useMutation({
+    mutationFn: (file: File) => importEml(selectedFolder, file),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['messages'] });
+      queryClient.invalidateQueries({ queryKey: ['folders'] });
+    },
+  });
+
+  // Added: Handle file selection from the hidden input
+  const handleEmlFileSelected = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const selectedFile = event.target.files?.[0];
+    if (selectedFile) {
+      importEmlMut.mutate(selectedFile);
+    }
+    // NOTE: Reset input value so the same file can be re-imported if needed
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
 
   const threads = useMemo(() => {
     if (!data?.messages.length) return [];
@@ -135,12 +171,33 @@ export function MessageList() {
 
   return (
     <div className="message-list">
+      {/* Added: Hidden file input for EML import (TMAIL-68) */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".eml,message/rfc822"
+        style={{ display: 'none' }}
+        onChange={handleEmlFileSelected}
+        data-testid="eml-import-input"
+      />
       <div className="message-list__header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <span>{data.total} messages</span>
-        <label style={{ display: 'flex', gap: '4px', alignItems: 'center', fontSize: '12px', cursor: 'pointer' }}>
-          <input type="checkbox" checked={threaded} onChange={(e) => setThreaded(e.target.checked)} />
-          Conversations
-        </label>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          {/* Added: Import .eml button (TMAIL-68) */}
+          <button
+            className="btn btn--icon"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={importEmlMut.isPending}
+            title="Import .eml"
+            data-testid="eml-import-button"
+          >
+            <Upload size={16} />
+          </button>
+          <label style={{ display: 'flex', gap: '4px', alignItems: 'center', fontSize: '12px', cursor: 'pointer' }}>
+            <input type="checkbox" checked={threaded} onChange={(e) => setThreaded(e.target.checked)} />
+            Conversations
+          </label>
+        </div>
       </div>
       <div className="message-list__items">
         {threaded

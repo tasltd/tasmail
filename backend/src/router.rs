@@ -49,6 +49,15 @@ pub fn create_router(state: AppState) -> Router {
             "/api/folders/{folder}/messages/{uid}/flag",
             post(handlers::messages::flag_message),
         )
+        // Added: EML export (download) and import (upload) for TMAIL-68
+        .route(
+            "/api/folders/{folder}/messages/{uid}/eml",
+            get(handlers::eml::export_eml),
+        )
+        .route(
+            "/api/folders/{folder}/import-eml",
+            post(handlers::eml::import_eml),
+        )
         // Signatures
         .route(
             "/api/signatures",

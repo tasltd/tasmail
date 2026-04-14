@@ -3,6 +3,8 @@ pub mod auth;
 pub mod auto_reply;
 pub mod contacts;
 pub mod delegation;
+// Added: EML import/export handlers for TMAIL-68
+pub mod eml;
 pub mod folders;
 pub mod groups;
 pub mod health;
