@@ -148,12 +148,38 @@ pub fn create_router(state: AppState) -> Router {
             "/api/shared-mailboxes/{mailbox_id}/acl/{user_id}",
             delete(handlers::shared::revoke_access),
         )
+        // Added: Email delegation
+        .route(
+            "/api/delegation",
+            get(handlers::delegation::list_delegations).post(handlers::delegation::grant_delegation),
+        )
+        .route(
+            "/api/delegation/granted",
+            get(handlers::delegation::list_granted),
+        )
+        .route(
+            "/api/delegation/{id}",
+            delete(handlers::delegation::revoke_delegation),
+        )
         // Added: Email snooze
         .route("/api/messages/snooze", post(handlers::snooze::snooze_message))
         .route("/api/messages/snoozed", get(handlers::snooze::list_snoozed))
         .route(
             "/api/messages/snooze/{id}",
             delete(handlers::snooze::cancel_snooze),
+        )
+        // Added: Email templates
+        .route(
+            "/api/templates",
+            get(handlers::templates::list_templates).post(handlers::templates::create_template),
+        )
+        .route(
+            "/api/templates/{id}",
+            put(handlers::templates::update_template).delete(handlers::templates::delete_template),
+        )
+        .route(
+            "/api/templates/{id}/render",
+            post(handlers::templates::render_template),
         )
         // Added: Sieve filter rules
         .route(

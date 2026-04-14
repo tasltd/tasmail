@@ -3,6 +3,8 @@ pub mod auto_reply;
 pub mod contact;
 pub mod distribution_group;
 pub mod domain;
+pub mod email_delegation;
+pub mod email_template;
 pub mod mailbox;
 pub mod migration_job;
 pub mod quota;
