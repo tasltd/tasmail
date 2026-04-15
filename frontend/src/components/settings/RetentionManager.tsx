@@ -2,7 +2,8 @@
 // PURPOSE: Allows admins to manage email retention policies and legal holds
 // EXTERNAL: Uses TanStack Query for data fetching, Zustand for view state
 
-import { useState, type FormEvent } from 'react';
+import React from 'react';
+import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Trash2, ArrowLeft, Archive, Shield, Unlock } from 'lucide-react';
 import {
@@ -93,7 +94,7 @@ export function RetentionManager() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['legal-holds'] }),
   });
 
-  const handleCreatePolicy = (e: FormEvent) => {
+  const handleCreatePolicy = (e: React.FormEvent) => {
     e.preventDefault();
     createPolicyMut.mutate({
       name: policyName,
@@ -104,7 +105,7 @@ export function RetentionManager() {
     });
   };
 
-  const handleCreateHold = (e: FormEvent) => {
+  const handleCreateHold = (e: React.FormEvent) => {
     e.preventDefault();
     createHoldMut.mutate({
       user_id: holdUserId,

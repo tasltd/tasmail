@@ -1,5 +1,6 @@
 // Added: Task/to-do manager component for TMAIL-126
-import { useState, type FormEvent } from 'react';
+import React from 'react';
+import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Trash2, ArrowLeft, CheckSquare, Square, Mail } from 'lucide-react';
 import {
@@ -30,7 +31,7 @@ function TaskForm({ onSave, onCancel }: { onSave: (data: CreateTaskRequest) => v
   const [dueDate, setDueDate] = useState('');
   const [priority, setPriority] = useState('normal');
 
-  const handleSubmit = (e: FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     onSave({
       title,

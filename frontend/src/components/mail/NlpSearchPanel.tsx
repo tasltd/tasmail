@@ -2,8 +2,7 @@
 // PURPOSE: UI for AI-powered natural language email search with parsed parameter display and history
 // EXTERNAL: Uses nlp-search API for search execution and history management
 
-import { useState, useCallback } from 'react';
-import { type FormEvent } from 'react';
+import React, { useState, useCallback } from 'react';
 import { BrainCircuit, Search, Loader2, History, Trash2 } from 'lucide-react';
 import { useMailStore } from '../../stores/mailStore';
 import { nlpSearch, listNlpHistory, clearNlpHistory } from '../../api/nlp-search';
@@ -26,7 +25,7 @@ export function NlpSearchPanel() {
 
   // PURPOSE: Execute NLP search with the current query input
   const handleSearch = useCallback(
-    async (e: FormEvent) => {
+    async (e: React.FormEvent) => {
       e.preventDefault();
       if (queryInput.trim().length < 3) return;
 

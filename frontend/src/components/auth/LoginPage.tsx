@@ -1,4 +1,5 @@
-import { useState, useEffect, type FormEvent } from 'react';
+import React from 'react';
+import { useState, useEffect } from 'react';
 import { Mail } from 'lucide-react';
 import { listLoginProviders, getAuthorizeUrl } from '../../api/oidc';
 import type { OidcLoginProvider } from '../../api/oidc';
@@ -40,7 +41,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
     }
   };
 
-  const handleSubmit = async (e: FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!username || !password) {
       setError('Username and password are required');

@@ -2,7 +2,8 @@
 // PURPOSE: Admin interface for Ollama server config, health status, and model management
 // EXTERNAL: Uses TanStack Query for data fetching, Zustand for view state
 
-import { useState, type FormEvent } from 'react';
+import React from 'react';
+import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Trash2, Download, RefreshCw, Server, CheckCircle, XCircle } from 'lucide-react';
 import {
@@ -96,7 +97,7 @@ export function OllamaManager() {
     },
   });
 
-  const handleConfigSave = (e: FormEvent) => {
+  const handleConfigSave = (e: React.FormEvent) => {
     e.preventDefault();
     updateMut.mutate({
       base_url: formBaseUrl,
@@ -107,7 +108,7 @@ export function OllamaManager() {
     });
   };
 
-  const handlePull = (e: FormEvent) => {
+  const handlePull = (e: React.FormEvent) => {
     e.preventDefault();
     if (!pullModelName.trim()) return;
     setPullMessage(null);

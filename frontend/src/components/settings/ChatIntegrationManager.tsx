@@ -2,7 +2,8 @@
 // PURPOSE: Allows users to configure webhook integrations with Slack, Teams, Google Chat, Discord, and custom platforms
 // EXTERNAL: Uses TanStack Query for data fetching, Zustand for view state
 
-import { useState, type FormEvent } from 'react';
+import React from 'react';
+import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Trash2, ArrowLeft, ToggleLeft, ToggleRight, Send, MessageSquare } from 'lucide-react';
 import {
@@ -98,7 +99,7 @@ export function ChatIntegrationManager() {
     setFormFilterSubject('');
   }
 
-  const handleCreate = (e: FormEvent) => {
+  const handleCreate = (e: React.FormEvent) => {
     e.preventDefault();
     createMut.mutate({
       platform: formPlatform,

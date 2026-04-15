@@ -2,7 +2,8 @@
 // PURPOSE: Allows users to enable/configure POP3 access and view connection info for mail clients
 // EXTERNAL: Uses TanStack Query for data fetching, Zustand for view state
 
-import { useState, type FormEvent } from 'react';
+import React from 'react';
+import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Download, Trash2, Info } from 'lucide-react';
 import {
@@ -68,7 +69,7 @@ export function Pop3ConfigManager() {
     onError: () => setError('Failed to delete POP3 configuration'),
   });
 
-  const handleSubmit = (e: FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const retentionDays = formRetentionDays.trim()
       ? parseInt(formRetentionDays, 10)

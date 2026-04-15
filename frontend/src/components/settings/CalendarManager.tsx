@@ -1,6 +1,7 @@
 // Added: Calendar/meeting manager component for TMAIL-127
 // Changed: Added CalendarView toggle for visual calendar grid (TMAIL-118)
-import { useState, type FormEvent } from 'react';
+import React from 'react';
+import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Trash2, ArrowLeft, Calendar, Download, Check, X, HelpCircle, Users, MapPin, LayoutGrid } from 'lucide-react';
 import {
@@ -78,7 +79,7 @@ function EventForm({
     }
   };
 
-  const handleSubmit = (e: FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     onSave({
       title,

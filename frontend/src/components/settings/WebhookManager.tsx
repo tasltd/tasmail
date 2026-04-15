@@ -2,7 +2,8 @@
 // PURPOSE: Allows users to create, manage, and monitor webhook endpoints
 // EXTERNAL: Uses TanStack Query for data fetching, Zustand for view state
 
-import { useState, type FormEvent } from 'react';
+import React from 'react';
+import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Trash2, ArrowLeft, ChevronDown, ChevronRight, ToggleLeft, ToggleRight, Webhook } from 'lucide-react';
 import {
@@ -129,7 +130,7 @@ export function WebhookManager() {
     );
   };
 
-  const handleCreate = (e: FormEvent) => {
+  const handleCreate = (e: React.FormEvent) => {
     e.preventDefault();
     createMut.mutate({
       url: formUrl,

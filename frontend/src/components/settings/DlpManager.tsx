@@ -2,7 +2,8 @@
 // PURPOSE: Allows admins to create/manage DLP rules, view violations, and test scan text
 // EXTERNAL: Uses TanStack Query for data fetching, Zustand for view state
 
-import { useState, type FormEvent } from 'react';
+import React from 'react';
+import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Trash2, ArrowLeft, ToggleLeft, ToggleRight, ShieldCheck, AlertTriangle, Search } from 'lucide-react';
 import {
@@ -143,7 +144,7 @@ function TestScanPanel() {
     onSuccess: (matches) => setScanResults(matches),
   });
 
-  const handleScan = (e: FormEvent) => {
+  const handleScan = (e: React.FormEvent) => {
     e.preventDefault();
     scanMut.mutate({ subject: scanSubject || undefined, body: scanBody || undefined });
   };
@@ -276,7 +277,7 @@ export function DlpManager() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['dlp-rules'] }),
   });
 
-  const handleCreate = (e: FormEvent) => {
+  const handleCreate = (e: React.FormEvent) => {
     e.preventDefault();
     createMut.mutate({
       name: formName,

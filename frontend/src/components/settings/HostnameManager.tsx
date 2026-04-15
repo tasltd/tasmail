@@ -2,7 +2,8 @@
 // PURPOSE: Admin UI for managing custom SMTP/IMAP hostnames per domain
 // EXTERNAL: Uses TanStack Query for data fetching, Zustand for view state
 
-import { useState, type FormEvent } from 'react';
+import React from 'react';
+import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Trash2, ArrowLeft, Globe, CheckCircle, XCircle, ShieldCheck } from 'lucide-react';
 import {
@@ -72,7 +73,7 @@ export function HostnameManager() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['custom-hostnames'] }),
   });
 
-  const handleCreate = (formEvent: FormEvent) => {
+  const handleCreate = (formEvent: React.FormEvent) => {
     formEvent.preventDefault();
     createMut.mutate({
       domain_id: formDomainId,

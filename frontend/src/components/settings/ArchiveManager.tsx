@@ -2,7 +2,8 @@
 // PURPOSE: Allows admins to manage archive policies and config, users to search archived emails
 // EXTERNAL: Uses TanStack Query for data fetching, Zustand for view state
 
-import { useState, type FormEvent } from 'react';
+import React from 'react';
+import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Trash2, ArrowLeft, ToggleLeft, ToggleRight, HardDrive, Search, Settings, Clock } from 'lucide-react';
 import {
@@ -40,7 +41,7 @@ function ArchiveSearchPanel() {
     onSuccess: (results) => setSearchResults(results),
   });
 
-  const handleSearch = (e: FormEvent) => {
+  const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     searchMut.mutate({
       query: searchQuery,
@@ -180,7 +181,7 @@ function ArchiveConfigPanel() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['archive-config'] }),
   });
 
-  const handleSubmit = (e: FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     updateMut.mutate({
       piler_url: formUrl || undefined,
@@ -299,7 +300,7 @@ export function ArchiveManager() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['archive-policies'] }),
   });
 
-  const handleCreate = (e: FormEvent) => {
+  const handleCreate = (e: React.FormEvent) => {
     e.preventDefault();
     // Added: Parse comma-separated domains and folders into match_criteria
     const match_criteria: Record<string, string[]> = {};

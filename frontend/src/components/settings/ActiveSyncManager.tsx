@@ -2,7 +2,8 @@
 // PURPOSE: Allows users to manage ActiveSync device registrations and admins to manage sync policies
 // EXTERNAL: Uses TanStack Query for data fetching, Zustand for view state
 
-import { useState, type FormEvent } from 'react';
+import React from 'react';
+import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Smartphone, ShieldBan, ShieldCheck, Trash2, Plus, AlertTriangle } from 'lucide-react';
 import {
@@ -175,7 +176,7 @@ export function ActiveSyncManager() {
   }
 
   // Added: Handle policy form submission (create or update)
-  function handlePolicySubmit(e: FormEvent) {
+  function handlePolicySubmit(e: React.FormEvent) {
     e.preventDefault();
     const data = {
       name: policyName.trim(),
