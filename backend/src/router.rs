@@ -843,6 +843,19 @@ pub fn create_router(state: AppState) -> Router {
             "/api/admin/warmup/start",
             post(handlers::warmup::start_warmup),
         )
+        // Added: Cache management routes for Redis admin operations
+        .route(
+            "/api/admin/cache/status",
+            get(handlers::cache::get_cache_status),
+        )
+        .route(
+            "/api/admin/cache/flush",
+            post(handlers::cache::flush_cache),
+        )
+        .route(
+            "/api/admin/cache/stats",
+            get(handlers::cache::get_cache_stats),
+        )
         // Audit log
         .route(
             "/api/admin/audit-log",

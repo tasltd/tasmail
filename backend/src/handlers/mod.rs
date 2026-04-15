@@ -100,3 +100,5 @@ pub mod push;
 pub mod sync;
 // Added: IP warm-up schedule handlers for TMAIL-17
 pub mod warmup;
+// Added: Cache management handlers for Redis admin operations
+pub mod cache;

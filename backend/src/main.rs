@@ -90,11 +90,16 @@ async fn main() -> anyhow::Result<()> {
     process_collector.describe();
     process_collector.collect();
 
+    // Added: Initialize Redis cache service (degrades gracefully if Redis unavailable)
+    let cache = services::cache_service::CacheService::new(&config.redis).await;
+
     let state = AppState {
         db: pool,
         config,
         // Added: Pass Prometheus handle for /metrics endpoint rendering (TMAIL-41)
         metrics_handle: Some(metrics_handle),
+        // Added: Redis cache for branding/quota/rate-limit/session caching
+        cache,
     };
 
     let app = router::create_router(state);

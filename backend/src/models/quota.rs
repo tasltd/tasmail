@@ -12,7 +12,8 @@ pub struct QuotaUsage {
 }
 
 /// Quota status returned to the API consumer
-#[derive(Debug, Clone, Serialize)]
+/// Changed: Added Deserialize for Redis cache serialization round-trip
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QuotaStatus {
     pub mailbox_id: Uuid,
     pub quota_bytes: i64,

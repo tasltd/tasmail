@@ -3,6 +3,8 @@ use sqlx::PgPool;
 use metrics_exporter_prometheus::PrometheusHandle;
 
 use crate::config::Config;
+// Added: Redis cache service for performance optimization
+use crate::services::cache_service::CacheService;
 
 /// Shared application state accessible in all handlers
 #[derive(Clone)]
@@ -11,4 +13,6 @@ pub struct AppState {
     pub config: Config,
     // Added: Optional Prometheus handle for /metrics endpoint (TMAIL-41)
     pub metrics_handle: Option<PrometheusHandle>,
+    // Added: Redis cache service for branding/quota/rate-limit/session caching
+    pub cache: CacheService,
 }

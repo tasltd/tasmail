@@ -46,3 +46,5 @@ pub mod payment_service;
 pub mod deliverability_service;
 // Added: Push notification sender service for FCM/APNs/Web Push (TMAIL-50)
 pub mod push_service;
+// Added: Redis cache service for session/branding/rate-limit/token-blacklist caching
+pub mod cache_service;

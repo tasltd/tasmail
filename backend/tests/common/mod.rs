@@ -13,10 +13,11 @@ use tower::ServiceExt;
 use uuid::Uuid;
 
 use tasmail::config::{
-    Config, DatabaseConfig, ImapConfig, JwtConfig, ServerConfig, SmtpConfig, StorageConfig,
+    Config, DatabaseConfig, ImapConfig, JwtConfig, RedisConfig, ServerConfig, SmtpConfig, StorageConfig,
 };
 use tasmail::router::create_router;
 use tasmail::services::auth_service::Claims;
+use tasmail::services::cache_service::CacheService;
 use tasmail::state::AppState;
 
 // NOTE: JWT secret used across all integration tests — must match test_config()
@@ -47,6 +48,8 @@ impl TestApp {
             config: config.clone(),
             // Added: No metrics handle in integration tests (TMAIL-41)
             metrics_handle: None,
+            // Added: Disabled cache for integration tests (no Redis dependency)
+            cache: CacheService::disabled(),
         };
 
         let router = create_router(state);
@@ -146,6 +149,8 @@ pub fn test_config() -> Config {
         billing: None,
         // Added: No push notification config in test (TMAIL-50)
         push: None,
+        // Added: Redis config defaults for test
+        redis: RedisConfig::default(),
     }
 }
 

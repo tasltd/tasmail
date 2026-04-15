@@ -11,6 +11,7 @@ use crate::state::AppState;
 
 /// Extract JWT claims from the Authorization header and inject into request extensions.
 /// Also sets PostgreSQL session variables for Row-Level Security enforcement.
+/// Changed: Checks Redis JWT blacklist before accepting a token (for immediate revocation on logout)
 pub async fn auth_middleware(
     State(state): State<AppState>,
     mut req: Request,
@@ -27,6 +28,12 @@ pub async fn auth_middleware(
         .ok_or_else(|| AppError::Unauthorized("Invalid authorization format".to_string()))?;
 
     let claims = validate_access_token(&state.config.jwt, token)?;
+
+    // Added: Check if token has been blacklisted (revoked on logout)
+    let token_hash = crate::services::auth_service::hash_refresh_token(token);
+    if state.cache.is_token_blacklisted(&token_hash).await {
+        return Err(AppError::Unauthorized("Token has been revoked".to_string()));
+    }
 
     // Added: Set RLS session variables for database-level row isolation
     set_rls_context(&state, &claims).await?;

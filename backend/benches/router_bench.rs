@@ -14,10 +14,11 @@ use tower::ServiceExt;
 use uuid::Uuid;
 
 use tasmail::config::{
-    Config, DatabaseConfig, ImapConfig, JwtConfig, ServerConfig, SmtpConfig, StorageConfig,
+    Config, DatabaseConfig, ImapConfig, JwtConfig, RedisConfig, ServerConfig, SmtpConfig, StorageConfig,
 };
 use tasmail::router::create_router;
 use tasmail::services::auth_service::Claims;
+use tasmail::services::cache_service::CacheService;
 use tasmail::state::AppState;
 
 // Added: Test JWT secret for router benchmarks — matches tests/common/mod.rs pattern
@@ -54,6 +55,11 @@ fn bench_config() -> Config {
         storage: StorageConfig::default(),
         // Added: No metrics token needed for benchmarks
         metrics_token: None,
+        rspamd_url: None,
+        rspamd_password: None,
+        billing: None,
+        push: None,
+        redis: RedisConfig::default(),
     }
 }
 
@@ -71,6 +77,7 @@ fn bench_app_state() -> AppState {
         config,
         // Added: No Prometheus metrics handle needed for bench routing tests
         metrics_handle: None,
+        cache: CacheService::disabled(),
     }
 }
 

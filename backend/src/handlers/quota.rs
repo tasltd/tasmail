@@ -1,3 +1,4 @@
+// Changed: Added Redis caching for quota data — cached for 60 sec, invalidated on sync
 use axum::{
     extract::State,
     Json,
@@ -10,6 +11,7 @@ use crate::services::auth_service::Claims;
 use crate::state::AppState;
 
 /// GET /api/quota — Get current user's quota status
+/// Changed: Checks Redis cache first to avoid repeated DB + IMAP calls
 pub async fn get_quota(
     State(state): State<AppState>,
     axum::Extension(claims): axum::Extension<Claims>,
@@ -18,6 +20,11 @@ pub async fn get_quota(
         .sub
         .parse()
         .map_err(|_| AppError::Internal(anyhow::anyhow!("Invalid mailbox ID in token")))?;
+
+    // Added: Check Redis cache first
+    if let Some(cached) = state.cache.get_quota::<QuotaStatus>(&claims.sub).await {
+        return Ok(Json(cached));
+    }
 
     let mailbox = Mailbox::find_by_id(&state.db, mailbox_id)
         .await?
@@ -32,10 +39,14 @@ pub async fn get_quota(
         mailbox_id,
     );
 
+    // Added: Cache the quota status
+    state.cache.set_quota(&claims.sub, &status).await;
+
     Ok(Json(status))
 }
 
 /// POST /api/quota/sync — Sync quota from IMAP server (triggers GETQUOTAROOT)
+/// Changed: Invalidates and refreshes Redis cache after sync
 pub async fn sync_quota(
     State(state): State<AppState>,
     axum::Extension(claims): axum::Extension<Claims>,
@@ -70,6 +81,10 @@ pub async fn sync_quota(
         mailbox.quota_warn_percent,
         mailbox_id,
     );
+
+    // Added: Invalidate stale cache and set fresh data
+    state.cache.invalidate_quota(&claims.sub).await;
+    state.cache.set_quota(&claims.sub, &status).await;
 
     Ok(Json(status))
 }

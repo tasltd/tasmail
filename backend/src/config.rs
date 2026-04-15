@@ -25,6 +25,54 @@ pub struct Config {
     // Added: Optional push notification configuration for FCM/APNs/Web Push (TMAIL-50)
     #[serde(default)]
     pub push: Option<PushConfig>,
+    // Added: Redis cache configuration for session/branding/rate-limit caching
+    #[serde(default)]
+    pub redis: RedisConfig,
+}
+
+/// Added: Redis cache configuration
+/// PURPOSE: Controls Redis connection URL and default TTLs for cached data categories
+#[derive(Debug, Deserialize, Clone)]
+pub struct RedisConfig {
+    #[serde(default = "default_redis_url")]
+    pub url: String,
+    /// TTL in seconds for branding cache (default: 300 = 5 min)
+    #[serde(default = "default_branding_ttl")]
+    pub branding_ttl_secs: u64,
+    /// TTL in seconds for quota cache (default: 60 = 1 min)
+    #[serde(default = "default_quota_ttl")]
+    pub quota_ttl_secs: u64,
+    /// TTL in seconds for user session metadata cache (default: 900 = 15 min)
+    #[serde(default = "default_session_ttl")]
+    pub session_ttl_secs: u64,
+    /// Rate limit window in seconds (default: 60)
+    #[serde(default = "default_rate_limit_window")]
+    pub rate_limit_window_secs: u64,
+    /// Rate limit max requests per window (default: 100)
+    #[serde(default = "default_rate_limit_max")]
+    pub rate_limit_max_requests: u64,
+}
+
+fn default_redis_url() -> String {
+    "redis://127.0.0.1:6379".to_string()
+}
+fn default_branding_ttl() -> u64 { 300 }
+fn default_quota_ttl() -> u64 { 60 }
+fn default_session_ttl() -> u64 { 900 }
+fn default_rate_limit_window() -> u64 { 60 }
+fn default_rate_limit_max() -> u64 { 100 }
+
+impl Default for RedisConfig {
+    fn default() -> Self {
+        Self {
+            url: default_redis_url(),
+            branding_ttl_secs: default_branding_ttl(),
+            quota_ttl_secs: default_quota_ttl(),
+            session_ttl_secs: default_session_ttl(),
+            rate_limit_window_secs: default_rate_limit_window(),
+            rate_limit_max_requests: default_rate_limit_max(),
+        }
+    }
 }
 
 /// Added: Push notification configuration for FCM, APNs, and Web Push providers (TMAIL-50)
@@ -205,6 +253,26 @@ impl Config {
                 } else {
                     None
                 }
+            },
+            // Added: Redis config from env vars
+            redis: RedisConfig {
+                url: std::env::var("REDIS_URL")
+                    .unwrap_or_else(|_| default_redis_url()),
+                branding_ttl_secs: std::env::var("REDIS_BRANDING_TTL")
+                    .ok().and_then(|p| p.parse().ok())
+                    .unwrap_or_else(default_branding_ttl),
+                quota_ttl_secs: std::env::var("REDIS_QUOTA_TTL")
+                    .ok().and_then(|p| p.parse().ok())
+                    .unwrap_or_else(default_quota_ttl),
+                session_ttl_secs: std::env::var("REDIS_SESSION_TTL")
+                    .ok().and_then(|p| p.parse().ok())
+                    .unwrap_or_else(default_session_ttl),
+                rate_limit_window_secs: std::env::var("REDIS_RATE_LIMIT_WINDOW")
+                    .ok().and_then(|p| p.parse().ok())
+                    .unwrap_or_else(default_rate_limit_window),
+                rate_limit_max_requests: std::env::var("REDIS_RATE_LIMIT_MAX")
+                    .ok().and_then(|p| p.parse().ok())
+                    .unwrap_or_else(default_rate_limit_max),
             },
             // Added: Push notification config from env vars for TMAIL-50
             push: {
