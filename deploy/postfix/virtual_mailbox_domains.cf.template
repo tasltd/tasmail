@@ -1,0 +1,14 @@
+# Added: PostgreSQL lookup for virtual mailbox domains (TMAIL-11)
+# Postfix queries this to determine which domains it handles mail for.
+# Install to: /etc/postfix/pgsql-virtual-mailbox-domains.cf
+# Permissions: chmod 640, chown root:postfix
+
+# Added: Database connection settings — replace placeholders before deploying
+hosts = __DB_HOST__
+dbname = __DB_NAME__
+user = __DB_USER__
+password = __DB_PASS__
+
+# Added: Query returns the domain name if it exists and is active
+# Postfix expects a non-empty result to accept mail for the domain
+query = SELECT name FROM domains WHERE name = '%s' AND active = true

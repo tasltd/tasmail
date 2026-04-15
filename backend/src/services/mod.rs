@@ -42,3 +42,5 @@ pub mod ollama_client;
 pub mod rspamd_client;
 // Added: Payment service for Paystack and MTN MoMo integration (TMAIL-46)
 pub mod payment_service;
+// Added: Email deliverability checking service for DNS, blacklist, TLS verification (TMAIL-39)
+pub mod deliverability_service;

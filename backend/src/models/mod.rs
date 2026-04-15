@@ -82,3 +82,5 @@ pub mod dav_config;
 pub mod spam;
 // Added: Billing plan, subscription, and payment models for Paystack/MoMo (TMAIL-46)
 pub mod billing;
+// Added: Email deliverability check models for scored diagnostic reports (TMAIL-39)
+pub mod deliverability;

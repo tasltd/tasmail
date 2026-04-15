@@ -68,6 +68,8 @@ import { DavConfigManager } from '../settings/DavConfigManager';
 import { SpamFilterManager } from '../settings/SpamFilterManager';
 // Added: Billing management component for Paystack/MoMo payments (TMAIL-46)
 import { BillingManager } from '../settings/BillingManager';
+// Added: Email deliverability testing component for TMAIL-39
+import { DeliverabilityReport } from '../settings/DeliverabilityReport';
 import { useMailStore } from '../../stores/mailStore';
 import { useUiStore } from '../../stores/uiStore';
 // Added: Keyboard shortcuts hook and help dialog for TMAIL-121
@@ -177,6 +179,8 @@ export function AppShell({ onLogout }: AppShellProps) {
           {viewMode === 'spam' && <SpamFilterManager />}
           {/* Added: Billing management view for Paystack/MoMo payments (TMAIL-46) */}
           {viewMode === 'billing' && <BillingManager />}
+          {/* Added: Email deliverability testing view (TMAIL-39) */}
+          {viewMode === 'deliverability' && <DeliverabilityReport />}
         </main>
       </div>
       {/* Added: Keyboard shortcut help dialog, toggled by '?' key */}

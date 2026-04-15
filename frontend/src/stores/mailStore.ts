@@ -29,7 +29,8 @@ import type { AdvancedSearchParams } from '../api/messages';
 // Added: 'dav-config' view mode for CalDAV/CardDAV configuration management (TMAIL-117)
 // Added: 'spam' view mode for Rspamd spam filter management (TMAIL-15)
 // Added: 'billing' view mode for Paystack/MoMo billing management (TMAIL-46)
-type ViewMode = 'list' | 'reader' | 'compose' | 'search' | 'signatures' | 'contacts' | 'security' | 'vacation' | 'groups' | 'migration' | 'bandwidth' | 'filters' | 'shared' | 'queue' | 'tasks' | 'webhooks' | 'branding' | 'retention' | 'hostnames' | 'shared-files' | 'bulk-import' | 'chat' | 'calendar' | 'ldap' | 'ai-config' | 'saml' | 'oidc' | 'ediscovery' | 'dlp' | 'dane' | 'smtp-config' | 'plugins' | 'contacts-app' | 'pop3' | 'archive' | 'activesync' | 'ollama' | 'dav-config' | 'spam' | 'billing';
+// Added: 'deliverability' view mode for email deliverability testing (TMAIL-39)
+type ViewMode = 'list' | 'reader' | 'compose' | 'search' | 'signatures' | 'contacts' | 'security' | 'vacation' | 'groups' | 'migration' | 'bandwidth' | 'filters' | 'shared' | 'queue' | 'tasks' | 'webhooks' | 'branding' | 'retention' | 'hostnames' | 'shared-files' | 'bulk-import' | 'chat' | 'calendar' | 'ldap' | 'ai-config' | 'saml' | 'oidc' | 'ediscovery' | 'dlp' | 'dane' | 'smtp-config' | 'plugins' | 'contacts-app' | 'pop3' | 'archive' | 'activesync' | 'ollama' | 'dav-config' | 'spam' | 'billing' | 'deliverability';
 
 interface MailState {
   selectedFolder: string;

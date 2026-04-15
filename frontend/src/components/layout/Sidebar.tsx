@@ -26,7 +26,8 @@
 // Added: CloudCog icon for CalDAV/CardDAV configuration sidebar entry (TMAIL-117)
 // Added: ShieldBan icon for Rspamd spam filter sidebar entry (TMAIL-15)
 // Added: CreditCard icon for billing sidebar entry (TMAIL-46)
-import { PenSquare, FileSignature, Users, Shield, Plane, UsersRound, Upload, Gauge, Filter, Mailbox, ListTodo, CheckSquare, Webhook, Palette, Archive, Globe, FileUp, UserPlus, MessageSquare, Calendar, Network, Brain, KeyRound, LogIn, Search, ShieldCheck, ShieldAlert, Send, Puzzle, BookUser, Download, HardDrive, Smartphone, Server, CloudCog, ShieldBan, CreditCard } from 'lucide-react';
+// Added: Activity icon for deliverability testing sidebar entry (TMAIL-39)
+import { PenSquare, FileSignature, Users, Shield, Plane, UsersRound, Upload, Gauge, Filter, Mailbox, ListTodo, CheckSquare, Webhook, Palette, Archive, Globe, FileUp, UserPlus, MessageSquare, Calendar, Network, Brain, KeyRound, LogIn, Search, ShieldCheck, ShieldAlert, Send, Puzzle, BookUser, Download, HardDrive, Smartphone, Server, CloudCog, ShieldBan, CreditCard, Activity } from 'lucide-react';
 import { FolderTree } from '../mail/FolderTree';
 import { QuotaBar } from './QuotaBar';
 import { useMailStore } from '../../stores/mailStore';
@@ -331,6 +332,14 @@ export function Sidebar() {
         >
           <CreditCard size={18} />
           <span className="folder-item__name">Billing</span>
+        </button>
+        {/* Added: Deliverability testing navigation entry (TMAIL-39) */}
+        <button
+          className={`folder-item ${viewMode === 'deliverability' ? 'folder-item--active' : ''}`}
+          onClick={() => handleNavClick('deliverability')}
+        >
+          <Activity size={18} />
+          <span className="folder-item__name">Deliverability</span>
         </button>
         <button
           className={`folder-item ${viewMode === 'bandwidth' ? 'folder-item--active' : ''}`}

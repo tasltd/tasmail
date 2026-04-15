@@ -1,0 +1,27 @@
+# Added: Dovecot PostgreSQL authentication configuration (TMAIL-12)
+# Install to: /etc/dovecot/dovecot-sql.conf.ext
+# Permissions: chmod 600, chown root:root
+# Replace __DB_HOST__, __DB_NAME__, __DB_USER__, __DB_PASS__ before deploying
+
+# Added: PostgreSQL driver
+driver = pgsql
+
+# Added: Connection string — replace placeholders with actual credentials
+connect = host=__DB_HOST__ dbname=__DB_NAME__ user=__DB_USER__ password=__DB_PASS__
+
+# Added: Password scheme — TASMail backend stores passwords as Argon2id hashes
+default_pass_scheme = ARGON2ID
+
+# Added: Password query — authenticate users against the mailboxes table
+# Returns the username (email) and password_hash for active accounts
+# %u is the full email address (user@domain)
+password_query = SELECT username AS user, password_hash AS password \
+    FROM mailboxes WHERE username = '%u' AND active = true
+
+# Added: User query — resolve mail storage location for authenticated users
+# Maps each user to their Maildir under /var/mail/vhosts/<domain>/<localpart>/
+# uid/gid 5000 corresponds to the vmail system user
+# %d = domain part, %n = local part of the email address
+user_query = SELECT '/var/mail/vhosts/%d/%n' AS home, \
+    'maildir:/var/mail/vhosts/%d/%n/Maildir' AS mail, \
+    5000 AS uid, 5000 AS gid

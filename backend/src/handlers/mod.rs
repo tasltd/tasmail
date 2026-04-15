@@ -88,5 +88,7 @@ pub mod ollama;
 pub mod dav_config;
 // Added: Rspamd spam filter management handlers for TMAIL-15
 pub mod spam;
+// Added: Email deliverability testing handler for TMAIL-39
+pub mod deliverability;
 // Added: Billing and payment handlers for Paystack/MoMo integration (TMAIL-46)
 pub mod billing;

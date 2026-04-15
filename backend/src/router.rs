@@ -795,6 +795,11 @@ pub fn create_router(state: AppState) -> Router {
             "/api/billing/payments",
             get(handlers::billing::list_payments),
         )
+        // Added: Email deliverability check route for TMAIL-39
+        .route(
+            "/api/admin/deliverability/check",
+            get(handlers::deliverability::check_deliverability),
+        )
         // Audit log
         .route(
             "/api/admin/audit-log",
