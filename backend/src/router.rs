@@ -4,19 +4,42 @@ use axum::{
     Router,
 };
 use tower_http::compression::CompressionLayer;
-use tower_http::cors::{Any, CorsLayer};
+// Changed: Replaced `Any` origin with explicit allowed origins for CORS hardening (TMAIL-37)
+use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
 
 use crate::handlers;
 use crate::middleware::auth::auth_middleware;
+// Added: Security headers middleware import (TMAIL-37)
+use crate::middleware::security_headers::security_headers_middleware;
 use crate::state::AppState;
 
 pub fn create_router(state: AppState) -> Router {
+    // Changed: Restrict CORS to same-origin by default; configurable via CORS_ORIGIN env var (TMAIL-37)
+    // NOTE: In production, set CORS_ORIGIN to the exact frontend URL (e.g. "https://mail.example.com")
+    let allowed_origin = std::env::var("CORS_ORIGIN")
+        .unwrap_or_else(|_| "http://localhost:5173".to_string());
+
     let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
+        .allow_origin(AllowOrigin::exact(
+            allowed_origin.parse().unwrap_or_else(|_| {
+                "http://localhost:5173".parse().unwrap()
+            }),
+        ))
+        .allow_methods([
+            axum::http::Method::GET,
+            axum::http::Method::POST,
+            axum::http::Method::PUT,
+            axum::http::Method::DELETE,
+            axum::http::Method::OPTIONS,
+        ])
+        .allow_headers([
+            axum::http::header::CONTENT_TYPE,
+            axum::http::header::AUTHORIZATION,
+            axum::http::header::ACCEPT,
+        ])
+        .allow_credentials(true);
 
     // Public routes (no auth required)
     // NOTE: WebSocket route is public — auth is handled via token query param during handshake
@@ -748,6 +771,8 @@ pub fn create_router(state: AppState) -> Router {
         .merge(protected_routes)
         .layer(CompressionLayer::new())
         .layer(api_version_layer)
+        // Added: Security headers (CSP, HSTS, X-Frame-Options, etc.) on all responses (TMAIL-37)
+        .layer(axum_middleware::from_fn(security_headers_middleware))
         .layer(TraceLayer::new_for_http())
         .layer(cors)
         .with_state(state)

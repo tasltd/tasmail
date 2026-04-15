@@ -6,6 +6,8 @@ mod models;
 mod router;
 mod services;
 mod state;
+// Added: Centralized input validation module for security hardening (TMAIL-37)
+mod validation;
 
 use std::net::SocketAddr;
 use std::path::Path;

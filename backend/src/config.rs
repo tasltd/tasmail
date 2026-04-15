@@ -125,8 +125,11 @@ impl Config {
                     .unwrap_or(true),
             },
             jwt: JwtConfig {
-                secret: std::env::var("JWT_SECRET")
-                    .unwrap_or_else(|_| "dev-secret-change-in-production".to_string()),
+                // Changed: Log warning when using default dev secret (TMAIL-37)
+                secret: std::env::var("JWT_SECRET").unwrap_or_else(|_| {
+                    eprintln!("WARNING: JWT_SECRET not set — using insecure default. Set JWT_SECRET env var in production!");
+                    "dev-secret-change-in-production".to_string()
+                }),
                 access_token_expiry_secs: std::env::var("JWT_ACCESS_EXPIRY")
                     .ok()
                     .and_then(|p| p.parse().ok())

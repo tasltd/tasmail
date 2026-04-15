@@ -9,6 +9,8 @@ use crate::error::AppError;
 use crate::models::audit_log::AuditLog;
 use crate::services::auth_service;
 use crate::state::AppState;
+// Added: Input validation for login requests (TMAIL-37)
+use crate::validation;
 
 #[derive(Debug, Deserialize)]
 pub struct LoginRequest {
@@ -26,6 +28,9 @@ pub async fn login(
     State(state): State<AppState>,
     Json(body): Json<LoginRequest>,
 ) -> Result<(StatusCode, Json<auth_service::TokenPair>), AppError> {
+    // Added: Validate input lengths to prevent abuse (TMAIL-37)
+    validation::validate_username(&body.username)?;
+
     let tokens = auth_service::authenticate(
         &state.db,
         &state.config.jwt,

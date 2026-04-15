@@ -65,3 +65,5 @@ urlencoding = "2"
 [dev-dependencies]
 tokio-test = "0.4"
 tempfile = "3"
+# Added: HTTP body utilities for reading response bodies in integration tests
+http-body-util = "0.1"

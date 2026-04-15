@@ -10,6 +10,8 @@ use crate::services::auth_service::Claims;
 use crate::services::imap_service::{FullMessage, ImapService};
 use crate::services::smtp_service::{SendRequest, SmtpService};
 use crate::state::AppState;
+// Added: Input validation for message operations (TMAIL-37)
+use crate::validation;
 
 #[derive(Debug, Deserialize)]
 pub struct ListMessagesQuery {
@@ -50,8 +52,10 @@ pub async fn list_messages(
     Path(folder): Path<String>,
     Query(query): Query<ListMessagesQuery>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    // Added: Validate folder name and cap page_size to prevent abuse (TMAIL-37)
+    validation::validate_folder_name(&folder)?;
     let page = query.page.unwrap_or(0);
-    let page_size = query.page_size.unwrap_or(50);
+    let page_size = query.page_size.unwrap_or(50).min(200);
 
     let mailbox_id: uuid::Uuid = claims
         .sub
@@ -127,6 +131,12 @@ pub async fn search_messages(
     axum::Extension(claims): axum::Extension<Claims>,
     Query(query): Query<SearchQuery>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    // Added: Validate search query to prevent IMAP injection (TMAIL-37)
+    validation::validate_search_query(&query.q)?;
+    if let Some(ref f) = query.folder {
+        validation::validate_folder_name(f)?;
+    }
+
     let mailbox_id: uuid::Uuid = claims
         .sub
         .parse()
@@ -227,6 +237,9 @@ pub async fn save_draft(
     axum::Extension(claims): axum::Extension<Claims>,
     Json(body): Json<SaveDraftRequest>,
 ) -> Result<StatusCode, AppError> {
+    // Added: Validate draft subject length (TMAIL-37)
+    validation::validate_subject(&body.subject)?;
+
     let mailbox_id: uuid::Uuid = claims
         .sub
         .parse()

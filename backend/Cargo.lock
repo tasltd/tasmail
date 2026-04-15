@@ -2901,6 +2901,7 @@ dependencies = [
  "futures",
  "hex",
  "hmac",
+ "http-body-util",
  "imap-proto",
  "jsonwebtoken",
  "lettre",

@@ -8,6 +8,8 @@ use crate::error::AppError;
 use crate::models::mailbox::{CreateMailbox, Mailbox, MailboxInfo};
 use crate::services::auth_service::{hash_password, Claims};
 use crate::state::AppState;
+// Added: Input validation for user creation (TMAIL-37)
+use crate::validation;
 
 /// GET /api/admin/users
 pub async fn list_users(
@@ -35,6 +37,13 @@ pub async fn create_user(
 ) -> Result<(StatusCode, Json<MailboxInfo>), AppError> {
     if !claims.is_admin {
         return Err(AppError::Forbidden("Admin access required".to_string()));
+    }
+
+    // Added: Validate input before processing (TMAIL-37)
+    validation::validate_username(&body.username)?;
+    validation::validate_password(&body.password)?;
+    if let Some(ref name) = body.display_name {
+        validation::validate_display_name(name)?;
     }
 
     // Check for duplicate username
