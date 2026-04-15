@@ -78,3 +78,7 @@ pub mod activesync;
 pub mod ollama_config;
 // Added: CalDAV/CardDAV configuration model for TMAIL-117
 pub mod dav_config;
+// Added: Rspamd spam filter settings, quarantine, and stats models (TMAIL-15)
+pub mod spam;
+// Added: Billing plan, subscription, and payment models for Paystack/MoMo (TMAIL-46)
+pub mod billing;

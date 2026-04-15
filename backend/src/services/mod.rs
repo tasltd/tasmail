@@ -38,3 +38,7 @@ pub mod plugin_executor;
 pub mod vcard_service;
 // Added: Ollama local LLM client service for health, models, pull, delete (TMAIL-102)
 pub mod ollama_client;
+// Added: Rspamd HTTP API client for spam checking, learning, and statistics (TMAIL-15)
+pub mod rspamd_client;
+// Added: Payment service for Paystack and MTN MoMo integration (TMAIL-46)
+pub mod payment_service;

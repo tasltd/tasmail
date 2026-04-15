@@ -139,6 +139,11 @@ pub fn test_config() -> Config {
         storage: StorageConfig::default(),
         // Added: No metrics token in test config (TMAIL-41)
         metrics_token: None,
+        // Added: No Rspamd config in test (TMAIL-15)
+        rspamd_url: None,
+        rspamd_password: None,
+        // Added: No billing config in test (TMAIL-46)
+        billing: None,
     }
 }
 

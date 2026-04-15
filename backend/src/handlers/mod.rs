@@ -86,3 +86,7 @@ pub mod activesync;
 pub mod ollama;
 // Added: CalDAV/CardDAV configuration management handlers for TMAIL-117
 pub mod dav_config;
+// Added: Rspamd spam filter management handlers for TMAIL-15
+pub mod spam;
+// Added: Billing and payment handlers for Paystack/MoMo integration (TMAIL-46)
+pub mod billing;

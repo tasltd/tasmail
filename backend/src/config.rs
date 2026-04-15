@@ -14,6 +14,24 @@ pub struct Config {
     // Added: Optional metrics bearer token for TMAIL-41
     #[serde(default)]
     pub metrics_token: Option<String>,
+    // Added: Optional Rspamd URL and password for spam filter integration (TMAIL-15)
+    #[serde(default)]
+    pub rspamd_url: Option<String>,
+    #[serde(default)]
+    pub rspamd_password: Option<String>,
+    // Added: Optional billing/payment configuration for Paystack and MoMo (TMAIL-46)
+    #[serde(default)]
+    pub billing: Option<BillingConfig>,
+}
+
+/// Added: Billing configuration for Paystack and MTN MoMo payment providers (TMAIL-46)
+/// PURPOSE: Stores API keys for payment gateway integration; all fields optional to allow partial config
+#[derive(Debug, Deserialize, Clone)]
+pub struct BillingConfig {
+    pub paystack_secret_key: Option<String>,
+    pub paystack_public_key: Option<String>,
+    pub momo_api_key: Option<String>,
+    pub momo_api_user: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -144,6 +162,9 @@ impl Config {
             },
             // Added: Metrics token from env var for TMAIL-41
             metrics_token: std::env::var("METRICS_TOKEN").ok(),
+            // Added: Rspamd config from env vars for TMAIL-15
+            rspamd_url: std::env::var("RSPAMD_URL").ok(),
+            rspamd_password: std::env::var("RSPAMD_PASSWORD").ok(),
             // Added: Storage config from env vars for TMAIL-59
             storage: StorageConfig {
                 attachment_dir: std::env::var("ATTACHMENT_DIR")
@@ -153,6 +174,23 @@ impl Config {
                     .and_then(|p| p.parse().ok())
                     .unwrap_or_else(default_max_file_size),
                 clamav_socket: std::env::var("CLAMAV_SOCKET").ok(),
+            },
+            // Added: Billing config from env vars for TMAIL-46
+            billing: {
+                let paystack_secret = std::env::var("PAYSTACK_SECRET_KEY").ok();
+                let paystack_public = std::env::var("PAYSTACK_PUBLIC_KEY").ok();
+                let momo_key = std::env::var("MOMO_API_KEY").ok();
+                let momo_user = std::env::var("MOMO_API_USER").ok();
+                if paystack_secret.is_some() || momo_key.is_some() {
+                    Some(BillingConfig {
+                        paystack_secret_key: paystack_secret,
+                        paystack_public_key: paystack_public,
+                        momo_api_key: momo_key,
+                        momo_api_user: momo_user,
+                    })
+                } else {
+                    None
+                }
             },
         })
     }

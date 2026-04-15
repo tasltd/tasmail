@@ -24,7 +24,9 @@
 // Added: Smartphone icon for ActiveSync device management sidebar entry (TMAIL-130)
 // Added: Server icon for Ollama local LLM management sidebar entry (TMAIL-102)
 // Added: CloudCog icon for CalDAV/CardDAV configuration sidebar entry (TMAIL-117)
-import { PenSquare, FileSignature, Users, Shield, Plane, UsersRound, Upload, Gauge, Filter, Mailbox, ListTodo, CheckSquare, Webhook, Palette, Archive, Globe, FileUp, UserPlus, MessageSquare, Calendar, Network, Brain, KeyRound, LogIn, Search, ShieldCheck, ShieldAlert, Send, Puzzle, BookUser, Download, HardDrive, Smartphone, Server, CloudCog } from 'lucide-react';
+// Added: ShieldBan icon for Rspamd spam filter sidebar entry (TMAIL-15)
+// Added: CreditCard icon for billing sidebar entry (TMAIL-46)
+import { PenSquare, FileSignature, Users, Shield, Plane, UsersRound, Upload, Gauge, Filter, Mailbox, ListTodo, CheckSquare, Webhook, Palette, Archive, Globe, FileUp, UserPlus, MessageSquare, Calendar, Network, Brain, KeyRound, LogIn, Search, ShieldCheck, ShieldAlert, Send, Puzzle, BookUser, Download, HardDrive, Smartphone, Server, CloudCog, ShieldBan, CreditCard } from 'lucide-react';
 import { FolderTree } from '../mail/FolderTree';
 import { QuotaBar } from './QuotaBar';
 import { useMailStore } from '../../stores/mailStore';
@@ -41,7 +43,8 @@ export function Sidebar() {
   const setSidebarOpen = useUiStore((s) => s.setSidebarOpen);
 
   // Added: Wrapper that closes sidebar on mobile after navigating (TMAIL-33)
-  const handleNavClick = (mode: string) => {
+  // Changed: Use Parameters type to match setViewMode's expected argument type
+  const handleNavClick = (mode: Parameters<typeof setViewMode>[0]) => {
     setViewMode(mode);
     if (isMobile) {
       setSidebarOpen(false);
@@ -104,6 +107,14 @@ export function Sidebar() {
         >
           <Filter size={18} />
           <span className="folder-item__name">Filters</span>
+        </button>
+        {/* Added: Spam Filter navigation entry (TMAIL-15) */}
+        <button
+          className={`folder-item ${viewMode === 'spam' ? 'folder-item--active' : ''}`}
+          onClick={() => handleNavClick('spam')}
+        >
+          <ShieldBan size={18} />
+          <span className="folder-item__name">Spam Filter</span>
         </button>
         {/* Added: Shared mailboxes navigation entry (TMAIL-96) */}
         <button
@@ -312,6 +323,14 @@ export function Sidebar() {
         >
           <CloudCog size={18} />
           <span className="folder-item__name">CalDAV/CardDAV</span>
+        </button>
+        {/* Added: Billing navigation entry (TMAIL-46) */}
+        <button
+          className={`folder-item ${viewMode === 'billing' ? 'folder-item--active' : ''}`}
+          onClick={() => handleNavClick('billing')}
+        >
+          <CreditCard size={18} />
+          <span className="folder-item__name">Billing</span>
         </button>
         <button
           className={`folder-item ${viewMode === 'bandwidth' ? 'folder-item--active' : ''}`}

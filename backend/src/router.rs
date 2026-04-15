@@ -62,7 +62,11 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/auth/oidc/{id}/authorize", get(handlers::oidc::get_authorize_url))
         .route("/api/auth/oidc/callback", post(handlers::oidc::oidc_callback))
         // Added: Prometheus metrics endpoint (TMAIL-41)
-        .route("/metrics", get(handlers::metrics::metrics_handler));
+        .route("/metrics", get(handlers::metrics::metrics_handler))
+        // Added: Public billing routes — plan listing and payment webhooks (TMAIL-46)
+        .route("/api/billing/plans", get(handlers::billing::list_plans))
+        .route("/api/billing/webhook/paystack", post(handlers::billing::webhook_paystack))
+        .route("/api/billing/webhook/momo", post(handlers::billing::webhook_momo));
 
     // Protected routes (auth required)
     let protected_routes = Router::new()
@@ -752,6 +756,44 @@ pub fn create_router(state: AppState) -> Router {
         .route(
             "/api/dav/configs/{id}/test",
             post(handlers::dav_config::test_dav_config),
+        )
+        // Added: Rspamd spam filter management routes for TMAIL-15
+        .route(
+            "/api/spam/settings",
+            get(handlers::spam::get_settings).put(handlers::spam::update_settings),
+        )
+        .route(
+            "/api/spam/quarantine",
+            get(handlers::spam::list_quarantine),
+        )
+        .route(
+            "/api/spam/quarantine/{id}/release",
+            post(handlers::spam::release_quarantine),
+        )
+        .route(
+            "/api/spam/quarantine/{id}",
+            delete(handlers::spam::delete_quarantine),
+        )
+        .route(
+            "/api/spam/learn",
+            post(handlers::spam::learn_message),
+        )
+        .route(
+            "/api/spam/stats",
+            get(handlers::spam::get_stats),
+        )
+        // Added: Protected billing routes for subscription and payment management (TMAIL-46)
+        .route(
+            "/api/billing/subscription",
+            get(handlers::billing::get_subscription),
+        )
+        .route(
+            "/api/billing/subscribe",
+            post(handlers::billing::subscribe),
+        )
+        .route(
+            "/api/billing/payments",
+            get(handlers::billing::list_payments),
         )
         // Audit log
         .route(

@@ -64,6 +64,10 @@ import { ActiveSyncManager } from '../settings/ActiveSyncManager';
 import { OllamaManager } from '../settings/OllamaManager';
 // Added: CalDAV/CardDAV configuration management component (TMAIL-117)
 import { DavConfigManager } from '../settings/DavConfigManager';
+// Added: Rspamd spam filter management component (TMAIL-15)
+import { SpamFilterManager } from '../settings/SpamFilterManager';
+// Added: Billing management component for Paystack/MoMo payments (TMAIL-46)
+import { BillingManager } from '../settings/BillingManager';
 import { useMailStore } from '../../stores/mailStore';
 import { useUiStore } from '../../stores/uiStore';
 // Added: Keyboard shortcuts hook and help dialog for TMAIL-121
@@ -169,6 +173,10 @@ export function AppShell({ onLogout }: AppShellProps) {
           {viewMode === 'ollama' && <OllamaManager />}
           {/* Added: CalDAV/CardDAV configuration management view (TMAIL-117) */}
           {viewMode === 'dav-config' && <DavConfigManager />}
+          {/* Added: Rspamd spam filter management view (TMAIL-15) */}
+          {viewMode === 'spam' && <SpamFilterManager />}
+          {/* Added: Billing management view for Paystack/MoMo payments (TMAIL-46) */}
+          {viewMode === 'billing' && <BillingManager />}
         </main>
       </div>
       {/* Added: Keyboard shortcut help dialog, toggled by '?' key */}
