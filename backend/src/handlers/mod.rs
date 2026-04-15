@@ -78,3 +78,7 @@ pub mod contact_groups;
 pub mod pop3_config;
 // Added: Email archive handlers for Piler integration (TMAIL-107)
 pub mod archive;
+// Added: ActiveSync device management handlers for TMAIL-130
+pub mod activesync;
+// Added: Ollama local LLM management handlers for TMAIL-102
+pub mod ollama;

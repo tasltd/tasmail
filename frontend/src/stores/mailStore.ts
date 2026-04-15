@@ -24,7 +24,9 @@ import type { AdvancedSearchParams } from '../api/messages';
 // Added: 'contacts-app' view mode for full contacts management app (TMAIL-119)
 // Added: 'pop3' view mode for POP3 configuration management (TMAIL-133)
 // Added: 'archive' view mode for email archive management with Piler (TMAIL-107)
-type ViewMode = 'list' | 'reader' | 'compose' | 'search' | 'signatures' | 'contacts' | 'security' | 'vacation' | 'groups' | 'migration' | 'bandwidth' | 'filters' | 'shared' | 'queue' | 'tasks' | 'webhooks' | 'branding' | 'retention' | 'hostnames' | 'shared-files' | 'bulk-import' | 'chat' | 'calendar' | 'ldap' | 'ai-config' | 'saml' | 'oidc' | 'ediscovery' | 'dlp' | 'dane' | 'smtp-config' | 'plugins' | 'contacts-app' | 'pop3' | 'archive';
+// Added: 'activesync' view mode for ActiveSync device management (TMAIL-130)
+// Added: 'ollama' view mode for Ollama local LLM management (TMAIL-102)
+type ViewMode = 'list' | 'reader' | 'compose' | 'search' | 'signatures' | 'contacts' | 'security' | 'vacation' | 'groups' | 'migration' | 'bandwidth' | 'filters' | 'shared' | 'queue' | 'tasks' | 'webhooks' | 'branding' | 'retention' | 'hostnames' | 'shared-files' | 'bulk-import' | 'chat' | 'calendar' | 'ldap' | 'ai-config' | 'saml' | 'oidc' | 'ediscovery' | 'dlp' | 'dane' | 'smtp-config' | 'plugins' | 'contacts-app' | 'pop3' | 'archive' | 'activesync' | 'ollama';
 
 interface MailState {
   selectedFolder: string;

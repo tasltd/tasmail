@@ -72,3 +72,7 @@ pub mod contact_group;
 pub mod pop3_config;
 // Added: Email archive model for Piler archiving integration (TMAIL-107)
 pub mod archive;
+// Added: ActiveSync device and policy models for TMAIL-130
+pub mod activesync;
+// Added: Ollama local LLM configuration and model cache models (TMAIL-102)
+pub mod ollama_config;

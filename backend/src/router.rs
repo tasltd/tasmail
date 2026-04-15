@@ -652,6 +652,60 @@ pub fn create_router(state: AppState) -> Router {
             "/api/archive/search/history",
             get(handlers::archive::search_history),
         )
+        // Added: ActiveSync device management routes for TMAIL-130
+        .route(
+            "/api/activesync/devices",
+            get(handlers::activesync::list_devices)
+                .post(handlers::activesync::register_device),
+        )
+        .route(
+            "/api/activesync/devices/{id}",
+            delete(handlers::activesync::delete_device),
+        )
+        .route(
+            "/api/activesync/devices/{id}/block",
+            post(handlers::activesync::block_device),
+        )
+        .route(
+            "/api/activesync/devices/{id}/allow",
+            post(handlers::activesync::allow_device),
+        )
+        .route(
+            "/api/activesync/devices/{id}/wipe",
+            post(handlers::activesync::wipe_device),
+        )
+        // Added: ActiveSync policy management routes (admin) for TMAIL-130
+        .route(
+            "/api/admin/activesync/policies",
+            get(handlers::activesync::list_policies)
+                .post(handlers::activesync::create_policy),
+        )
+        .route(
+            "/api/admin/activesync/policies/{id}",
+            put(handlers::activesync::update_policy)
+                .delete(handlers::activesync::delete_policy),
+        )
+        // Added: Ollama local LLM management routes for TMAIL-102
+        .route(
+            "/api/admin/ollama/config",
+            get(handlers::ollama::get_config).put(handlers::ollama::update_config),
+        )
+        .route(
+            "/api/admin/ollama/status",
+            get(handlers::ollama::get_status),
+        )
+        .route(
+            "/api/admin/ollama/models/pull",
+            post(handlers::ollama::pull_model),
+        )
+        .route(
+            "/api/admin/ollama/models/{name}",
+            delete(handlers::ollama::delete_model),
+        )
+        .route(
+            "/api/admin/ollama/models",
+            get(handlers::ollama::list_cached_models),
+        )
         // Audit log
         .route(
             "/api/admin/audit-log",

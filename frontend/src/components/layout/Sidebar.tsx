@@ -21,7 +21,9 @@
 // Added: BookUser icon for contacts app sidebar entry (TMAIL-119)
 // Added: Download icon for POP3 configuration sidebar entry (TMAIL-133)
 // Added: HardDrive icon for email archive sidebar entry (TMAIL-107)
-import { PenSquare, FileSignature, Users, Shield, Plane, UsersRound, Upload, Gauge, Filter, Mailbox, ListTodo, CheckSquare, Webhook, Palette, Archive, Globe, FileUp, UserPlus, MessageSquare, Calendar, Network, Brain, KeyRound, LogIn, Search, ShieldCheck, ShieldAlert, Send, Puzzle, BookUser, Download, HardDrive } from 'lucide-react';
+// Added: Smartphone icon for ActiveSync device management sidebar entry (TMAIL-130)
+// Added: Server icon for Ollama local LLM management sidebar entry (TMAIL-102)
+import { PenSquare, FileSignature, Users, Shield, Plane, UsersRound, Upload, Gauge, Filter, Mailbox, ListTodo, CheckSquare, Webhook, Palette, Archive, Globe, FileUp, UserPlus, MessageSquare, Calendar, Network, Brain, KeyRound, LogIn, Search, ShieldCheck, ShieldAlert, Send, Puzzle, BookUser, Download, HardDrive, Smartphone, Server } from 'lucide-react';
 import { FolderTree } from '../mail/FolderTree';
 import { QuotaBar } from './QuotaBar';
 import { useMailStore } from '../../stores/mailStore';
@@ -270,6 +272,22 @@ export function Sidebar() {
         >
           <HardDrive size={18} />
           <span className="folder-item__name">Archive</span>
+        </button>
+        {/* Added: ActiveSync device management navigation entry (TMAIL-130) */}
+        <button
+          className={`folder-item ${viewMode === 'activesync' ? 'folder-item--active' : ''}`}
+          onClick={() => setViewMode('activesync')}
+        >
+          <Smartphone size={18} />
+          <span className="folder-item__name">ActiveSync</span>
+        </button>
+        {/* Added: Ollama LLM management navigation entry (TMAIL-102) */}
+        <button
+          className={`folder-item ${viewMode === 'ollama' ? 'folder-item--active' : ''}`}
+          onClick={() => setViewMode('ollama')}
+        >
+          <Server size={18} />
+          <span className="folder-item__name">Ollama</span>
         </button>
         <button
           className={`folder-item ${viewMode === 'bandwidth' ? 'folder-item--active' : ''}`}

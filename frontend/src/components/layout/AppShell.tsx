@@ -58,6 +58,10 @@ import { ContactsApp } from '../settings/ContactsApp';
 import { Pop3ConfigManager } from '../settings/Pop3ConfigManager';
 // Added: Email archive management component for Piler integration (TMAIL-107)
 import { ArchiveManager } from '../settings/ArchiveManager';
+// Added: ActiveSync device management component for TMAIL-130
+import { ActiveSyncManager } from '../settings/ActiveSyncManager';
+// Added: Ollama local LLM management component (TMAIL-102)
+import { OllamaManager } from '../settings/OllamaManager';
 import { useMailStore } from '../../stores/mailStore';
 import { useUiStore } from '../../stores/uiStore';
 // Added: Keyboard shortcuts hook and help dialog for TMAIL-121
@@ -144,6 +148,10 @@ export function AppShell({ onLogout }: AppShellProps) {
           {viewMode === 'pop3' && <Pop3ConfigManager />}
           {/* Added: Email archive management view (TMAIL-107) */}
           {viewMode === 'archive' && <ArchiveManager />}
+          {/* Added: ActiveSync device management view (TMAIL-130) */}
+          {viewMode === 'activesync' && <ActiveSyncManager />}
+          {/* Added: Ollama local LLM management view (TMAIL-102) */}
+          {viewMode === 'ollama' && <OllamaManager />}
         </main>
       </div>
       {/* Added: Keyboard shortcut help dialog, toggled by '?' key */}

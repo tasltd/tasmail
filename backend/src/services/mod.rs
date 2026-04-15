@@ -36,3 +36,5 @@ pub mod smtp_tester;
 pub mod plugin_executor;
 // Added: vCard import/export service for contact management (TMAIL-119)
 pub mod vcard_service;
+// Added: Ollama local LLM client service for health, models, pull, delete (TMAIL-102)
+pub mod ollama_client;
