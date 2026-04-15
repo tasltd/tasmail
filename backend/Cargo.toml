@@ -56,6 +56,10 @@ anyhow = "1"
 regex = "1"
 csv = "1"
 reqwest = { version = "0.12", features = ["json"] }
+# Added: Prometheus metrics facade and exporter for TMAIL-41
+metrics = "0.24"
+metrics-exporter-prometheus = "0.18"
+metrics-process = "2.4"
 # Added: AES-256-GCM encryption for AI API keys at rest (TMAIL-105)
 aes-gcm = "0.10"
 # Added: SAML AuthnRequest deflate compression and URL encoding for TMAIL-101
@@ -67,3 +71,19 @@ tokio-test = "0.4"
 tempfile = "3"
 # Added: HTTP body utilities for reading response bodies in integration tests
 http-body-util = "0.1"
+# Added: Criterion benchmarks for performance profiling critical paths (TMAIL-38)
+criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
+tokio = { version = "1", features = ["full"] }
+
+# Added: Benchmark targets for auth, validation, and router performance (TMAIL-38)
+[[bench]]
+name = "auth_bench"
+harness = false
+
+[[bench]]
+name = "validation_bench"
+harness = false
+
+[[bench]]
+name = "router_bench"
+harness = false

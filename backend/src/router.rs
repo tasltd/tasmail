@@ -11,6 +11,8 @@ use tower_http::trace::TraceLayer;
 
 use crate::handlers;
 use crate::middleware::auth::auth_middleware;
+// Added: Prometheus request instrumentation middleware import (TMAIL-41)
+use crate::middleware::metrics::metrics_middleware;
 // Added: Security headers middleware import (TMAIL-37)
 use crate::middleware::security_headers::security_headers_middleware;
 use crate::state::AppState;
@@ -58,7 +60,9 @@ pub fn create_router(state: AppState) -> Router {
         // Added: Public OIDC login routes for Sign in with Google/Microsoft (TMAIL-99)
         .route("/api/auth/oidc/providers", get(handlers::oidc::list_login_providers))
         .route("/api/auth/oidc/{id}/authorize", get(handlers::oidc::get_authorize_url))
-        .route("/api/auth/oidc/callback", post(handlers::oidc::oidc_callback));
+        .route("/api/auth/oidc/callback", post(handlers::oidc::oidc_callback))
+        // Added: Prometheus metrics endpoint (TMAIL-41)
+        .route("/metrics", get(handlers::metrics::metrics_handler));
 
     // Protected routes (auth required)
     let protected_routes = Router::new()
@@ -771,6 +775,8 @@ pub fn create_router(state: AppState) -> Router {
         .merge(protected_routes)
         .layer(CompressionLayer::new())
         .layer(api_version_layer)
+        // Added: Prometheus request instrumentation on all routes (TMAIL-41)
+        .layer(axum_middleware::from_fn(metrics_middleware))
         // Added: Security headers (CSP, HSTS, X-Frame-Options, etc.) on all responses (TMAIL-37)
         .layer(axum_middleware::from_fn(security_headers_middleware))
         .layer(TraceLayer::new_for_http())

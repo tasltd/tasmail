@@ -11,6 +11,9 @@ pub struct Config {
     // Added: Attachment storage configuration for TMAIL-59
     #[serde(default)]
     pub storage: StorageConfig,
+    // Added: Optional metrics bearer token for TMAIL-41
+    #[serde(default)]
+    pub metrics_token: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -139,6 +142,8 @@ impl Config {
                     .and_then(|p| p.parse().ok())
                     .unwrap_or(604800), // 7 days
             },
+            // Added: Metrics token from env var for TMAIL-41
+            metrics_token: std::env::var("METRICS_TOKEN").ok(),
             // Added: Storage config from env vars for TMAIL-59
             storage: StorageConfig {
                 attachment_dir: std::env::var("ATTACHMENT_DIR")

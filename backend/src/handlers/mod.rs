@@ -17,6 +17,8 @@ pub mod folders;
 pub mod groups;
 pub mod health;
 pub mod messages;
+// Added: Prometheus metrics endpoint handler (TMAIL-41)
+pub mod metrics;
 // Added: Phishing scan and report handlers for TMAIL-124
 pub mod phishing;
 pub mod migration;

@@ -45,6 +45,8 @@ impl TestApp {
         let state = AppState {
             db: pool,
             config: config.clone(),
+            // Added: No metrics handle in integration tests (TMAIL-41)
+            metrics_handle: None,
         };
 
         let router = create_router(state);
@@ -135,6 +137,8 @@ pub fn test_config() -> Config {
             refresh_token_expiry_secs: 604800,
         },
         storage: StorageConfig::default(),
+        // Added: No metrics token in test config (TMAIL-41)
+        metrics_token: None,
     }
 }
 

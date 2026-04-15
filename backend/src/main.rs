@@ -83,9 +83,18 @@ async fn main() -> anyhow::Result<()> {
     );
     queue_processor.start();
 
+    // Added: Install Prometheus metrics recorder and collect process metrics (TMAIL-41)
+    let metrics_handle = handlers::metrics::install_prometheus_recorder();
+    // Added: Register process metrics collector (CPU, memory, FDs)
+    let process_collector = metrics_process::Collector::default();
+    process_collector.describe();
+    process_collector.collect();
+
     let state = AppState {
         db: pool,
         config,
+        // Added: Pass Prometheus handle for /metrics endpoint rendering (TMAIL-41)
+        metrics_handle: Some(metrics_handle),
     };
 
     let app = router::create_router(state);
