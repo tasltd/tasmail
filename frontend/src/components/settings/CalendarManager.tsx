@@ -1,7 +1,8 @@
 // Added: Calendar/meeting manager component for TMAIL-127
+// Changed: Added CalendarView toggle for visual calendar grid (TMAIL-118)
 import { useState, type FormEvent } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2, ArrowLeft, Calendar, Download, Check, X, HelpCircle, Users, MapPin } from 'lucide-react';
+import { Plus, Trash2, ArrowLeft, Calendar, Download, Check, X, HelpCircle, Users, MapPin, LayoutGrid } from 'lucide-react';
 import {
   listEvents,
   createEvent,
@@ -16,6 +17,8 @@ import type {
 } from '../../api/calendar';
 import { useMailStore } from '../../stores/mailStore';
 import { LoadingSkeleton } from '../shared/LoadingSkeleton';
+// Added: Import CalendarView for visual calendar grid toggle (TMAIL-118)
+import { CalendarView } from './CalendarView';
 
 // Added: Status badge color mapping for event status display
 const STATUS_COLORS: Record<string, string> = {
@@ -296,6 +299,8 @@ export function CalendarManager() {
   const setViewMode = useMailStore((s) => s.setViewMode);
   const [isCreating, setIsCreating] = useState(false);
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
+  // Added: Toggle between list view and visual calendar grid view (TMAIL-118)
+  const [showCalendarView, setShowCalendarView] = useState(false);
 
   const { data: events, isLoading } = useQuery({
     queryKey: ['calendar-events'],
@@ -333,10 +338,28 @@ export function CalendarManager() {
           <ArrowLeft size={20} />
         </button>
         <h2 style={{ flex: 1, fontSize: '18px' }}>Calendar</h2>
+        {/* Added: Calendar grid view toggle button (TMAIL-118) */}
+        <button
+          className={`btn ${showCalendarView ? 'btn--primary' : ''}`}
+          onClick={() => setShowCalendarView(!showCalendarView)}
+          title={showCalendarView ? 'Switch to list view' : 'Switch to calendar view'}
+        >
+          <LayoutGrid size={16} /> {showCalendarView ? 'List' : 'Grid'}
+        </button>
         <button className="btn btn--primary" onClick={() => setIsCreating(true)}>
           <Plus size={16} /> New Event
         </button>
       </div>
+
+      {/* Added: Visual calendar grid view (TMAIL-118) */}
+      {showCalendarView && (
+        <div style={{ marginTop: '12px' }}>
+          <CalendarView
+            onSelectEvent={(eventId) => setSelectedEventId(eventId)}
+            onCreateEvent={() => setIsCreating(true)}
+          />
+        </div>
+      )}
 
       {isCreating && (
         <div style={{ marginTop: '12px', padding: '16px', border: '1px solid var(--color-border)', borderRadius: '8px' }}>

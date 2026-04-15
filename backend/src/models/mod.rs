@@ -76,3 +76,5 @@ pub mod archive;
 pub mod activesync;
 // Added: Ollama local LLM configuration and model cache models (TMAIL-102)
 pub mod ollama_config;
+// Added: CalDAV/CardDAV configuration model for TMAIL-117
+pub mod dav_config;

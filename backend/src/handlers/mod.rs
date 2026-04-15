@@ -82,3 +82,5 @@ pub mod archive;
 pub mod activesync;
 // Added: Ollama local LLM management handlers for TMAIL-102
 pub mod ollama;
+// Added: CalDAV/CardDAV configuration management handlers for TMAIL-117
+pub mod dav_config;

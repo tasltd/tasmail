@@ -62,6 +62,8 @@ import { ArchiveManager } from '../settings/ArchiveManager';
 import { ActiveSyncManager } from '../settings/ActiveSyncManager';
 // Added: Ollama local LLM management component (TMAIL-102)
 import { OllamaManager } from '../settings/OllamaManager';
+// Added: CalDAV/CardDAV configuration management component (TMAIL-117)
+import { DavConfigManager } from '../settings/DavConfigManager';
 import { useMailStore } from '../../stores/mailStore';
 import { useUiStore } from '../../stores/uiStore';
 // Added: Keyboard shortcuts hook and help dialog for TMAIL-121
@@ -152,6 +154,8 @@ export function AppShell({ onLogout }: AppShellProps) {
           {viewMode === 'activesync' && <ActiveSyncManager />}
           {/* Added: Ollama local LLM management view (TMAIL-102) */}
           {viewMode === 'ollama' && <OllamaManager />}
+          {/* Added: CalDAV/CardDAV configuration management view (TMAIL-117) */}
+          {viewMode === 'dav-config' && <DavConfigManager />}
         </main>
       </div>
       {/* Added: Keyboard shortcut help dialog, toggled by '?' key */}

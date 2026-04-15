@@ -706,6 +706,26 @@ pub fn create_router(state: AppState) -> Router {
             "/api/admin/ollama/models",
             get(handlers::ollama::list_cached_models),
         )
+        // Added: CalDAV/CardDAV configuration management routes for TMAIL-117
+        .route(
+            "/api/dav/configs",
+            get(handlers::dav_config::list_dav_configs)
+                .post(handlers::dav_config::create_dav_config),
+        )
+        .route(
+            "/api/dav/configs/{id}",
+            get(handlers::dav_config::get_dav_config)
+                .put(handlers::dav_config::update_dav_config)
+                .delete(handlers::dav_config::delete_dav_config),
+        )
+        .route(
+            "/api/dav/configs/{id}/sync",
+            post(handlers::dav_config::sync_dav_config),
+        )
+        .route(
+            "/api/dav/configs/{id}/test",
+            post(handlers::dav_config::test_dav_config),
+        )
         // Audit log
         .route(
             "/api/admin/audit-log",

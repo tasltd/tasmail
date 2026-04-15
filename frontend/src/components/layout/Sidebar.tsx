@@ -23,7 +23,8 @@
 // Added: HardDrive icon for email archive sidebar entry (TMAIL-107)
 // Added: Smartphone icon for ActiveSync device management sidebar entry (TMAIL-130)
 // Added: Server icon for Ollama local LLM management sidebar entry (TMAIL-102)
-import { PenSquare, FileSignature, Users, Shield, Plane, UsersRound, Upload, Gauge, Filter, Mailbox, ListTodo, CheckSquare, Webhook, Palette, Archive, Globe, FileUp, UserPlus, MessageSquare, Calendar, Network, Brain, KeyRound, LogIn, Search, ShieldCheck, ShieldAlert, Send, Puzzle, BookUser, Download, HardDrive, Smartphone, Server } from 'lucide-react';
+// Added: CloudCog icon for CalDAV/CardDAV configuration sidebar entry (TMAIL-117)
+import { PenSquare, FileSignature, Users, Shield, Plane, UsersRound, Upload, Gauge, Filter, Mailbox, ListTodo, CheckSquare, Webhook, Palette, Archive, Globe, FileUp, UserPlus, MessageSquare, Calendar, Network, Brain, KeyRound, LogIn, Search, ShieldCheck, ShieldAlert, Send, Puzzle, BookUser, Download, HardDrive, Smartphone, Server, CloudCog } from 'lucide-react';
 import { FolderTree } from '../mail/FolderTree';
 import { QuotaBar } from './QuotaBar';
 import { useMailStore } from '../../stores/mailStore';
@@ -288,6 +289,14 @@ export function Sidebar() {
         >
           <Server size={18} />
           <span className="folder-item__name">Ollama</span>
+        </button>
+        {/* Added: CalDAV/CardDAV configuration navigation entry (TMAIL-117) */}
+        <button
+          className={`folder-item ${viewMode === 'dav-config' ? 'folder-item--active' : ''}`}
+          onClick={() => setViewMode('dav-config')}
+        >
+          <CloudCog size={18} />
+          <span className="folder-item__name">CalDAV/CardDAV</span>
         </button>
         <button
           className={`folder-item ${viewMode === 'bandwidth' ? 'folder-item--active' : ''}`}
