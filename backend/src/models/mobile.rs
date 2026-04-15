@@ -1,0 +1,344 @@
+// Added: Mobile-optimized response models for lightweight API payloads (TMAIL-52)
+
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+
+/// Minimal message fields for mobile inbox listing — no body content
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MobileMessageSummary {
+    pub uid: u32,
+    pub from: Option<String>,
+    pub subject: Option<String>,
+    pub date: Option<String>,
+    pub is_read: bool,
+    pub is_flagged: bool,
+    pub has_attachment: bool,
+}
+
+/// Folder name with unread count only — no message totals or other metadata
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MobileFolderSummary {
+    pub name: String,
+    pub unread_count: u32,
+}
+
+/// A single request within a batch call
+#[derive(Debug, Clone, Deserialize)]
+pub struct BatchRequestItem {
+    pub method: String,
+    pub path: String,
+    pub body: Option<serde_json::Value>,
+}
+
+/// Wrapper for batch API request
+#[derive(Debug, Clone, Deserialize)]
+pub struct BatchRequest {
+    pub requests: Vec<BatchRequestItem>,
+}
+
+/// A single response within a batch call
+#[derive(Debug, Clone, Serialize)]
+pub struct BatchResponseItem {
+    pub status: u16,
+    pub body: serde_json::Value,
+}
+
+/// Wrapper for batch API response
+#[derive(Debug, Clone, Serialize)]
+pub struct BatchResponse {
+    pub responses: Vec<BatchResponseItem>,
+}
+
+/// Represents a single change in delta sync
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum SyncChange {
+    /// A new message arrived
+    #[serde(rename = "new_message")]
+    NewMessage {
+        folder: String,
+        uid: u32,
+        from: Option<String>,
+        subject: Option<String>,
+        date: Option<String>,
+    },
+    /// Message flags changed (read, flagged, etc.)
+    #[serde(rename = "flag_change")]
+    FlagChange {
+        folder: String,
+        uid: u32,
+        flags: Vec<String>,
+    },
+    /// A message was deleted/expunged
+    #[serde(rename = "deletion")]
+    Deletion { folder: String, uid: u32 },
+}
+
+/// Delta sync response containing all changes since a given timestamp
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncDelta {
+    pub changes: Vec<SyncChange>,
+    pub sync_token: String,
+    pub has_more: bool,
+}
+
+// Added: Pagination query params shared across mobile endpoints
+#[derive(Debug, Deserialize)]
+pub struct MobileInboxQuery {
+    pub page: Option<u32>,
+    pub per_page: Option<u32>,
+}
+
+// Added: Query param for optional body truncation on message detail
+#[derive(Debug, Deserialize)]
+pub struct MobileMessageQuery {
+    pub max_body: Option<usize>,
+}
+
+// Added: Query param for delta sync since a given timestamp
+#[derive(Debug, Deserialize)]
+pub struct SyncQuery {
+    pub since: String,
+}
+
+// Added: Max number of sub-requests allowed in a single batch call
+pub const MAX_BATCH_REQUESTS: usize = 10;
+
+// Added: Allowed methods for batch sub-requests
+pub const ALLOWED_BATCH_METHODS: &[&str] = &["GET", "POST", "PUT", "DELETE"];
+
+// Added: Allowed path prefixes for batch sub-requests (security boundary)
+pub const ALLOWED_BATCH_PATH_PREFIX: &str = "/api/";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_mobile_message_summary_serialization() {
+        let summary = MobileMessageSummary {
+            uid: 42,
+            from: Some("kwame@tasmail.gh".to_string()),
+            subject: Some("Hello from mobile".to_string()),
+            date: Some("2026-04-15T10:30:00Z".to_string()),
+            is_read: false,
+            is_flagged: true,
+            has_attachment: false,
+        };
+
+        let json = serde_json::to_value(&summary).unwrap();
+        assert_eq!(json["uid"], 42);
+        assert_eq!(json["from"], "kwame@tasmail.gh");
+        assert_eq!(json["subject"], "Hello from mobile");
+        assert_eq!(json["is_read"], false);
+        assert_eq!(json["is_flagged"], true);
+        assert_eq!(json["has_attachment"], false);
+    }
+
+    #[test]
+    fn test_mobile_message_summary_with_nulls() {
+        let summary = MobileMessageSummary {
+            uid: 1,
+            from: None,
+            subject: None,
+            date: None,
+            is_read: true,
+            is_flagged: false,
+            has_attachment: false,
+        };
+
+        let json = serde_json::to_value(&summary).unwrap();
+        assert_eq!(json["uid"], 1);
+        assert!(json["from"].is_null());
+        assert!(json["subject"].is_null());
+        assert_eq!(json["is_read"], true);
+    }
+
+    #[test]
+    fn test_mobile_folder_summary_serialization() {
+        let folder = MobileFolderSummary {
+            name: "INBOX".to_string(),
+            unread_count: 12,
+        };
+
+        let json = serde_json::to_value(&folder).unwrap();
+        assert_eq!(json["name"], "INBOX");
+        assert_eq!(json["unread_count"], 12);
+    }
+
+    #[test]
+    fn test_batch_request_deserialization() {
+        let json = serde_json::json!({
+            "requests": [
+                {"method": "GET", "path": "/api/mobile/folders"},
+                {"method": "GET", "path": "/api/mobile/unread-count", "body": null}
+            ]
+        });
+
+        let batch: BatchRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(batch.requests.len(), 2);
+        assert_eq!(batch.requests[0].method, "GET");
+        assert_eq!(batch.requests[0].path, "/api/mobile/folders");
+        assert!(batch.requests[0].body.is_none());
+        assert_eq!(batch.requests[1].method, "GET");
+    }
+
+    #[test]
+    fn test_batch_request_with_body() {
+        let json = serde_json::json!({
+            "requests": [
+                {
+                    "method": "POST",
+                    "path": "/api/messages/send",
+                    "body": {"to": ["ama@tasmail.gh"], "subject": "Test"}
+                }
+            ]
+        });
+
+        let batch: BatchRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(batch.requests.len(), 1);
+        assert!(batch.requests[0].body.is_some());
+        let body = batch.requests[0].body.as_ref().unwrap();
+        assert_eq!(body["subject"], "Test");
+    }
+
+    #[test]
+    fn test_batch_response_serialization() {
+        let response = BatchResponse {
+            responses: vec![
+                BatchResponseItem {
+                    status: 200,
+                    body: serde_json::json!({"folders": []}),
+                },
+                BatchResponseItem {
+                    status: 404,
+                    body: serde_json::json!({"error": "Not found"}),
+                },
+            ],
+        };
+
+        let json = serde_json::to_value(&response).unwrap();
+        assert_eq!(json["responses"].as_array().unwrap().len(), 2);
+        assert_eq!(json["responses"][0]["status"], 200);
+        assert_eq!(json["responses"][1]["status"], 404);
+    }
+
+    #[test]
+    fn test_sync_change_new_message_serialization() {
+        let change = SyncChange::NewMessage {
+            folder: "INBOX".to_string(),
+            uid: 100,
+            from: Some("kofi@tasmail.gh".to_string()),
+            subject: Some("New email".to_string()),
+            date: Some("2026-04-15T12:00:00Z".to_string()),
+        };
+
+        let json = serde_json::to_value(&change).unwrap();
+        assert_eq!(json["type"], "new_message");
+        assert_eq!(json["folder"], "INBOX");
+        assert_eq!(json["uid"], 100);
+    }
+
+    #[test]
+    fn test_sync_change_flag_change_serialization() {
+        let change = SyncChange::FlagChange {
+            folder: "INBOX".to_string(),
+            uid: 50,
+            flags: vec!["\\Seen".to_string(), "\\Flagged".to_string()],
+        };
+
+        let json = serde_json::to_value(&change).unwrap();
+        assert_eq!(json["type"], "flag_change");
+        assert_eq!(json["flags"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn test_sync_change_deletion_serialization() {
+        let change = SyncChange::Deletion {
+            folder: "INBOX".to_string(),
+            uid: 25,
+        };
+
+        let json = serde_json::to_value(&change).unwrap();
+        assert_eq!(json["type"], "deletion");
+        assert_eq!(json["uid"], 25);
+    }
+
+    #[test]
+    fn test_sync_delta_serialization() {
+        let delta = SyncDelta {
+            changes: vec![
+                SyncChange::NewMessage {
+                    folder: "INBOX".to_string(),
+                    uid: 200,
+                    from: Some("sender@example.com".to_string()),
+                    subject: Some("Test".to_string()),
+                    date: None,
+                },
+                SyncChange::Deletion {
+                    folder: "Trash".to_string(),
+                    uid: 10,
+                },
+            ],
+            sync_token: "2026-04-15T12:00:00Z".to_string(),
+            has_more: false,
+        };
+
+        let json = serde_json::to_value(&delta).unwrap();
+        assert_eq!(json["changes"].as_array().unwrap().len(), 2);
+        assert_eq!(json["sync_token"], "2026-04-15T12:00:00Z");
+        assert_eq!(json["has_more"], false);
+    }
+
+    #[test]
+    fn test_mobile_inbox_query_defaults() {
+        let json = serde_json::json!({});
+        let query: MobileInboxQuery = serde_json::from_value(json).unwrap();
+        assert!(query.page.is_none());
+        assert!(query.per_page.is_none());
+    }
+
+    #[test]
+    fn test_mobile_message_query_with_max_body() {
+        let json = serde_json::json!({"max_body": 500});
+        let query: MobileMessageQuery = serde_json::from_value(json).unwrap();
+        assert_eq!(query.max_body.unwrap(), 500);
+    }
+
+    #[test]
+    fn test_sync_query_deserialization() {
+        let json = serde_json::json!({"since": "2026-04-10T00:00:00Z"});
+        let query: SyncQuery = serde_json::from_value(json).unwrap();
+        assert_eq!(query.since, "2026-04-10T00:00:00Z");
+    }
+
+    #[test]
+    fn test_batch_request_empty_requests() {
+        let json = serde_json::json!({"requests": []});
+        let batch: BatchRequest = serde_json::from_value(json).unwrap();
+        assert!(batch.requests.is_empty());
+    }
+
+    #[test]
+    fn test_batch_request_validates_allowed_methods() {
+        // NOTE: This tests the constant, not runtime validation (handler enforces this)
+        assert!(ALLOWED_BATCH_METHODS.contains(&"GET"));
+        assert!(ALLOWED_BATCH_METHODS.contains(&"POST"));
+        assert!(ALLOWED_BATCH_METHODS.contains(&"PUT"));
+        assert!(ALLOWED_BATCH_METHODS.contains(&"DELETE"));
+        assert!(!ALLOWED_BATCH_METHODS.contains(&"PATCH"));
+    }
+
+    #[test]
+    fn test_max_batch_requests_limit() {
+        assert_eq!(MAX_BATCH_REQUESTS, 10);
+    }
+
+    #[test]
+    fn test_batch_path_prefix() {
+        let valid_path = "/api/mobile/folders";
+        let invalid_path = "/internal/admin";
+        assert!(valid_path.starts_with(ALLOWED_BATCH_PATH_PREFIX));
+        assert!(!invalid_path.starts_with(ALLOWED_BATCH_PATH_PREFIX));
+    }
+}

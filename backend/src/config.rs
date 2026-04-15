@@ -22,6 +22,20 @@ pub struct Config {
     // Added: Optional billing/payment configuration for Paystack and MoMo (TMAIL-46)
     #[serde(default)]
     pub billing: Option<BillingConfig>,
+    // Added: Optional push notification configuration for FCM/APNs/Web Push (TMAIL-50)
+    #[serde(default)]
+    pub push: Option<PushConfig>,
+}
+
+/// Added: Push notification configuration for FCM, APNs, and Web Push providers (TMAIL-50)
+/// PURPOSE: Stores credentials and project IDs for push notification delivery
+#[derive(Debug, Deserialize, Clone)]
+pub struct PushConfig {
+    pub fcm_project_id: Option<String>,
+    pub fcm_service_account_key: Option<String>,
+    pub apns_key_id: Option<String>,
+    pub apns_team_id: Option<String>,
+    pub apns_key_path: Option<String>,
 }
 
 /// Added: Billing configuration for Paystack and MTN MoMo payment providers (TMAIL-46)
@@ -187,6 +201,25 @@ impl Config {
                         paystack_public_key: paystack_public,
                         momo_api_key: momo_key,
                         momo_api_user: momo_user,
+                    })
+                } else {
+                    None
+                }
+            },
+            // Added: Push notification config from env vars for TMAIL-50
+            push: {
+                let fcm_project = std::env::var("FCM_PROJECT_ID").ok();
+                let fcm_key = std::env::var("FCM_SERVICE_ACCOUNT_KEY").ok();
+                let apns_key_id = std::env::var("APNS_KEY_ID").ok();
+                let apns_team_id = std::env::var("APNS_TEAM_ID").ok();
+                let apns_key_path = std::env::var("APNS_KEY_PATH").ok();
+                if fcm_project.is_some() || apns_key_id.is_some() {
+                    Some(PushConfig {
+                        fcm_project_id: fcm_project,
+                        fcm_service_account_key: fcm_key,
+                        apns_key_id,
+                        apns_team_id,
+                        apns_key_path,
                     })
                 } else {
                     None

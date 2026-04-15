@@ -144,6 +144,8 @@ pub fn test_config() -> Config {
         rspamd_password: None,
         // Added: No billing config in test (TMAIL-46)
         billing: None,
+        // Added: No push notification config in test (TMAIL-50)
+        push: None,
     }
 }
 

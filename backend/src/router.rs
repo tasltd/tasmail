@@ -800,6 +800,27 @@ pub fn create_router(state: AppState) -> Router {
             "/api/admin/deliverability/check",
             get(handlers::deliverability::check_deliverability),
         )
+        // Added: Mobile-optimized endpoints for lower bandwidth and smaller payloads (TMAIL-52)
+        .route("/api/mobile/inbox", get(handlers::mobile::mobile_inbox))
+        .route(
+            "/api/mobile/message/{folder}/{uid}",
+            get(handlers::mobile::mobile_message),
+        )
+        .route("/api/mobile/folders", get(handlers::mobile::mobile_folders))
+        .route(
+            "/api/mobile/unread-count",
+            get(handlers::mobile::mobile_unread_count),
+        )
+        .route("/api/mobile/batch", post(handlers::mobile::mobile_batch))
+        .route("/api/mobile/sync", get(handlers::mobile::mobile_sync))
+        // Added: Push notification device management routes for TMAIL-50
+        .route("/api/push/register", post(handlers::push::register_device))
+        .route("/api/push/devices", get(handlers::push::list_devices))
+        .route(
+            "/api/push/devices/{id}",
+            delete(handlers::push::unregister_device),
+        )
+        .route("/api/push/test", post(handlers::push::test_notification))
         // Audit log
         .route(
             "/api/admin/audit-log",

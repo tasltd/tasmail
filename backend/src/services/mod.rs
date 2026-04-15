@@ -44,3 +44,5 @@ pub mod rspamd_client;
 pub mod payment_service;
 // Added: Email deliverability checking service for DNS, blacklist, TLS verification (TMAIL-39)
 pub mod deliverability_service;
+// Added: Push notification sender service for FCM/APNs/Web Push (TMAIL-50)
+pub mod push_service;

@@ -92,3 +92,7 @@ pub mod spam;
 pub mod deliverability;
 // Added: Billing and payment handlers for Paystack/MoMo integration (TMAIL-46)
 pub mod billing;
+// Added: Mobile-optimized API handlers for lightweight payloads (TMAIL-52)
+pub mod mobile;
+// Added: Push notification device management handlers for TMAIL-50
+pub mod push;

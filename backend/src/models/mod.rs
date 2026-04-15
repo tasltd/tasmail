@@ -84,3 +84,7 @@ pub mod spam;
 pub mod billing;
 // Added: Email deliverability check models for scored diagnostic reports (TMAIL-39)
 pub mod deliverability;
+// Added: Mobile-optimized response models for lightweight API payloads (TMAIL-52)
+pub mod mobile;
+// Added: Push notification device and log models for TMAIL-50
+pub mod push_notification;
