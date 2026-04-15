@@ -40,7 +40,8 @@ export function TopBar({ onLogout }: TopBarProps) {
 
   return (
     <header className="topbar">
-      <button className="btn btn--icon" onClick={toggleSidebar}>
+      {/* Changed: Added data-testid for mobile hamburger toggle (TMAIL-33) */}
+      <button className="btn btn--icon" onClick={toggleSidebar} data-testid="sidebar-toggle">
         <Menu size={20} />
       </button>
 

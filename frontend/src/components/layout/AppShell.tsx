@@ -69,6 +69,8 @@ import { useUiStore } from '../../stores/uiStore';
 // Added: Keyboard shortcuts hook and help dialog for TMAIL-121
 import { useKeyboardShortcuts } from '../../hooks/useKeyboardShortcuts';
 import { KeyboardShortcutHelp } from '../shared/KeyboardShortcutHelp';
+// Added: Responsive hook for mobile layout handling (TMAIL-33)
+import { useResponsive } from '../../hooks/useResponsive';
 
 interface AppShellProps {
   onLogout: () => void;
@@ -80,17 +82,28 @@ export function AppShell({ onLogout }: AppShellProps) {
   const toggleSidebar = useUiStore((s) => s.toggleSidebar);
   // Added: Gmail-like keyboard shortcuts (TMAIL-121)
   const { showHelp, setShowHelp } = useKeyboardShortcuts();
+  // Added: Responsive breakpoint detection for mobile layout (TMAIL-33)
+  const { isMobile } = useResponsive();
 
   return (
     <div className={`app-shell ${sidebarOpen ? '' : 'app-shell--sidebar-collapsed'}`}>
       <TopBar onLogout={onLogout} />
       <div className="app-shell__body">
+        {/* Changed: Show sidebar overlay only on mobile; desktop always shows sidebar inline (TMAIL-33) */}
         {sidebarOpen && (
           <>
-            <div className="sidebar-overlay" onClick={toggleSidebar} />
+            {isMobile && (
+              <div
+                className="sidebar-overlay"
+                data-testid="sidebar-overlay"
+                onClick={toggleSidebar}
+              />
+            )}
             <Sidebar />
           </>
         )}
+        {/* Added: On desktop, always show sidebar even if sidebarOpen is false (TMAIL-33) */}
+        {!sidebarOpen && !isMobile && <Sidebar />}
         <main className="app-shell__content">
           {viewMode === 'list' && <MessageList />}
           {viewMode === 'reader' && <MessageView />}

@@ -458,18 +458,21 @@ body {
   background-size: 200% 100%;
 }
 
-/* Responsive — Tablet (768px-1024px) */
-@media (max-width: 1024px) {
+/* Responsive — Tablet (768px-1024px) (TMAIL-33) */
+@media (min-width: 768px) and (max-width: 1024px) {
   :root { --sidebar-width: 200px; }
   .topbar__search { max-width: 400px; }
   .message-view { padding: 12px; }
   .composer { padding: 12px; }
+
+  /* Added: Collapsible sidebar on tablet — narrower but still inline (TMAIL-33) */
+  .app-shell--sidebar-collapsed .sidebar { width: 60px; overflow: hidden; }
+  .app-shell--sidebar-collapsed .sidebar .folder-item__name,
+  .app-shell--sidebar-collapsed .sidebar .btn--compose span { display: none; }
 }
 
-/* Responsive — Mobile (<=768px) */
-@media (max-width: 768px) {
-  :root { --sidebar-width: 100%; }
-
+/* Responsive — Mobile (<=767px) (TMAIL-33) */
+@media (max-width: 767px) {
   /* Sidebar becomes overlay on mobile */
   .sidebar {
     position: fixed;
@@ -482,7 +485,6 @@ body {
     box-shadow: 4px 0 24px rgba(0,0,0,0.15);
     transition: transform 0.2s ease;
   }
-  .app-shell--sidebar-collapsed .sidebar { display: none; }
 
   /* Overlay backdrop — visible on mobile only */
   .sidebar-overlay {
@@ -494,11 +496,15 @@ body {
     z-index: 99;
   }
 
-  /* TopBar: hide search on narrow screens, show as icon */
+  /* TopBar: compact layout on mobile (TMAIL-33) */
   .topbar { padding: 8px 12px; gap: 8px; }
   .topbar__search { max-width: none; }
+  /* Added: Hide filter/semantic/nlp toggle buttons on mobile to save space (TMAIL-33) */
+  .topbar__filter-toggle,
+  .topbar__semantic-toggle,
+  .topbar__nlp-toggle { display: none; }
 
-  /* Message list: stack from/subject vertically */
+  /* Message list: full width, stack from/subject vertically */
   .message-row {
     grid-template-columns: 1fr auto;
     grid-template-rows: auto auto;
@@ -509,20 +515,24 @@ body {
   .message-row__date { grid-column: 2; grid-row: 1; }
   .message-row__subject { grid-column: 1 / -1; grid-row: 2; font-size: 13px; }
 
-  /* Message view */
+  /* Message view: full width on mobile */
   .message-view { padding: 12px; max-width: 100%; }
   .message-view__subject { font-size: 18px; }
   .message-view__toolbar { flex-wrap: wrap; }
 
-  /* Composer */
+  /* Composer: single column on mobile */
   .composer { padding: 12px; max-width: 100%; }
   .composer__field { flex-direction: column; align-items: flex-start; }
   .composer__field label { width: auto; }
   .composer__field input { width: 100%; }
   .composer__editor { min-height: 200px; }
+  .composer__actions { flex-wrap: wrap; }
 
   /* Login card */
   .login-card { padding: 24px 16px; margin: 16px; }
+
+  /* Added: Settings panels full width on mobile (TMAIL-33) */
+  .settings-panel { max-width: 100%; }
 }
 
 /* Responsive — Small mobile (<=480px) */
@@ -721,13 +731,13 @@ body {
 }
 
 /* Responsive — Tablet: advanced search & settings */
-@media (max-width: 1024px) {
+@media (min-width: 768px) and (max-width: 1024px) {
   .advanced-search__row { flex-wrap: wrap; }
   .advanced-search__field { min-width: 140px; }
 }
 
-/* Responsive — Mobile: advanced search, settings, shortcuts */
-@media (max-width: 768px) {
+/* Responsive — Mobile: advanced search, settings, shortcuts (TMAIL-33) */
+@media (max-width: 767px) {
   .topbar__search-wrapper { max-width: none; }
 
   .advanced-search__row { flex-direction: column; gap: 8px; }

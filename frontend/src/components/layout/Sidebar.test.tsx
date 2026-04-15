@@ -14,6 +14,25 @@ vi.mock('../../stores/mailStore', () => ({
     }),
 }));
 
+// Added: Mock uiStore for mobile sidebar close behavior (TMAIL-33)
+const mockSetSidebarOpen = vi.fn();
+vi.mock('../../stores/uiStore', () => ({
+  useUiStore: (selector: (s: Record<string, unknown>) => unknown) =>
+    selector({
+      setSidebarOpen: mockSetSidebarOpen,
+    }),
+}));
+
+// Added: Mock useResponsive hook — defaults to desktop (TMAIL-33)
+const mockIsMobile = vi.fn(() => false);
+vi.mock('../../hooks/useResponsive', () => ({
+  useResponsive: () => ({
+    isMobile: mockIsMobile(),
+    isTablet: false,
+    isDesktop: true,
+  }),
+}));
+
 // Mock child components as simple divs
 vi.mock('../mail/FolderTree', () => ({
   FolderTree: () => <div data-testid="folder-tree">FolderTree</div>,
@@ -32,6 +51,7 @@ describe('Sidebar', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockViewMode.mockReturnValue('inbox');
+    mockIsMobile.mockReturnValue(false);
   });
 
   it('renders Compose button and calls setViewMode on click', () => {
@@ -93,5 +113,30 @@ describe('Sidebar', () => {
       const btn = screen.getByText(label).closest('button');
       expect(btn?.className).not.toContain('folder-item--active');
     }
+  });
+
+  // Added: Mobile sidebar auto-close tests (TMAIL-33)
+  it('closes sidebar on mobile after clicking a nav item', () => {
+    mockIsMobile.mockReturnValue(true);
+    render(<Sidebar />, { wrapper });
+    fireEvent.click(screen.getByText('Contacts'));
+    expect(mockSetViewMode).toHaveBeenCalledWith('contacts');
+    expect(mockSetSidebarOpen).toHaveBeenCalledWith(false);
+  });
+
+  it('does not close sidebar on desktop after clicking a nav item', () => {
+    mockIsMobile.mockReturnValue(false);
+    render(<Sidebar />, { wrapper });
+    fireEvent.click(screen.getByText('Contacts'));
+    expect(mockSetViewMode).toHaveBeenCalledWith('contacts');
+    expect(mockSetSidebarOpen).not.toHaveBeenCalled();
+  });
+
+  it('closes sidebar on mobile after clicking Compose', () => {
+    mockIsMobile.mockReturnValue(true);
+    render(<Sidebar />, { wrapper });
+    fireEvent.click(screen.getByText('Compose'));
+    expect(mockSetViewMode).toHaveBeenCalledWith('compose');
+    expect(mockSetSidebarOpen).toHaveBeenCalledWith(false);
   });
 });

@@ -18,6 +18,16 @@ vi.mock('../../stores/uiStore', () => ({
     selector({ sidebarOpen: mockSidebarOpen(), toggleSidebar: mockToggleSidebar }),
 }));
 
+// Added: Mock useResponsive — defaults to mobile for overlay tests (TMAIL-33)
+const mockIsMobile = vi.fn(() => true);
+vi.mock('../../hooks/useResponsive', () => ({
+  useResponsive: () => ({
+    isMobile: mockIsMobile(),
+    isTablet: false,
+    isDesktop: !mockIsMobile(),
+  }),
+}));
+
 // Added: Mock all child components
 vi.mock('./TopBar', () => ({
   TopBar: ({ onLogout }: { onLogout: () => void }) => (
@@ -75,6 +85,7 @@ describe('AppShell', () => {
     vi.clearAllMocks();
     mockViewMode.mockReturnValue('list');
     mockSidebarOpen.mockReturnValue(true);
+    mockIsMobile.mockReturnValue(true);
   });
 
   it('renders TopBar with onLogout prop', () => {
@@ -101,12 +112,28 @@ describe('AppShell', () => {
     expect(container.firstChild).toHaveClass('app-shell--sidebar-collapsed');
   });
 
-  it('toggles sidebar when overlay is clicked', () => {
-    const { container } = render(<AppShell onLogout={mockLogout} />, { wrapper });
-    const overlay = container.querySelector('.sidebar-overlay');
+  it('toggles sidebar when overlay is clicked on mobile', () => {
+    mockIsMobile.mockReturnValue(true);
+    render(<AppShell onLogout={mockLogout} />, { wrapper });
+    const overlay = screen.getByTestId('sidebar-overlay');
     expect(overlay).toBeInTheDocument();
-    fireEvent.click(overlay!);
+    fireEvent.click(overlay);
     expect(mockToggleSidebar).toHaveBeenCalled();
+  });
+
+  // Added: Overlay is not rendered on desktop (TMAIL-33)
+  it('does not show overlay on desktop when sidebar is open', () => {
+    mockIsMobile.mockReturnValue(false);
+    render(<AppShell onLogout={mockLogout} />, { wrapper });
+    expect(screen.queryByTestId('sidebar-overlay')).not.toBeInTheDocument();
+  });
+
+  // Added: Desktop always shows sidebar even when sidebarOpen is false (TMAIL-33)
+  it('shows sidebar on desktop even when sidebarOpen is false', () => {
+    mockIsMobile.mockReturnValue(false);
+    mockSidebarOpen.mockReturnValue(false);
+    render(<AppShell onLogout={mockLogout} />, { wrapper });
+    expect(screen.getByTestId('sidebar')).toBeInTheDocument();
   });
 
   // Added: View mode routing tests

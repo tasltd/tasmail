@@ -22,3 +22,8 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Added: Playwright E2E test artifacts (TMAIL-36)
+test-results/
+playwright-report/
+e2e/screenshots/*.png

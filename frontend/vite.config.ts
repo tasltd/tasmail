@@ -44,6 +44,8 @@ export default defineConfig({
     globals: true,
     environment: 'jsdom',
     setupFiles: ['./src/test/setup.ts'],
+    // Added: Exclude Playwright E2E specs from Vitest runner
+    exclude: ['e2e/**', 'node_modules/**'],
   },
   server: {
     port: 5173,

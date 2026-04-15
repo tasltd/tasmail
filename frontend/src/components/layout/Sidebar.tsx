@@ -28,14 +28,29 @@ import { PenSquare, FileSignature, Users, Shield, Plane, UsersRound, Upload, Gau
 import { FolderTree } from '../mail/FolderTree';
 import { QuotaBar } from './QuotaBar';
 import { useMailStore } from '../../stores/mailStore';
+// Added: Import useResponsive for mobile sidebar auto-close behavior (TMAIL-33)
+import { useResponsive } from '../../hooks/useResponsive';
+// Added: Import useUiStore to close sidebar after navigation on mobile (TMAIL-33)
+import { useUiStore } from '../../stores/uiStore';
 
 export function Sidebar() {
   const setViewMode = useMailStore((s) => s.setViewMode);
   const viewMode = useMailStore((s) => s.viewMode);
+  // Added: Responsive state for auto-closing sidebar on mobile navigation (TMAIL-33)
+  const { isMobile } = useResponsive();
+  const setSidebarOpen = useUiStore((s) => s.setSidebarOpen);
+
+  // Added: Wrapper that closes sidebar on mobile after navigating (TMAIL-33)
+  const handleNavClick = (mode: string) => {
+    setViewMode(mode);
+    if (isMobile) {
+      setSidebarOpen(false);
+    }
+  };
 
   return (
     <aside className="sidebar">
-      <button className="btn btn--primary btn--compose" onClick={() => setViewMode('compose')}>
+      <button className="btn btn--primary btn--compose" onClick={() => handleNavClick('compose')}>
         <PenSquare size={18} />
         Compose
       </button>
@@ -43,49 +58,49 @@ export function Sidebar() {
       <div style={{ borderTop: '1px solid var(--color-border)', marginTop: '12px', paddingTop: '8px' }}>
         <button
           className={`folder-item ${viewMode === 'signatures' ? 'folder-item--active' : ''}`}
-          onClick={() => setViewMode('signatures')}
+          onClick={() => handleNavClick('signatures')}
         >
           <FileSignature size={18} />
           <span className="folder-item__name">Signatures</span>
         </button>
         <button
           className={`folder-item ${viewMode === 'contacts' ? 'folder-item--active' : ''}`}
-          onClick={() => setViewMode('contacts')}
+          onClick={() => handleNavClick('contacts')}
         >
           <Users size={18} />
           <span className="folder-item__name">Contacts</span>
         </button>
         <button
           className={`folder-item ${viewMode === 'security' ? 'folder-item--active' : ''}`}
-          onClick={() => setViewMode('security')}
+          onClick={() => handleNavClick('security')}
         >
           <Shield size={18} />
           <span className="folder-item__name">Security</span>
         </button>
         <button
           className={`folder-item ${viewMode === 'vacation' ? 'folder-item--active' : ''}`}
-          onClick={() => setViewMode('vacation')}
+          onClick={() => handleNavClick('vacation')}
         >
           <Plane size={18} />
           <span className="folder-item__name">Vacation</span>
         </button>
         <button
           className={`folder-item ${viewMode === 'groups' ? 'folder-item--active' : ''}`}
-          onClick={() => setViewMode('groups')}
+          onClick={() => handleNavClick('groups')}
         >
           <UsersRound size={18} />
           <span className="folder-item__name">Groups</span>
         </button>
         <button
           className={`folder-item ${viewMode === 'migration' ? 'folder-item--active' : ''}`}
-          onClick={() => setViewMode('migration')}
+          onClick={() => handleNavClick('migration')}
         >
           <Upload size={18} />
           <span className="folder-item__name">Migration</span>
         </button>
         <button
           className={`folder-item ${viewMode === 'filters' ? 'folder-item--active' : ''}`}
-          onClick={() => setViewMode('filters')}
+          onClick={() => handleNavClick('filters')}
         >
           <Filter size={18} />
           <span className="folder-item__name">Filters</span>
@@ -93,7 +108,7 @@ export function Sidebar() {
         {/* Added: Shared mailboxes navigation entry (TMAIL-96) */}
         <button
           className={`folder-item ${viewMode === 'shared' ? 'folder-item--active' : ''}`}
-          onClick={() => setViewMode('shared')}
+          onClick={() => handleNavClick('shared')}
         >
           <Mailbox size={18} />
           <span className="folder-item__name">Shared Mailboxes</span>
@@ -101,7 +116,7 @@ export function Sidebar() {
         {/* Added: Tasks navigation entry (TMAIL-126) */}
         <button
           className={`folder-item ${viewMode === 'tasks' ? 'folder-item--active' : ''}`}
-          onClick={() => setViewMode('tasks')}
+          onClick={() => handleNavClick('tasks')}
         >
           <CheckSquare size={18} />
           <span className="folder-item__name">Tasks</span>
@@ -109,7 +124,7 @@ export function Sidebar() {
         {/* Added: Chat integrations navigation entry (TMAIL-129) */}
         <button
           className={`folder-item ${viewMode === 'chat' ? 'folder-item--active' : ''}`}
-          onClick={() => setViewMode('chat')}
+          onClick={() => handleNavClick('chat')}
         >
           <MessageSquare size={18} />
           <span className="folder-item__name">Chat</span>
@@ -117,7 +132,7 @@ export function Sidebar() {
         {/* Added: Webhooks navigation entry (TMAIL-131) */}
         <button
           className={`folder-item ${viewMode === 'webhooks' ? 'folder-item--active' : ''}`}
-          onClick={() => setViewMode('webhooks')}
+          onClick={() => handleNavClick('webhooks')}
         >
           <Webhook size={18} />
           <span className="folder-item__name">Webhooks</span>
@@ -125,7 +140,7 @@ export function Sidebar() {
         {/* Added: Email queue navigation entry (TMAIL-58) */}
         <button
           className={`folder-item ${viewMode === 'queue' ? 'folder-item--active' : ''}`}
-          onClick={() => setViewMode('queue')}
+          onClick={() => handleNavClick('queue')}
         >
           <ListTodo size={18} />
           <span className="folder-item__name">Queue</span>
@@ -133,7 +148,7 @@ export function Sidebar() {
         {/* Added: Branding navigation entry (TMAIL-111) */}
         <button
           className={`folder-item ${viewMode === 'branding' ? 'folder-item--active' : ''}`}
-          onClick={() => setViewMode('branding')}
+          onClick={() => handleNavClick('branding')}
         >
           <Palette size={18} />
           <span className="folder-item__name">Branding</span>
@@ -141,7 +156,7 @@ export function Sidebar() {
         {/* Added: Custom hostnames navigation entry (TMAIL-112) */}
         <button
           className={`folder-item ${viewMode === 'hostnames' ? 'folder-item--active' : ''}`}
-          onClick={() => setViewMode('hostnames')}
+          onClick={() => handleNavClick('hostnames')}
         >
           <Globe size={18} />
           <span className="folder-item__name">Hostnames</span>
@@ -149,7 +164,7 @@ export function Sidebar() {
         {/* Added: Retention navigation entry (TMAIL-109) */}
         <button
           className={`folder-item ${viewMode === 'retention' ? 'folder-item--active' : ''}`}
-          onClick={() => setViewMode('retention')}
+          onClick={() => handleNavClick('retention')}
         >
           <Archive size={18} />
           <span className="folder-item__name">Retention</span>
@@ -157,7 +172,7 @@ export function Sidebar() {
         {/* Added: Bulk import navigation entry (TMAIL-136) */}
         <button
           className={`folder-item ${viewMode === 'bulk-import' ? 'folder-item--active' : ''}`}
-          onClick={() => setViewMode('bulk-import')}
+          onClick={() => handleNavClick('bulk-import')}
         >
           <UserPlus size={18} />
           <span className="folder-item__name">Bulk Import</span>
@@ -165,7 +180,7 @@ export function Sidebar() {
         {/* Added: Calendar navigation entry (TMAIL-127) */}
         <button
           className={`folder-item ${viewMode === 'calendar' ? 'folder-item--active' : ''}`}
-          onClick={() => setViewMode('calendar')}
+          onClick={() => handleNavClick('calendar')}
         >
           <Calendar size={18} />
           <span className="folder-item__name">Calendar</span>
@@ -173,7 +188,7 @@ export function Sidebar() {
         {/* Added: Shared files navigation entry (TMAIL-138) */}
         <button
           className={`folder-item ${viewMode === 'shared-files' ? 'folder-item--active' : ''}`}
-          onClick={() => setViewMode('shared-files')}
+          onClick={() => handleNavClick('shared-files')}
         >
           <FileUp size={18} />
           <span className="folder-item__name">Shared Files</span>
@@ -181,7 +196,7 @@ export function Sidebar() {
         {/* Added: LDAP/AD directory sync navigation entry (TMAIL-100) */}
         <button
           className={`folder-item ${viewMode === 'ldap' ? 'folder-item--active' : ''}`}
-          onClick={() => setViewMode('ldap')}
+          onClick={() => handleNavClick('ldap')}
         >
           <Network size={18} />
           <span className="folder-item__name">LDAP / AD</span>
@@ -189,7 +204,7 @@ export function Sidebar() {
         {/* Added: AI configuration navigation entry (TMAIL-105) */}
         <button
           className={`folder-item ${viewMode === 'ai-config' ? 'folder-item--active' : ''}`}
-          onClick={() => setViewMode('ai-config')}
+          onClick={() => handleNavClick('ai-config')}
         >
           <Brain size={18} />
           <span className="folder-item__name">AI Config</span>
@@ -197,7 +212,7 @@ export function Sidebar() {
         {/* Added: SAML SSO navigation entry (TMAIL-101) */}
         <button
           className={`folder-item ${viewMode === 'saml' ? 'folder-item--active' : ''}`}
-          onClick={() => setViewMode('saml')}
+          onClick={() => handleNavClick('saml')}
         >
           <KeyRound size={18} />
           <span className="folder-item__name">SAML SSO</span>
@@ -205,7 +220,7 @@ export function Sidebar() {
         {/* Added: OIDC providers navigation entry (TMAIL-99) */}
         <button
           className={`folder-item ${viewMode === 'oidc' ? 'folder-item--active' : ''}`}
-          onClick={() => setViewMode('oidc')}
+          onClick={() => handleNavClick('oidc')}
         >
           <LogIn size={18} />
           <span className="folder-item__name">OIDC</span>
@@ -213,7 +228,7 @@ export function Sidebar() {
         {/* Added: DLP navigation entry (TMAIL-108) */}
         <button
           className={`folder-item ${viewMode === 'dlp' ? 'folder-item--active' : ''}`}
-          onClick={() => setViewMode('dlp')}
+          onClick={() => handleNavClick('dlp')}
         >
           <ShieldCheck size={18} />
           <span className="folder-item__name">DLP</span>
@@ -221,7 +236,7 @@ export function Sidebar() {
         {/* Added: eDiscovery navigation entry (TMAIL-137) */}
         <button
           className={`folder-item ${viewMode === 'ediscovery' ? 'folder-item--active' : ''}`}
-          onClick={() => setViewMode('ediscovery')}
+          onClick={() => handleNavClick('ediscovery')}
         >
           <Search size={18} />
           <span className="folder-item__name">eDiscovery</span>
@@ -229,7 +244,7 @@ export function Sidebar() {
         {/* Added: DANE navigation entry (TMAIL-125) */}
         <button
           className={`folder-item ${viewMode === 'dane' ? 'folder-item--active' : ''}`}
-          onClick={() => setViewMode('dane')}
+          onClick={() => handleNavClick('dane')}
         >
           <ShieldAlert size={18} />
           <span className="folder-item__name">DANE</span>
@@ -237,7 +252,7 @@ export function Sidebar() {
         {/* Added: BYO-SMTP configuration navigation entry (TMAIL-48) */}
         <button
           className={`folder-item ${viewMode === 'smtp-config' ? 'folder-item--active' : ''}`}
-          onClick={() => setViewMode('smtp-config')}
+          onClick={() => handleNavClick('smtp-config')}
         >
           <Send size={18} />
           <span className="folder-item__name">SMTP</span>
@@ -245,7 +260,7 @@ export function Sidebar() {
         {/* Added: Plugins navigation entry (TMAIL-132) */}
         <button
           className={`folder-item ${viewMode === 'plugins' ? 'folder-item--active' : ''}`}
-          onClick={() => setViewMode('plugins')}
+          onClick={() => handleNavClick('plugins')}
         >
           <Puzzle size={18} />
           <span className="folder-item__name">Plugins</span>
@@ -253,7 +268,7 @@ export function Sidebar() {
         {/* Added: Contacts App navigation entry (TMAIL-119) */}
         <button
           className={`folder-item ${viewMode === 'contacts-app' ? 'folder-item--active' : ''}`}
-          onClick={() => setViewMode('contacts-app')}
+          onClick={() => handleNavClick('contacts-app')}
         >
           <BookUser size={18} />
           <span className="folder-item__name">Contacts App</span>
@@ -261,7 +276,7 @@ export function Sidebar() {
         {/* Added: POP3 configuration navigation entry (TMAIL-133) */}
         <button
           className={`folder-item ${viewMode === 'pop3' ? 'folder-item--active' : ''}`}
-          onClick={() => setViewMode('pop3')}
+          onClick={() => handleNavClick('pop3')}
         >
           <Download size={18} />
           <span className="folder-item__name">POP3</span>
@@ -269,7 +284,7 @@ export function Sidebar() {
         {/* Added: Email archive navigation entry (TMAIL-107) */}
         <button
           className={`folder-item ${viewMode === 'archive' ? 'folder-item--active' : ''}`}
-          onClick={() => setViewMode('archive')}
+          onClick={() => handleNavClick('archive')}
         >
           <HardDrive size={18} />
           <span className="folder-item__name">Archive</span>
@@ -277,7 +292,7 @@ export function Sidebar() {
         {/* Added: ActiveSync device management navigation entry (TMAIL-130) */}
         <button
           className={`folder-item ${viewMode === 'activesync' ? 'folder-item--active' : ''}`}
-          onClick={() => setViewMode('activesync')}
+          onClick={() => handleNavClick('activesync')}
         >
           <Smartphone size={18} />
           <span className="folder-item__name">ActiveSync</span>
@@ -285,7 +300,7 @@ export function Sidebar() {
         {/* Added: Ollama LLM management navigation entry (TMAIL-102) */}
         <button
           className={`folder-item ${viewMode === 'ollama' ? 'folder-item--active' : ''}`}
-          onClick={() => setViewMode('ollama')}
+          onClick={() => handleNavClick('ollama')}
         >
           <Server size={18} />
           <span className="folder-item__name">Ollama</span>
@@ -293,14 +308,14 @@ export function Sidebar() {
         {/* Added: CalDAV/CardDAV configuration navigation entry (TMAIL-117) */}
         <button
           className={`folder-item ${viewMode === 'dav-config' ? 'folder-item--active' : ''}`}
-          onClick={() => setViewMode('dav-config')}
+          onClick={() => handleNavClick('dav-config')}
         >
           <CloudCog size={18} />
           <span className="folder-item__name">CalDAV/CardDAV</span>
         </button>
         <button
           className={`folder-item ${viewMode === 'bandwidth' ? 'folder-item--active' : ''}`}
-          onClick={() => setViewMode('bandwidth')}
+          onClick={() => handleNavClick('bandwidth')}
         >
           <Gauge size={18} />
           <span className="folder-item__name">Bandwidth</span>

@@ -26,6 +26,7 @@ Thumbs.db
 
 # Test artifacts
 test-results/
+playwright-report/
 screenshots/
 
 # Claude context (internal)
