@@ -1,0 +1,80 @@
+; Added: DNS zone template for TASMail domain setup (TMAIL-13)
+; Replace example.com with your actual domain
+; Replace YOUR_SERVER_IP with your mail server's public IPv4 address
+;
+; Usage: Copy this file, replace all placeholders, and import into your DNS provider
+; Required records: MX, A, SPF, DKIM, DMARC (minimum for deliverability)
+; Recommended: DANE, MTA-STS, TLSRPT, autoconfig/autodiscover
+
+$TTL 3600
+
+; --------------------------------------------------------------------------
+; MX record — tells other mail servers where to deliver email for this domain
+; --------------------------------------------------------------------------
+@       IN  MX  10  mail.example.com.
+
+; --------------------------------------------------------------------------
+; A record — resolves the mail hostname to an IP address
+; --------------------------------------------------------------------------
+mail    IN  A   YOUR_SERVER_IP
+
+; --------------------------------------------------------------------------
+; SPF — specifies which servers are authorized to send email for this domain
+; -all = hard fail (reject unauthorized senders)
+; --------------------------------------------------------------------------
+@       IN  TXT "v=spf1 mx a:mail.example.com -all"
+
+; --------------------------------------------------------------------------
+; DKIM — public key for verifying email signatures
+; Generate with: rspamadm dkim_keygen -s default -d example.com -b 2048
+; Paste only the p= value (public key) below
+; --------------------------------------------------------------------------
+default._domainkey  IN  TXT "v=DKIM1; k=rsa; p=YOUR_DKIM_PUBLIC_KEY"
+
+; --------------------------------------------------------------------------
+; DMARC — policy for handling emails that fail SPF/DKIM checks
+; p=reject tells receivers to reject unauthenticated mail
+; rua = aggregate reports, ruf = forensic reports, fo=1 = report on any failure
+; --------------------------------------------------------------------------
+_dmarc  IN  TXT "v=DMARC1; p=reject; rua=mailto:postmaster@example.com; ruf=mailto:postmaster@example.com; fo=1"
+
+; --------------------------------------------------------------------------
+; Autoconfig — automatic mail client configuration for Thunderbird
+; Serve autoconfig XML at https://autoconfig.example.com/mail/config-v1.1.xml
+; --------------------------------------------------------------------------
+autoconfig  IN  CNAME  mail.example.com.
+
+; --------------------------------------------------------------------------
+; Autodiscover — automatic mail client configuration for Outlook
+; Points Outlook to your server for account setup
+; --------------------------------------------------------------------------
+_autodiscover._tcp  IN  SRV  0 0 443 mail.example.com.
+
+; --------------------------------------------------------------------------
+; DANE TLSA — binds TLS certificate to your mail server via DNS
+; Generate after obtaining TLS cert:
+;   openssl x509 -in /etc/letsencrypt/live/mail.example.com/cert.pem \
+;     -noout -pubkey | openssl pkey -pubin -outform DER | \
+;     openssl dgst -sha256 -binary | xxd -p -c 64
+; --------------------------------------------------------------------------
+_25._tcp.mail  IN  TLSA  3 1 1 YOUR_TLSA_HASH
+
+; --------------------------------------------------------------------------
+; MTA-STS — enforces TLS for inbound SMTP connections
+; Serve policy at https://mta-sts.example.com/.well-known/mta-sts.txt
+; Update the id value (YYYYMMDD01) whenever you change the policy
+; --------------------------------------------------------------------------
+_mta-sts  IN  TXT "v=STSv1; id=YYYYMMDD01"
+mta-sts   IN  CNAME  mail.example.com.
+
+; --------------------------------------------------------------------------
+; SMTP TLS Reporting — receive reports about TLS connection failures
+; --------------------------------------------------------------------------
+_smtp._tls  IN  TXT "v=TLSRPTv1; rua=mailto:tls-reports@example.com"
+
+; --------------------------------------------------------------------------
+; Reverse DNS (PTR) — must be configured at your VPS/hosting provider
+; This cannot be set in your domain's DNS zone; contact your IP provider
+; Ensures mail.example.com resolves forward and reverse consistently
+; --------------------------------------------------------------------------
+; YOUR_SERVER_IP  IN  PTR  mail.example.com.

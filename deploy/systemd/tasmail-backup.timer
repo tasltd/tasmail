@@ -1,0 +1,17 @@
+# Added: Systemd timer for daily TASMail backups (TMAIL-40)
+# PURPOSE: Triggers tasmail-backup.service every day at 2:00 AM local time.
+#          Catches up on missed runs if the server was down during scheduled time.
+
+[Unit]
+Description=TASMail Daily Backup Timer
+
+[Timer]
+# Added: Run daily at 2:00 AM
+OnCalendar=*-*-* 02:00:00
+# Added: If a scheduled run was missed (e.g., server was off), run it on next boot
+Persistent=true
+# Added: Randomize start within 15 minutes to avoid thundering herd
+RandomizedDelaySec=900
+
+[Install]
+WantedBy=timers.target

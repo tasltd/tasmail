@@ -1,0 +1,106 @@
+# Added: Docker Compose for TASMail dev/staging environments (TMAIL-40)
+# PURPOSE: Provides a complete local development stack with PostgreSQL, Dovecot, Postfix,
+#          backend, and frontend services. NOT intended for production use.
+# USAGE: docker compose up -d
+
+services:
+  # Added: PostgreSQL 16 database — stores user metadata, contacts, settings, audit logs
+  postgres:
+    image: postgres:16-alpine
+    container_name: tasmail-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: tasmail
+      POSTGRES_USER: tasmail
+      POSTGRES_PASSWORD: tasmail_dev_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tasmail -d tasmail"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Added: Dovecot IMAP server — source of truth for mail data
+  dovecot:
+    image: dovecot/dovecot:latest
+    container_name: tasmail-dovecot
+    restart: unless-stopped
+    ports:
+      - "993:993"   # IMAPS
+      - "143:143"   # IMAP (plaintext, dev only)
+    volumes:
+      - mail_data:/var/mail
+      - dovecot_config:/etc/dovecot
+    depends_on:
+      - postgres
+
+  # Added: Postfix SMTP server — outbound mail submission
+  postfix:
+    image: boky/postfix:latest
+    container_name: tasmail-postfix
+    restart: unless-stopped
+    environment:
+      ALLOWED_SENDER_DOMAINS: example.com
+      HOSTNAME: mail.example.com
+    ports:
+      - "587:587"   # Submission
+      - "25:25"     # SMTP
+    volumes:
+      - postfix_config:/etc/postfix
+
+  # Added: Rust/Axum backend — API server with IMAP proxy and JWT auth
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    container_name: tasmail-backend
+    restart: unless-stopped
+    environment:
+      TASMAIL_HOST: "0.0.0.0"
+      TASMAIL_PORT: "3000"
+      DATABASE_URL: "postgres://tasmail:tasmail_dev_password@postgres/tasmail"
+      DATABASE_MAX_CONNECTIONS: "10"
+      IMAP_HOST: "dovecot"
+      IMAP_PORT: "993"
+      IMAP_TLS: "true"
+      SMTP_HOST: "postfix"
+      SMTP_PORT: "587"
+      SMTP_TLS: "false"
+      JWT_SECRET: "dev-docker-secret-do-not-use-in-production"
+      LOG_FORMAT: "json"
+      RUST_LOG: "tasmail=debug,tower_http=debug"
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      dovecot:
+        condition: service_started
+      postfix:
+        condition: service_started
+
+  # Added: Frontend Nginx — serves React SPA and proxies API to backend
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    container_name: tasmail-frontend
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+
+# Added: Named volumes for data persistence across container restarts
+volumes:
+  postgres_data:
+    driver: local
+  mail_data:
+    driver: local
+  dovecot_config:
+    driver: local
+  postfix_config:
+    driver: local

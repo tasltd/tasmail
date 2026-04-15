@@ -1,0 +1,65 @@
+# Added: Systemd service unit for TASMail backend (TMAIL-40)
+# PURPOSE: Manages the Rust/Axum backend process with security hardening,
+#          automatic restart on failure, and dependency ordering.
+
+[Unit]
+Description=TASMail Backend (Rust/Axum)
+Documentation=https://github.com/tasltd/tasmail
+# Added: Start after database and mail services are available
+After=network.target postgresql.service dovecot.service
+Wants=postgresql.service dovecot.service
+
+[Service]
+Type=simple
+# Added: Run as dedicated unprivileged user
+User=tasmail
+Group=tasmail
+
+# Added: Load environment variables from config file
+EnvironmentFile=/etc/tasmail/tasmail.env
+
+# Added: Working directory for relative paths (attachment storage, logs)
+WorkingDirectory=/var/lib/tasmail
+
+# Added: Start the compiled release binary — migrations run automatically on startup
+ExecStart=/usr/local/bin/tasmail
+
+# Added: Restart policy — recover from crashes but not from clean exits
+Restart=on-failure
+RestartSec=5
+# Added: Give up after 5 consecutive failures within 60 seconds
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+# Added: Graceful shutdown — allow 30 seconds for in-flight requests
+TimeoutStopSec=30
+KillMode=mixed
+KillSignal=SIGTERM
+
+# Added: Security hardening — restrict filesystem and privilege access
+ProtectSystem=strict
+ProtectHome=yes
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+# Added: Allow write access only to necessary directories
+ReadWritePaths=/var/lib/tasmail /var/log/tasmail
+
+# Added: Restrict capabilities — no network bind needed (runs on unprivileged port)
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+# Added: Limit resource usage
+LimitNOFILE=65536
+LimitNPROC=4096
+
+# Added: Logging to journald
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=tasmail
+
+[Install]
+WantedBy=multi-user.target

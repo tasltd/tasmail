@@ -1,0 +1,24 @@
+# Added: Systemd service unit for TASMail backup execution (TMAIL-40)
+# PURPOSE: Runs the backup script on demand or triggered by the companion timer unit.
+#          Performs pg_dump, config backup, and maildir archival.
+
+[Unit]
+Description=TASMail Database and Maildir Backup
+Documentation=https://github.com/tasltd/tasmail
+
+[Service]
+Type=oneshot
+# Added: Run as root to access all backup sources (/var/mail, /etc/tasmail)
+User=root
+Group=root
+
+# Added: Execute the backup script
+ExecStart=/opt/tasmail/deploy/scripts/backup.sh
+
+# Added: Allow up to 1 hour for large maildir backups
+TimeoutStartSec=3600
+
+# Added: Log output for monitoring
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=tasmail-backup

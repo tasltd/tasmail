@@ -1,0 +1,223 @@
+# Added: Dovecot configuration template for TASMail (TMAIL-16)
+# Copy to /etc/dovecot/dovecot.conf and replace all placeholders:
+#   - example.com          -> your mail domain
+#   - mail.example.com     -> your mail server FQDN
+#   - YOUR_DB_PASSWORD     -> PostgreSQL password for tasmail user
+#
+# After editing: doveconf -n (verify) && systemctl reload dovecot
+
+# --------------------------------------------------------------------------
+# Protocols
+# --------------------------------------------------------------------------
+
+# Added: Enable IMAP for client access and LMTP for Postfix mail delivery
+protocols = imap lmtp
+
+# --------------------------------------------------------------------------
+# TLS Settings (Let's Encrypt certificates)
+# --------------------------------------------------------------------------
+
+# Added: Require TLS for all connections — no plaintext allowed
+ssl = required
+ssl_cert = </etc/letsencrypt/live/mail.example.com/fullchain.pem
+ssl_key = </etc/letsencrypt/live/mail.example.com/privkey.pem
+
+# Added: Enforce modern TLS only (1.2+)
+ssl_min_protocol = TLSv1.2
+ssl_prefer_server_ciphers = yes
+
+# --------------------------------------------------------------------------
+# Mail Storage (Maildir format)
+# --------------------------------------------------------------------------
+
+# Added: Store mail in Maildir format under /var/mail/vhosts/<domain>/<user>/
+# Maildir is more reliable than mbox for concurrent IMAP access
+mail_location = maildir:/var/mail/vhosts/%d/%n/Maildir
+
+# Added: Virtual mail user — all mailboxes owned by a single system user
+mail_uid = vmail
+mail_gid = vmail
+mail_home = /var/mail/vhosts/%d/%n
+
+# Added: Create mailbox directories automatically on first delivery
+lda_mailbox_autocreate = yes
+lda_mailbox_autosubscribe = yes
+
+# --------------------------------------------------------------------------
+# Namespace Configuration
+# --------------------------------------------------------------------------
+
+# Added: Private namespace — user's personal mailboxes
+namespace inbox {
+    inbox = yes
+    separator = /
+
+    # Added: Standard IMAP folders — auto-created and auto-subscribed
+    mailbox Drafts {
+        auto = subscribe
+        special_use = \Drafts
+    }
+
+    mailbox Sent {
+        auto = subscribe
+        special_use = \Sent
+    }
+
+    mailbox "Sent Messages" {
+        special_use = \Sent
+    }
+
+    mailbox Trash {
+        auto = subscribe
+        special_use = \Trash
+    }
+
+    mailbox Junk {
+        auto = subscribe
+        special_use = \Junk
+    }
+
+    mailbox Archive {
+        auto = subscribe
+        special_use = \Archive
+    }
+}
+
+# --------------------------------------------------------------------------
+# Authentication (PostgreSQL)
+# --------------------------------------------------------------------------
+
+# Added: Disable plaintext auth without TLS (enforced by ssl=required above)
+disable_plaintext_auth = yes
+
+# Added: Authentication mechanisms — PLAIN and LOGIN (both require TLS)
+auth_mechanisms = plain login
+
+# Added: PostgreSQL passdb — verify passwords against the users table
+# Password stored as Argon2id hash (matching TASMail backend auth)
+passdb {
+    driver = sql
+    args = /etc/dovecot/dovecot-sql.conf.ext
+}
+
+# Added: PostgreSQL userdb — lookup mail location for each user
+userdb {
+    driver = sql
+    args = /etc/dovecot/dovecot-sql.conf.ext
+}
+
+# --------------------------------------------------------------------------
+# PostgreSQL SQL Configuration
+# --------------------------------------------------------------------------
+# Added: Create /etc/dovecot/dovecot-sql.conf.ext with the following content:
+#
+#   driver = pgsql
+#   connect = host=localhost dbname=tasmail user=tasmail password=YOUR_DB_PASSWORD
+#
+#   # Password lookup — Argon2id hashes from the users table
+#   password_query = SELECT email AS user, password_hash AS password \
+#     FROM users WHERE email = '%u' AND is_active = true
+#
+#   # User lookup — mail storage location
+#   user_query = SELECT '/var/mail/vhosts/%d/%n' AS home, \
+#     'maildir:/var/mail/vhosts/%d/%n/Maildir' AS mail, \
+#     5000 AS uid, 5000 AS gid
+#
+# Permissions: chmod 600 /etc/dovecot/dovecot-sql.conf.ext
+
+# --------------------------------------------------------------------------
+# LMTP Service (receives mail from Postfix)
+# --------------------------------------------------------------------------
+
+# Added: LMTP socket for Postfix virtual transport delivery
+service lmtp {
+    unix_listener /var/spool/postfix/private/dovecot-lmtp {
+        mode = 0600
+        user = postfix
+        group = postfix
+    }
+}
+
+# --------------------------------------------------------------------------
+# SASL Authentication Service (for Postfix SMTP AUTH)
+# --------------------------------------------------------------------------
+
+# Added: Auth socket allows Postfix to verify user credentials for sending
+service auth {
+    unix_listener /var/spool/postfix/private/auth {
+        mode = 0660
+        user = postfix
+        group = postfix
+    }
+
+    # Added: Auth worker for password hash computation
+    unix_listener auth-userdb {
+        mode = 0600
+        user = vmail
+    }
+}
+
+# --------------------------------------------------------------------------
+# Quota Plugin
+# --------------------------------------------------------------------------
+
+# Added: Enable quota tracking per mailbox
+# Default: 1GB per user (override via PostgreSQL userdb query if needed)
+mail_plugins = $mail_plugins quota
+
+protocol imap {
+    mail_plugins = $mail_plugins imap_quota
+}
+
+plugin {
+    # Added: Maildir++ quota backend — uses Maildir++ maildirsize file
+    quota = maildir:User quota
+    quota_rule = *:storage=1G
+
+    # Added: Trash folder doesn't count against quota until 10% over
+    quota_rule2 = Trash:storage=+100M
+
+    # Added: Quota warning messages at 80% and 95%
+    quota_warning = storage=80%% quota-warning 80 %u
+    quota_warning2 = storage=95%% quota-warning 95 %u
+}
+
+# Added: Quota warning script service
+service quota-warning {
+    executable = script /usr/local/bin/quota-warning.sh
+    user = vmail
+    unix_listener quota-warning {
+        mode = 0600
+        user = vmail
+    }
+}
+
+# --------------------------------------------------------------------------
+# IMAP Settings
+# --------------------------------------------------------------------------
+
+protocol imap {
+    # Added: Maximum IMAP connections per user per IP
+    mail_max_userip_connections = 20
+
+    # Added: IMAP IDLE for push notifications (real-time new mail)
+    imap_idle_notify_interval = 2 mins
+}
+
+# --------------------------------------------------------------------------
+# Logging
+# --------------------------------------------------------------------------
+
+# Added: Log to syslog with mail facility
+log_path = syslog
+syslog_facility = mail
+
+# Added: Auth logging for debugging login issues
+auth_verbose = no
+auth_debug = no
+mail_debug = no
+
+# Added: Enable verbose logging temporarily for troubleshooting:
+# auth_verbose = yes
+# auth_debug = yes
+# mail_debug = yes

@@ -1,0 +1,157 @@
+# Added: Postfix main.cf template for TASMail (TMAIL-16)
+# Copy to /etc/postfix/main.cf and replace all placeholders:
+#   - example.com          -> your mail domain
+#   - mail.example.com     -> your mail server FQDN
+#   - YOUR_SERVER_IP       -> your server's public IP
+#
+# After editing: postfix check && systemctl reload postfix
+
+# --------------------------------------------------------------------------
+# Basic Settings
+# --------------------------------------------------------------------------
+
+# Added: Server identity — must match reverse DNS (PTR) and TLS certificate
+myhostname = mail.example.com
+mydomain = example.com
+myorigin = $mydomain
+
+# Added: Network interfaces to listen on (all interfaces for a public mail server)
+inet_interfaces = all
+inet_protocols = ipv4
+
+# Added: Trusted networks — only localhost can relay without authentication
+mynetworks = 127.0.0.0/8 [::1]/128
+
+# Added: Disable open relay — reject mail from unauthenticated senders for non-local domains
+smtpd_relay_restrictions =
+    permit_mynetworks,
+    permit_sasl_authenticated,
+    reject_unauth_destination
+
+# --------------------------------------------------------------------------
+# Virtual Mailbox Configuration
+# --------------------------------------------------------------------------
+
+# Added: Virtual mailbox domains served by this server
+# Use a database lookup for multiple domains; simple list shown here
+virtual_mailbox_domains = example.com
+
+# Added: Virtual mailbox maps — PostgreSQL lookup for mailbox existence
+# Create /etc/postfix/pgsql-virtual-mailbox-maps.cf with:
+#   hosts = localhost
+#   user = tasmail
+#   password = YOUR_DB_PASSWORD
+#   dbname = tasmail
+#   query = SELECT 1 FROM users WHERE email = '%s' AND is_active = true
+virtual_mailbox_maps = pgsql:/etc/postfix/pgsql-virtual-mailbox-maps.cf
+
+# Added: Virtual alias maps — PostgreSQL lookup for email aliases/forwards
+virtual_alias_maps = pgsql:/etc/postfix/pgsql-virtual-alias-maps.cf
+
+# Added: Deliver mail via Dovecot LMTP (Local Mail Transfer Protocol)
+virtual_transport = lmtp:unix:private/dovecot-lmtp
+
+# --------------------------------------------------------------------------
+# TLS Settings (Let's Encrypt certificates)
+# --------------------------------------------------------------------------
+
+# Added: Inbound TLS — encrypt connections from other mail servers
+smtpd_tls_cert_file = /etc/letsencrypt/live/mail.example.com/fullchain.pem
+smtpd_tls_key_file = /etc/letsencrypt/live/mail.example.com/privkey.pem
+smtpd_tls_security_level = may
+smtpd_tls_auth_only = yes
+smtpd_tls_loglevel = 1
+
+# Added: Enforce modern TLS protocols only (TLS 1.2+)
+smtpd_tls_protocols = !SSLv2, !SSLv3, !TLSv1, !TLSv1.1
+smtpd_tls_mandatory_protocols = !SSLv2, !SSLv3, !TLSv1, !TLSv1.1
+smtpd_tls_mandatory_ciphers = medium
+
+# Added: Outbound TLS — opportunistic encryption when sending to other servers
+smtp_tls_security_level = may
+smtp_tls_loglevel = 1
+smtp_tls_protocols = !SSLv2, !SSLv3, !TLSv1, !TLSv1.1
+smtp_tls_CApath = /etc/ssl/certs
+
+# Added: TLS session cache for performance
+smtpd_tls_session_cache_database = btree:${data_directory}/smtpd_scache
+smtp_tls_session_cache_database = btree:${data_directory}/smtp_scache
+
+# --------------------------------------------------------------------------
+# SASL Authentication (via Dovecot)
+# --------------------------------------------------------------------------
+
+# Added: Use Dovecot as the SASL authentication backend
+# Users authenticate with their email/password before sending mail
+smtpd_sasl_type = dovecot
+smtpd_sasl_path = private/auth
+smtpd_sasl_auth_enable = yes
+smtpd_sasl_security_options = noanonymous, noplaintext
+smtpd_sasl_tls_security_options = noanonymous
+
+# --------------------------------------------------------------------------
+# Rspamd Milter Integration (spam filtering, DKIM signing)
+# --------------------------------------------------------------------------
+
+# Added: Connect to Rspamd via milter protocol for spam/virus filtering and DKIM signing
+smtpd_milters = inet:127.0.0.1:11332
+non_smtpd_milters = $smtpd_milters
+milter_protocol = 6
+milter_default_action = accept
+milter_mail_macros = i {mail_addr} {client_addr} {client_name} {auth_authen}
+
+# --------------------------------------------------------------------------
+# Message Size and Limits
+# --------------------------------------------------------------------------
+
+# Added: Maximum message size — 25MB (matches Gmail/Outlook defaults)
+message_size_limit = 26214400
+
+# Added: Maximum mailbox size — 0 means unlimited (quota enforced by Dovecot)
+mailbox_size_limit = 0
+
+# Added: Recipient limits per message delivery
+smtpd_recipient_limit = 100
+
+# --------------------------------------------------------------------------
+# Security Restrictions
+# --------------------------------------------------------------------------
+
+# Added: HELO/EHLO restrictions — basic sender verification
+smtpd_helo_required = yes
+smtpd_helo_restrictions =
+    permit_mynetworks,
+    permit_sasl_authenticated,
+    reject_invalid_helo_hostname,
+    reject_non_fqdn_helo_hostname
+
+# Added: Sender restrictions — reject obviously forged senders
+smtpd_sender_restrictions =
+    permit_mynetworks,
+    permit_sasl_authenticated,
+    reject_non_fqdn_sender,
+    reject_unknown_sender_domain
+
+# Added: Recipient restrictions — main policy enforcement point
+smtpd_recipient_restrictions =
+    permit_mynetworks,
+    permit_sasl_authenticated,
+    reject_unauth_destination,
+    reject_non_fqdn_recipient,
+    reject_unknown_recipient_domain
+
+# --------------------------------------------------------------------------
+# Miscellaneous
+# --------------------------------------------------------------------------
+
+# Added: Compatibility level — use Postfix 3.6+ defaults
+compatibility_level = 3.6
+
+# Added: Disable VRFY command (prevents email address harvesting)
+disable_vrfy_command = yes
+
+# Added: Show minimal server info in SMTP banner
+smtpd_banner = $myhostname ESMTP
+
+# Added: Notify postmaster of bounces and protocol errors
+notify_classes = resource, software, bounce
