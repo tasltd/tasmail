@@ -821,6 +821,28 @@ pub fn create_router(state: AppState) -> Router {
             delete(handlers::push::unregister_device),
         )
         .route("/api/push/test", post(handlers::push::test_notification))
+        // Added: Sync checkpoint routes for offline-first delta sync (TMAIL-51)
+        .route(
+            "/api/sync/checkpoint/{folder}",
+            get(handlers::sync::get_checkpoint).post(handlers::sync::update_checkpoint),
+        )
+        .route(
+            "/api/sync/resolve-conflict",
+            post(handlers::sync::resolve_conflict),
+        )
+        // Added: IP warm-up schedule management routes for TMAIL-17
+        .route(
+            "/api/admin/warmup/status",
+            get(handlers::warmup::get_warmup_status),
+        )
+        .route(
+            "/api/admin/warmup/schedule",
+            get(handlers::warmup::get_warmup_schedule),
+        )
+        .route(
+            "/api/admin/warmup/start",
+            post(handlers::warmup::start_warmup),
+        )
         // Audit log
         .route(
             "/api/admin/audit-log",

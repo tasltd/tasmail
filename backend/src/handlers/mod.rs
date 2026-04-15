@@ -96,3 +96,7 @@ pub mod billing;
 pub mod mobile;
 // Added: Push notification device management handlers for TMAIL-50
 pub mod push;
+// Added: Sync checkpoint handlers for offline-first delta sync protocol (TMAIL-51)
+pub mod sync;
+// Added: IP warm-up schedule handlers for TMAIL-17
+pub mod warmup;

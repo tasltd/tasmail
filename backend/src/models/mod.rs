@@ -88,3 +88,7 @@ pub mod deliverability;
 pub mod mobile;
 // Added: Push notification device and log models for TMAIL-50
 pub mod push_notification;
+// Added: Sync checkpoint models for offline-first delta sync protocol (TMAIL-51)
+pub mod sync;
+// Added: IP warm-up schedule models for TMAIL-17
+pub mod warmup;
