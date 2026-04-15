@@ -3,7 +3,9 @@
 // EXTERNAL: Uses Provider for state management, MaterialApp for routing
 
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
+import 'l10n/app_localizations.dart';
 import 'providers/auth_provider.dart';
 import 'providers/mail_provider.dart';
 import 'screens/auth/login_screen.dart';
@@ -31,6 +33,14 @@ class TasMailApp extends StatelessWidget {
           return MaterialApp(
             title: 'TASMail',
             debugShowCheckedModeBanner: false,
+            // Added: Localization support for Ghana languages (Twi, Ewe, Ga, Hausa)
+            localizationsDelegates: const [
+              AppLocalizations.delegate,
+              GlobalMaterialLocalizations.delegate,
+              GlobalWidgetsLocalizations.delegate,
+              GlobalCupertinoLocalizations.delegate,
+            ],
+            supportedLocales: AppLocalizations.supportedLocales,
             theme: ThemeData(
               colorScheme: ColorScheme.fromSeed(
                 seedColor: const Color(0xFF1565C0),
