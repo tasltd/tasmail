@@ -136,6 +136,52 @@ pub async fn authenticate(
     })
 }
 
+/// Added: Issue a fresh token pair for a known mailbox without verifying password.
+/// PURPOSE: Used by the signup flow — the user has just created the account and we
+/// want to log them in immediately without a separate /login round-trip.
+/// CONSTRAINTS: Caller MUST have already authenticated the user some other way
+/// (e.g., they just signed up, or finished an OIDC/SAML flow). Never expose this
+/// directly via an HTTP endpoint.
+pub async fn issue_token_pair_for_mailbox(
+    pool: &sqlx::PgPool,
+    config: &JwtConfig,
+    mailbox: &Mailbox,
+) -> Result<TokenPair, AppError> {
+    let access_token = create_access_token(config, mailbox)?;
+    let refresh_token = generate_refresh_token();
+    let refresh_hash = hash_refresh_token(&refresh_token);
+    let expires_at = Utc::now() + Duration::seconds(config.refresh_token_expiry_secs as i64);
+
+    // Set RLS session vars on a held connection so the sessions-table policy permits the insert.
+    // The session uniquely belongs to the mailbox we just authenticated, so we synthesise the
+    // claims inline instead of going through the JWT round-trip.
+    let mut conn = pool.acquire().await?;
+    sqlx::query("SELECT set_config('app.mailbox_id', $1, false)")
+        .bind(mailbox.id.to_string())
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query("SELECT set_config('app.is_admin', $1, false)")
+        .bind(mailbox.is_admin.to_string())
+        .execute(&mut *conn)
+        .await?;
+
+    sqlx::query(
+        "INSERT INTO sessions (id, mailbox_id, refresh_token_hash, expires_at, created_at) \
+         VALUES (gen_random_uuid(), $1, $2, $3, NOW())",
+    )
+    .bind(mailbox.id)
+    .bind(&refresh_hash)
+    .bind(expires_at)
+    .execute(&mut *conn)
+    .await?;
+
+    Ok(TokenPair {
+        access_token,
+        refresh_token,
+        expires_in: config.access_token_expiry_secs,
+    })
+}
+
 /// Refresh an access token using a valid refresh token
 pub async fn refresh_tokens(
     pool: &sqlx::PgPool,

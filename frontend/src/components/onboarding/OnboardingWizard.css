@@ -1,0 +1,133 @@
+/* Added: Onboarding wizard styles. Self-contained, no external dependency. */
+
+.onboarding {
+  min-height: 100vh;
+  background: linear-gradient(135deg, #f0f4ff 0%, #fef3ff 100%);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 48px 24px;
+}
+
+.onboarding-card {
+  width: 100%;
+  max-width: 720px;
+  background: white;
+  border-radius: 18px;
+  box-shadow: 0 20px 60px -20px rgba(15, 23, 42, 0.2);
+  padding: 40px 44px;
+}
+
+.onboarding-card__header { text-align: center; margin-bottom: 32px; }
+.onboarding-card__header h1 { font-size: 28px; font-weight: 800; margin: 0 0 8px; }
+.onboarding-card__header p { color: #64748b; max-width: 540px; margin: 0 auto 24px; font-size: 14.5px; }
+
+.onboarding-progress { display: flex; justify-content: center; gap: 14px; margin-top: 12px; }
+.onboarding-progress__step { display: flex; align-items: center; gap: 8px; color: #94a3b8; font-size: 13px; font-weight: 500; }
+.onboarding-progress__step.is-active { color: #2563eb; }
+.onboarding-progress__dot {
+  width: 24px; height: 24px; border-radius: 50%; background: #e2e8f0;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-weight: 700; color: #64748b; font-size: 12px;
+}
+.onboarding-progress__step.is-active .onboarding-progress__dot { background: #2563eb; color: white; }
+
+.onboarding-error {
+  background: #fef2f2; color: #b91c1c; padding: 12px 14px; border-radius: 8px;
+  border: 1px solid #fecaca; font-size: 14px; margin-bottom: 18px;
+}
+
+.onboarding-step h2 { font-size: 20px; font-weight: 700; margin: 0 0 6px; }
+.onboarding-step__sub { color: #64748b; margin: 0 0 22px; font-size: 14px; }
+.onboarding-step__hint { background: #fef9c3; border-left: 3px solid #facc15; padding: 10px 14px; border-radius: 4px; margin: 0 0 20px; font-size: 13.5px; color: #854d0e; }
+
+.onboarding-suggest {
+  width: 100%; padding: 14px 18px; border-radius: 10px; border: 2px solid #2563eb;
+  background: #eff6ff; cursor: pointer; text-align: left;
+  display: flex; flex-direction: column; gap: 2px; margin-bottom: 18px;
+  transition: background 0.15s ease, transform 0.05s ease;
+}
+.onboarding-suggest:hover { background: #dbeafe; }
+.onboarding-suggest strong { font-size: 15px; color: #1e40af; }
+.onboarding-suggest span { font-size: 12.5px; color: #475569; }
+
+.onboarding-paths {
+  display: grid;
+  gap: 14px;
+  margin-bottom: 4px;
+}
+.onboarding-path {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 22px 24px;
+  border-radius: 12px;
+  border: 2px solid #e2e8f0;
+  background: white;
+  cursor: pointer;
+  text-align: left;
+  position: relative;
+  transition: border-color 0.15s ease, transform 0.05s ease;
+}
+.onboarding-path:hover { border-color: #2563eb; transform: translateY(-1px); }
+.onboarding-path--primary { border-color: #2563eb; background: #eff6ff; }
+.onboarding-path__name { font-weight: 700; font-size: 16px; color: #0f172a; }
+.onboarding-path__sub { font-size: 13.5px; color: #475569; line-height: 1.5; }
+.onboarding-path__sub code { background: #f1f5f9; padding: 1px 6px; border-radius: 3px; font-size: 12px; }
+.onboarding-path__cta {
+  position: absolute; top: 12px; right: 14px;
+  background: #2563eb; color: white; padding: 2px 10px;
+  border-radius: 999px; font-size: 11px; font-weight: 700;
+  letter-spacing: 0.05em; text-transform: uppercase;
+}
+
+.onboarding-providers {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px;
+}
+.onboarding-provider {
+  padding: 14px; border-radius: 10px; border: 1px solid #e2e8f0; background: white;
+  cursor: pointer; text-align: left; display: flex; flex-direction: column; gap: 3px;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.onboarding-provider:hover { border-color: #2563eb; background: #f8fafc; }
+.onboarding-provider__name { font-weight: 600; font-size: 14px; color: #0f172a; }
+.onboarding-provider__domain { font-size: 12px; color: #64748b; }
+.onboarding-provider--custom { border-style: dashed; }
+
+.onboarding-form { display: flex; flex-direction: column; gap: 14px; margin-bottom: 18px; }
+.onboarding-form__row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.onboarding-form .form-group label { display: block; font-size: 13px; font-weight: 600; color: #334155; margin-bottom: 6px; }
+.onboarding-form input,
+.onboarding-form select {
+  width: 100%; padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 7px;
+  font-size: 14px; outline: none; box-sizing: border-box;
+}
+.onboarding-form input:focus,
+.onboarding-form select:focus { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15); }
+
+.onboarding-test-result {
+  padding: 10px 14px; border-radius: 8px; font-size: 13.5px; margin: 6px 0 14px;
+}
+.onboarding-test-result.is-ok { background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; }
+.onboarding-test-result.is-fail { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
+
+.onboarding-actions { display: flex; justify-content: space-between; align-items: center; margin-top: 22px; }
+.onboarding-actions__right { display: flex; gap: 10px; }
+
+.onboarding-done { text-align: center; padding: 24px 0; }
+.onboarding-done__check {
+  width: 64px; height: 64px; border-radius: 50%; background: #16a34a; color: white;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 36px; font-weight: 700; margin-bottom: 18px;
+}
+.onboarding-done h2 { font-size: 22px; margin: 0 0 6px; }
+.onboarding-done p { color: #64748b; margin: 0; }
+
+.btn { padding: 9px 18px; border-radius: 8px; font-weight: 600; font-size: 14px; cursor: pointer; border: 1px solid transparent; transition: background 0.15s ease, border-color 0.15s ease; }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn--primary { background: #2563eb; color: white; }
+.btn--primary:hover:not(:disabled) { background: #1d4ed8; }
+.btn--ghost { background: white; color: #0f172a; border-color: #cbd5e1; }
+.btn--ghost:hover:not(:disabled) { background: #f8fafc; }
+.btn--full { display: block; width: 100%; }

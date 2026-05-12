@@ -64,6 +64,8 @@ pub mod nlp_search;
 pub mod dane;
 // Added: SMTP configuration model for BYO-SMTP (TMAIL-48)
 pub mod smtp_config;
+// Added: IMAP configuration model for BYO-IMAP (BYOK webmail pivot)
+pub mod imap_config;
 // Added: Plugin model for extensible plugin/extension architecture (TMAIL-132)
 pub mod plugin;
 // Added: Contact group model for organizing contacts into labeled groups (TMAIL-119)
@@ -92,3 +94,7 @@ pub mod push_notification;
 pub mod sync;
 // Added: IP warm-up schedule models for TMAIL-17
 pub mod warmup;
+// Added: PaymentProviderConfig — DB-backed credential storage mirroring PayPro's PaymentProviderConfig.
+pub mod payment_provider_config;
+// Added (TMAIL-165): Runtime feature flags surfaced in the admin dashboard.
+pub mod feature_flag;

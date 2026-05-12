@@ -56,20 +56,100 @@ pub struct Attachment {
 
 type ImapSession = Session<TlsStream<Compat<TcpStream>>>;
 
-/// IMAP service for connecting to Dovecot and performing mail operations
+/// IMAP service for connecting to a user's IMAP server (BYOK) or to a global Dovecot.
+///
+/// Two construction paths:
+///   * `ImapService::new(config)` — global config from `state.config.imap` (legacy / single-tenant self-host).
+///   * `ImapService::for_user(state, user_id)` — loads the user's default IMAP server
+///     row from `imap_configurations`, decrypts the password, and returns a service
+///     bound to that host:port + the per-user (username, password) pair to use on connect.
 pub struct ImapService {
     config: ImapConfig,
+    /// When constructed via `for_user`, holds the user's decrypted IMAP credentials so
+    /// callers can use `connect_user(&svc)` instead of forwarding the user's TASMail
+    /// account password (which is NOT their IMAP password under the BYOK model).
+    user_credentials: Option<(String, String)>,
 }
 
 impl ImapService {
     pub fn new(config: ImapConfig) -> Self {
-        Self { config }
+        Self { config, user_credentials: None }
+    }
+
+    /// PURPOSE: Factory that loads the user's default IMAP server config from the
+    /// `imap_configurations` table, decrypts the stored password, and returns a service
+    /// bound to that server. Returns `Err(ServiceUnavailable)` if the user hasn't
+    /// completed onboarding.
+    pub async fn for_user(
+        state: &crate::state::AppState,
+        user_id: uuid::Uuid,
+    ) -> Result<Self, AppError> {
+        // TMAIL-162: try Redis first; falls through to DB on miss or Redis down.
+        // We cache the full ImapConfiguration row including its encrypted_password ciphertext —
+        // never the plaintext password.
+        let cache_key = user_id.to_string();
+        let cfg: crate::models::imap_config::ImapConfiguration = match state
+            .cache
+            .get_user_imap_config::<crate::models::imap_config::ImapConfiguration>(&cache_key)
+            .await
+        {
+            Some(hit) => hit,
+            None => {
+                let row = crate::models::imap_config::ImapConfiguration::default_for_user(&state.db, user_id)
+                    .await
+                    .map_err(AppError::from)?
+                    .ok_or_else(|| AppError::ServiceUnavailable(
+                        "No IMAP server configured. Complete the onboarding wizard at /onboarding.".into()
+                    ))?;
+                let _ = state.cache.set_user_imap_config(&cache_key, &row).await;
+                row
+            }
+        };
+
+        let key = crate::models::ai_config::derive_encryption_key(&state.config.jwt.secret);
+        let password = cfg
+            .decrypt_password(&key)
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("Failed to decrypt IMAP password: {}", e)))?;
+
+        // Note: BYOK uses async-native-tls's TLS layer; ImapConfig.tls means "use implicit TLS on connect".
+        // Map the per-user `encryption` enum to the global ImapConfig shape used by connect():
+        //   ssl    → tls=true, port unchanged (993)
+        //   starttls/none → tls=false (TODO: emit STARTTLS when STARTTLS branch is implemented)
+        let imap_cfg = ImapConfig {
+            host: cfg.host.clone(),
+            port: cfg.port as u16,
+            tls: matches!(cfg.encryption.as_str(), "ssl"),
+            master_password: None,
+        };
+        Ok(Self {
+            config: imap_cfg,
+            user_credentials: Some((cfg.username.clone(), password)),
+        })
+    }
+
+    /// PURPOSE: Convenience method for the BYOK path. Connects using the credentials
+    /// stored in the user's `imap_configurations` row instead of requiring the caller
+    /// to pass them. Falls back to error if the service was built via `new()` (global
+    /// self-host mode), where the caller still must pass the user's mailbox creds.
+    pub async fn connect_user(&self) -> Result<ImapSession, AppError> {
+        let (username, password) = self.user_credentials.as_ref().ok_or_else(|| {
+            AppError::Internal(anyhow::anyhow!(
+                "ImapService::connect_user() requires construction via for_user()"
+            ))
+        })?;
+        self.connect(username, password).await
     }
 
     // Added: Public accessor for IMAP config — used by EML import/export handlers
     // that need direct IMAP connections outside the service's own methods
     pub fn imap_config(&self) -> &ImapConfig {
         &self.config
+    }
+
+    /// PURPOSE: Borrow the per-user (username, password) pair when the service was built
+    /// via `for_user`. Returns `None` for the legacy global-config construction path.
+    pub fn user_creds(&self) -> Option<(&str, &str)> {
+        self.user_credentials.as_ref().map(|(u, p)| (u.as_str(), p.as_str()))
     }
 
     /// Connect and authenticate to the IMAP server

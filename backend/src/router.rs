@@ -48,10 +48,15 @@ pub fn create_router(state: AppState) -> Router {
     let public_routes = Router::new()
         .route("/api/health", get(handlers::health::health_check))
         .route("/api/auth/login", post(handlers::auth::login))
+        // Added: BYOK signup endpoint — public, returns JWT pair on success.
+        .route("/api/auth/signup", post(handlers::auth::signup))
         .route("/api/auth/refresh", post(handlers::auth::refresh))
         .route("/ws", get(handlers::websocket::ws_handler))
         // Added: Public branding endpoint — frontend needs it before login (TMAIL-111)
         .route("/api/branding", get(handlers::branding::get_branding))
+        // TMAIL-165: public subset of feature flags (no auth) so the SPA can decide
+        // which signup/onboarding paths to show before the user is logged in.
+        .route("/api/feature-flags", get(handlers::admin::feature_flags::list_public_flags))
         // Added: Public download endpoint for shared files (TMAIL-138)
         .route("/api/dl/{token}", get(handlers::shared_files::download_by_token))
         // Added: Public SAML SSO login and callback routes for TMAIL-101
@@ -66,7 +71,8 @@ pub fn create_router(state: AppState) -> Router {
         // Added: Public billing routes — plan listing and payment webhooks (TMAIL-46)
         .route("/api/billing/plans", get(handlers::billing::list_plans))
         .route("/api/billing/webhook/paystack", post(handlers::billing::webhook_paystack))
-        .route("/api/billing/webhook/momo", post(handlers::billing::webhook_momo));
+        // Changed: MoMo webhook removed — TASMail mirrors PayPro (Paystack/Mastercard/Cybersource/Bank). Mastercard webhook replaces it.
+        .route("/api/billing/webhook/mastercard", post(handlers::billing::webhook_mastercard));
 
     // Protected routes (auth required)
     let protected_routes = Router::new()
@@ -143,6 +149,25 @@ pub fn create_router(state: AppState) -> Router {
         .route(
             "/api/admin/users/{id}",
             delete(handlers::admin::users::delete_user),
+        )
+        // Added: PayPro-style payment_provider_config CRUD (TMAIL-46 follow-up).
+        .route(
+            "/api/admin/payment-providers",
+            get(handlers::admin::payment_providers::list_providers)
+                .post(handlers::admin::payment_providers::create_provider),
+        )
+        .route(
+            "/api/admin/payment-providers/{id}",
+            delete(handlers::admin::payment_providers::archive_provider),
+        )
+        // TMAIL-165: admin CRUD for runtime feature flags.
+        .route(
+            "/api/admin/feature-flags",
+            get(handlers::admin::feature_flags::list_flags),
+        )
+        .route(
+            "/api/admin/feature-flags/{key}",
+            axum::routing::patch(handlers::admin::feature_flags::update_flag),
         )
         // Scheduled / undo-send
         .route("/api/messages/schedule", post(handlers::scheduled::schedule_send))
@@ -574,6 +599,29 @@ pub fn create_router(state: AppState) -> Router {
         .route(
             "/api/dane/verifications",
             get(handlers::dane::list_verifications),
+        )
+        // Added: BYO-IMAP configuration management routes (BYOK webmail pivot).
+        .route(
+            "/api/imap-configs",
+            get(handlers::imap_config::list_imap_configs)
+                .post(handlers::imap_config::create_imap_config),
+        )
+        .route(
+            "/api/imap-configs/{id}",
+            delete(handlers::imap_config::delete_imap_config),
+        )
+        .route(
+            "/api/imap-configs/test",
+            post(handlers::imap_config::test_imap),
+        )
+        .route(
+            "/api/imap-configs/presets",
+            get(handlers::imap_config::list_provider_presets),
+        )
+        // TMAIL-167: managed-mailbox provisioning (DNS-MX onboarding).
+        .route(
+            "/api/mailbox/provision",
+            post(handlers::mailbox_provision::provision_managed_mailbox),
         )
         // Added: BYO-SMTP configuration management routes for TMAIL-48
         .route(

@@ -57,6 +57,78 @@ pub async fn login(
     Ok((StatusCode::OK, Json(tokens)))
 }
 
+/// Added: BYOK signup payload — TASMail account creation only. The user attaches
+/// their own IMAP/SMTP credentials in the onboarding wizard after this.
+#[derive(Debug, Deserialize)]
+pub struct SignupRequest {
+    pub email: String,
+    pub password: String,
+    #[serde(default)]
+    pub display_name: Option<String>,
+}
+
+/// POST /api/auth/signup
+/// Public endpoint. Creates a TASMail mailbox row attached to the synthetic
+/// "byok.tasmail" domain (see migration 056) and returns a JWT token pair so the
+/// frontend can immediately route the new user into the onboarding wizard.
+pub async fn signup(
+    State(state): State<AppState>,
+    Json(body): Json<SignupRequest>,
+) -> Result<(StatusCode, Json<auth_service::TokenPair>), AppError> {
+    use crate::models::mailbox::Mailbox;
+
+    let email = body.email.trim().to_lowercase();
+    if email.is_empty() || !email.contains('@') {
+        return Err(AppError::BadRequest("Valid email is required".into()));
+    }
+    if body.password.len() < 8 {
+        return Err(AppError::BadRequest("Password must be at least 8 characters".into()));
+    }
+    validation::validate_username(&email)?;
+
+    // Reject duplicates up-front for a clean 409 instead of a unique-violation 500
+    if Mailbox::find_by_username(&state.db, &email).await?.is_some() {
+        return Err(AppError::Conflict("An account with this email already exists".into()));
+    }
+
+    // Look up the synthetic byok.tasmail domain inserted by migration 056
+    let domain_id: uuid::Uuid = sqlx::query_scalar("SELECT id FROM domains WHERE name = 'byok.tasmail' LIMIT 1")
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("byok.tasmail domain row missing — re-run migration 056")))?;
+
+    let password_hash = auth_service::hash_password(&body.password)?;
+    // 1 GiB default quota — TASMail itself doesn't store mail (it's a webmail UI),
+    // but quota_bytes is NOT NULL in the schema. Generous default.
+    let mailbox = Mailbox::create(
+        &state.db,
+        &email,
+        &password_hash,
+        domain_id,
+        body.display_name.as_deref(),
+        1_073_741_824,
+    )
+    .await?;
+
+    // Issue tokens immediately so the frontend can move the user into the wizard.
+    let tokens = auth_service::issue_token_pair_for_mailbox(&state.db, &state.config.jwt, &mailbox).await?;
+
+    let mailbox_id_str = mailbox.id.to_string();
+    let _ = AuditLog::record(
+        &state.db,
+        Some(mailbox.id),
+        "auth.signup",
+        Some("mailbox"),
+        Some(mailbox_id_str.as_str()),
+        None,
+        None,
+        None,
+    )
+    .await;
+
+    Ok((StatusCode::CREATED, Json(tokens)))
+}
+
 /// POST /api/auth/refresh
 pub async fn refresh(
     State(state): State<AppState>,

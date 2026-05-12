@@ -44,7 +44,11 @@ pub async fn mobile_inbox(
     let per_page = query.per_page.unwrap_or(20).min(50);
 
     let mailbox = resolve_mailbox(&state, &claims).await?;
-    let imap_service = ImapService::new(state.config.imap.clone());
+    let imap_service = ImapService::for_user(&state, mailbox.id).await?;
+    // BYOK: borrow the user-specific IMAP credentials loaded from imap_configurations.
+    let (_imap_user, _imap_pass) = imap_service
+        .user_creds()
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("BYOK IMAP credentials missing")))?;
 
     // NOTE: IMAP list_messages uses 0-based page index internally
     let imap_page = page.saturating_sub(1);
@@ -92,10 +96,14 @@ pub async fn mobile_message(
     validation::validate_folder_name(&folder)?;
 
     let mailbox = resolve_mailbox(&state, &claims).await?;
-    let imap_service = ImapService::new(state.config.imap.clone());
+    let imap_service = ImapService::for_user(&state, mailbox.id).await?;
+    // BYOK: borrow the user-specific IMAP credentials loaded from imap_configurations.
+    let (_imap_user, _imap_pass) = imap_service
+        .user_creds()
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("BYOK IMAP credentials missing")))?;
 
     let message = imap_service
-        .get_message(&mailbox.username, &mailbox.password_hash, &folder, uid)
+        .get_message(_imap_user, _imap_pass, &folder, uid)
         .await?;
 
     // Added: Truncate body content if max_body query param is set
@@ -140,10 +148,14 @@ pub async fn mobile_folders(
     axum::Extension(claims): axum::Extension<Claims>,
 ) -> Result<Json<Vec<MobileFolderSummary>>, AppError> {
     let mailbox = resolve_mailbox(&state, &claims).await?;
-    let imap_service = ImapService::new(state.config.imap.clone());
+    let imap_service = ImapService::for_user(&state, mailbox.id).await?;
+    // BYOK: borrow the user-specific IMAP credentials loaded from imap_configurations.
+    let (_imap_user, _imap_pass) = imap_service
+        .user_creds()
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("BYOK IMAP credentials missing")))?;
 
     let folders = imap_service
-        .list_folders(&mailbox.username, &mailbox.password_hash)
+        .list_folders(_imap_user, _imap_pass)
         .await?;
 
     // Added: Strip down to name + unread count for minimal payload
@@ -164,10 +176,14 @@ pub async fn mobile_unread_count(
     axum::Extension(claims): axum::Extension<Claims>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let mailbox = resolve_mailbox(&state, &claims).await?;
-    let imap_service = ImapService::new(state.config.imap.clone());
+    let imap_service = ImapService::for_user(&state, mailbox.id).await?;
+    // BYOK: borrow the user-specific IMAP credentials loaded from imap_configurations.
+    let (_imap_user, _imap_pass) = imap_service
+        .user_creds()
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("BYOK IMAP credentials missing")))?;
 
     let folders = imap_service
-        .list_folders(&mailbox.username, &mailbox.password_hash)
+        .list_folders(_imap_user, _imap_pass)
         .await?;
 
     // Added: Sum unseen counts across all folders for a single-integer response
@@ -251,7 +267,11 @@ pub async fn mobile_sync(
         .with_timezone(&chrono::Utc);
 
     let mailbox = resolve_mailbox(&state, &claims).await?;
-    let imap_service = ImapService::new(state.config.imap.clone());
+    let imap_service = ImapService::for_user(&state, mailbox.id).await?;
+    // BYOK: borrow the user-specific IMAP credentials loaded from imap_configurations.
+    let (_imap_user, _imap_pass) = imap_service
+        .user_creds()
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("BYOK IMAP credentials missing")))?;
 
     // Added: Fetch current folder state and compare against 'since' timestamp
     // NOTE: IMAP doesn't natively support delta queries. We fetch recent messages
@@ -259,14 +279,14 @@ pub async fn mobile_sync(
     // A production implementation would maintain a server-side change log or
     // use IMAP CONDSTORE/QRESYNC extensions for true delta sync.
     let folders = imap_service
-        .list_folders(&mailbox.username, &mailbox.password_hash)
+        .list_folders(_imap_user, _imap_pass)
         .await?;
 
     let mut changes: Vec<SyncChange> = Vec::new();
 
     // Added: Check INBOX for recent messages (primary mobile use case)
     if let Ok((messages, _total)) = imap_service
-        .list_messages(&mailbox.username, &mailbox.password_hash, "INBOX", 0, 50)
+        .list_messages(_imap_user, _imap_pass, "INBOX", 0, 50)
         .await
     {
         for msg in &messages {

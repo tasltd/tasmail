@@ -48,14 +48,25 @@ export default defineConfig({
     exclude: ['e2e/**', 'node_modules/**'],
   },
   server: {
-    port: 5173,
+    // Changed: Non-default port (5173 occupied by Alleina dev server)
+    port: Number(process.env.TASMAIL_VITE_PORT ?? 5273),
+    host: '127.0.0.1',
+    // Added: Allow Apache reverse proxy from mail.techatscale.io to forward host header
+    allowedHosts: ['mail.techatscale.io', 'localhost', '127.0.0.1'],
+    // Added: Required so HMR works through the SSH tunnel + Apache reverse proxy
+    hmr: {
+      host: 'mail.techatscale.io',
+      protocol: 'wss',
+      clientPort: 443,
+    },
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:3000',
+        // Changed: Backend default port shifted from 3000 -> 3300 to avoid collisions
+        target: `http://127.0.0.1:${process.env.TASMAIL_BACKEND_PORT ?? 3300}`,
         changeOrigin: true,
       },
       '/ws': {
-        target: 'ws://127.0.0.1:3000',
+        target: `ws://127.0.0.1:${process.env.TASMAIL_BACKEND_PORT ?? 3300}`,
         ws: true,
       },
     },

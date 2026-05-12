@@ -30,13 +30,17 @@ pub async fn export_eml(
         .await?
         .ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
 
-    let imap_service = ImapService::new(state.config.imap.clone());
+    let imap_service = ImapService::for_user(&state, mailbox.id).await?;
+    // BYOK: borrow the user-specific IMAP credentials loaded from imap_configurations.
+    let (_imap_user, _imap_pass) = imap_service
+        .user_creds()
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("BYOK IMAP credentials missing")))?;
 
     // Added: Fetch raw RFC822 bytes for the message via IMAP
     let raw_bytes = fetch_raw_eml(
         &imap_service,
-        &mailbox.username,
-        &mailbox.password_hash,
+        _imap_user,
+        _imap_pass,
         &folder,
         uid,
     )
@@ -85,13 +89,17 @@ pub async fn import_eml(
         .await?
         .ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
 
-    let imap_service = ImapService::new(state.config.imap.clone());
+    let imap_service = ImapService::for_user(&state, mailbox.id).await?;
+    // BYOK: borrow the user-specific IMAP credentials loaded from imap_configurations.
+    let (_imap_user, _imap_pass) = imap_service
+        .user_creds()
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("BYOK IMAP credentials missing")))?;
 
     // Added: Append raw EML bytes to the target IMAP folder
     append_eml_to_folder(
         &imap_service,
-        &mailbox.username,
-        &mailbox.password_hash,
+        _imap_user,
+        _imap_pass,
         &folder,
         &body,
     )

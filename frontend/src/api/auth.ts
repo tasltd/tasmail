@@ -9,6 +9,22 @@ export async function login(credentials: LoginRequest): Promise<TokenPair> {
   return tokens;
 }
 
+// Added: BYOK signup. The backend returns a token pair so the user is logged in
+// immediately and can be routed straight to the IMAP/SMTP onboarding wizard.
+export interface SignupRequest {
+  email: string;
+  password: string;
+  display_name?: string;
+}
+
+export async function signup(req: SignupRequest): Promise<TokenPair> {
+  const tokens = await apiClient.post<TokenPair>('/auth/signup', req);
+  apiClient.setToken(tokens.access_token);
+  localStorage.setItem('access_token', tokens.access_token);
+  localStorage.setItem('refresh_token', tokens.refresh_token);
+  return tokens;
+}
+
 export async function logout(): Promise<void> {
   try {
     await apiClient.post('/auth/logout');

@@ -72,6 +72,10 @@ pub mod dane;
 pub mod websocket;
 // Added: SMTP configuration management handlers for BYO-SMTP (TMAIL-48)
 pub mod smtp_config;
+// Added: IMAP configuration management handlers for BYO-IMAP (BYOK webmail pivot)
+pub mod imap_config;
+// Added (TMAIL-167): managed-mailbox provisioning endpoint (DNS-MX onboarding path).
+pub mod mailbox_provision;
 // Added: Plugin management handlers for extensible plugin architecture (TMAIL-132)
 pub mod plugins;
 // Added: Contact group and vCard import/export/merge handlers (TMAIL-119)
