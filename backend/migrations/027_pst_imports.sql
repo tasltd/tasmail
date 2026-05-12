@@ -3,7 +3,7 @@ CREATE TYPE pst_import_status AS ENUM ('pending', 'processing', 'completed', 'fa
 
 CREATE TABLE pst_imports (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id),
+    user_id UUID NOT NULL REFERENCES mailboxes(id),
     filename TEXT NOT NULL,
     file_size BIGINT NOT NULL,
     status pst_import_status NOT NULL DEFAULT 'pending',

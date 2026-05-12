@@ -4,7 +4,7 @@ CREATE TYPE ediscovery_status AS ENUM ('pending', 'running', 'completed', 'faile
 
 CREATE TABLE ediscovery_searches (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    admin_id UUID NOT NULL REFERENCES users(id),
+    admin_id UUID NOT NULL REFERENCES mailboxes(id),
     name TEXT NOT NULL,
     description TEXT,
     search_query TEXT NOT NULL,
@@ -23,7 +23,7 @@ CREATE INDEX idx_ediscovery_admin ON ediscovery_searches(admin_id);
 CREATE TABLE ediscovery_results (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     search_id UUID NOT NULL REFERENCES ediscovery_searches(id) ON DELETE CASCADE,
-    user_id UUID NOT NULL REFERENCES users(id),
+    user_id UUID NOT NULL REFERENCES mailboxes(id),
     folder TEXT NOT NULL,
     uid INTEGER NOT NULL,
     subject TEXT,

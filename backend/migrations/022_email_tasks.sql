@@ -1,7 +1,7 @@
 -- Added: Email tasks/to-do table for TMAIL-126
 CREATE TABLE email_tasks (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id),
+    user_id UUID NOT NULL REFERENCES mailboxes(id),
     title TEXT NOT NULL,
     description TEXT,
     due_date TIMESTAMPTZ,

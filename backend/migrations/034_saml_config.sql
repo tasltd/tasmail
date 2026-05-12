@@ -16,7 +16,7 @@ CREATE TABLE saml_configurations (
 CREATE TABLE saml_sessions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     saml_config_id UUID NOT NULL REFERENCES saml_configurations(id),
-    user_id UUID REFERENCES users(id),
+    user_id UUID REFERENCES mailboxes(id),
     session_index TEXT,
     name_id TEXT NOT NULL,
     attributes JSONB DEFAULT '{}',

@@ -5,7 +5,7 @@ CREATE TYPE rsvp_status AS ENUM ('pending', 'accepted', 'declined', 'maybe');
 
 CREATE TABLE calendar_events (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    organizer_id UUID NOT NULL REFERENCES users(id),
+    organizer_id UUID NOT NULL REFERENCES mailboxes(id),
     title TEXT NOT NULL,
     description TEXT,
     location TEXT,

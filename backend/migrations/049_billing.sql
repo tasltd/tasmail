@@ -22,7 +22,7 @@ CREATE TABLE billing_plans (
 
 CREATE TABLE subscriptions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES users(id),
+  user_id UUID NOT NULL REFERENCES mailboxes(id),
   plan_id UUID NOT NULL REFERENCES billing_plans(id),
   provider payment_provider NOT NULL,
   provider_subscription_id VARCHAR(255),
@@ -38,7 +38,7 @@ CREATE POLICY subscription_owner ON subscriptions FOR ALL USING (user_id = curre
 
 CREATE TABLE payments (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES users(id),
+  user_id UUID NOT NULL REFERENCES mailboxes(id),
   subscription_id UUID REFERENCES subscriptions(id),
   provider payment_provider NOT NULL,
   provider_ref VARCHAR(255) NOT NULL,

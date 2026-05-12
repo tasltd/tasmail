@@ -16,7 +16,7 @@ CREATE TABLE archive_policies (
 -- PURPOSE: Tracks user archive search history for audit and quick re-search
 CREATE TABLE archive_searches (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES mailboxes(id) ON DELETE CASCADE,
     query TEXT NOT NULL,
     filters JSONB DEFAULT '{}',
     result_count INT,

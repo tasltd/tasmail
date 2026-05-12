@@ -4,7 +4,7 @@
 
 CREATE TABLE sync_checkpoints (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id),
+    user_id UUID NOT NULL REFERENCES mailboxes(id),
     device_id UUID REFERENCES push_devices(id),
     folder_name VARCHAR(255) NOT NULL,
     last_uid BIGINT DEFAULT 0,

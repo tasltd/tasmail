@@ -3,7 +3,7 @@ CREATE TYPE bulk_import_status AS ENUM ('pending', 'processing', 'completed', 'f
 
 CREATE TABLE bulk_user_imports (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    admin_id UUID NOT NULL REFERENCES users(id),
+    admin_id UUID NOT NULL REFERENCES mailboxes(id),
     filename TEXT NOT NULL,
     total_rows INTEGER NOT NULL DEFAULT 0,
     processed_rows INTEGER NOT NULL DEFAULT 0,

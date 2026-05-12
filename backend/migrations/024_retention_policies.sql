@@ -13,9 +13,9 @@ CREATE TABLE retention_policies (
 
 CREATE TABLE legal_holds (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id),
+    user_id UUID NOT NULL REFERENCES mailboxes(id),
     reason TEXT NOT NULL,
-    placed_by UUID NOT NULL REFERENCES users(id),
+    placed_by UUID NOT NULL REFERENCES mailboxes(id),
     active BOOLEAN NOT NULL DEFAULT true,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     released_at TIMESTAMPTZ

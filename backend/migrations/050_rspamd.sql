@@ -19,7 +19,7 @@ CREATE TABLE spam_settings (
 
 CREATE TABLE spam_quarantine (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES users(id),
+  user_id UUID NOT NULL REFERENCES mailboxes(id),
   message_id VARCHAR(500) NOT NULL,
   sender VARCHAR(254),
   subject VARCHAR(998),

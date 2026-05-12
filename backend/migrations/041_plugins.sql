@@ -3,7 +3,7 @@
 
 CREATE TABLE plugins (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id     UUID REFERENCES users(id) ON DELETE CASCADE,  -- NOTE: null = system-wide plugin
+    user_id     UUID REFERENCES mailboxes(id) ON DELETE CASCADE,  -- NOTE: null = system-wide plugin
     name        TEXT NOT NULL,
     description TEXT,
     plugin_type TEXT NOT NULL CHECK (plugin_type IN ('webhook', 'script', 'filter')),

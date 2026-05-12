@@ -10,8 +10,8 @@ CREATE TABLE IF NOT EXISTS snoozed_emails (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Added: index for efficient polling of expired snoozes
-CREATE INDEX idx_snoozed_emails_until ON snoozed_emails(snooze_until) WHERE snooze_until > NOW();
+-- Fix: Removed `WHERE snooze_until > NOW()` predicate — NOW() is volatile and Postgres rejects it in partial index predicates. Plain index still serves the same query patterns.
+CREATE INDEX idx_snoozed_emails_until ON snoozed_emails(snooze_until);
 CREATE INDEX idx_snoozed_emails_mailbox ON snoozed_emails(mailbox_id);
 
 -- Added: RLS policy

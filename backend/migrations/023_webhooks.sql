@@ -5,7 +5,7 @@ CREATE TYPE webhook_event AS ENUM ('email.received', 'email.sent', 'email.delete
 
 CREATE TABLE webhooks (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id),
+    user_id UUID NOT NULL REFERENCES mailboxes(id),
     url TEXT NOT NULL,
     secret TEXT NOT NULL,
     events webhook_event[] NOT NULL,

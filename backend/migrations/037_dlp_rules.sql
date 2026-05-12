@@ -22,7 +22,7 @@ CREATE TABLE dlp_rules (
 CREATE TABLE dlp_violations (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     rule_id UUID NOT NULL REFERENCES dlp_rules(id),
-    user_id UUID NOT NULL REFERENCES users(id),
+    user_id UUID NOT NULL REFERENCES mailboxes(id),
     action_taken dlp_action NOT NULL,
     matched_pattern TEXT NOT NULL,
     matched_text TEXT,

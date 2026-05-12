@@ -6,7 +6,7 @@ CREATE TYPE ai_provider AS ENUM ('openai', 'anthropic', 'google', 'ollama', 'cus
 
 CREATE TABLE ai_configurations (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id),
+    user_id UUID NOT NULL REFERENCES mailboxes(id),
     provider ai_provider NOT NULL,
     api_key_encrypted TEXT NOT NULL,
     model_name TEXT NOT NULL,

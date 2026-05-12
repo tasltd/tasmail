@@ -3,7 +3,7 @@ CREATE TYPE push_platform AS ENUM ('fcm', 'apns', 'web');
 
 CREATE TABLE push_devices (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES users(id),
+  user_id UUID NOT NULL REFERENCES mailboxes(id),
   platform push_platform NOT NULL,
   device_token TEXT NOT NULL,
   device_name VARCHAR(200),
@@ -18,7 +18,7 @@ CREATE UNIQUE INDEX push_device_token_unique ON push_devices(user_id, device_tok
 
 CREATE TABLE push_notification_log (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES users(id),
+  user_id UUID NOT NULL REFERENCES mailboxes(id),
   device_id UUID REFERENCES push_devices(id),
   title VARCHAR(200) NOT NULL,
   body TEXT,

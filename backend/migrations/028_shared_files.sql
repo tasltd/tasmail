@@ -1,7 +1,7 @@
 -- Added: Shared files table for large file sharing via cloud storage links (TMAIL-138)
 CREATE TABLE shared_files (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id),
+    user_id UUID NOT NULL REFERENCES mailboxes(id),
     filename TEXT NOT NULL,
     content_type TEXT NOT NULL DEFAULT 'application/octet-stream',
     file_size BIGINT NOT NULL,

@@ -20,7 +20,7 @@ CREATE TABLE oidc_providers (
 
 CREATE TABLE oidc_user_links (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id),
+    user_id UUID NOT NULL REFERENCES mailboxes(id),
     provider_id UUID NOT NULL REFERENCES oidc_providers(id),
     subject TEXT NOT NULL,
     email TEXT NOT NULL,

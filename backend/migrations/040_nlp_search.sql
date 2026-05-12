@@ -4,7 +4,7 @@
 
 CREATE TABLE nlp_search_history (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES mailboxes(id) ON DELETE CASCADE,
     query_text TEXT NOT NULL,
     parsed_params JSONB NOT NULL DEFAULT '{}',
     result_count INTEGER NOT NULL DEFAULT 0,

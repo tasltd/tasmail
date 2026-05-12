@@ -6,7 +6,7 @@ CREATE TYPE chat_platform AS ENUM ('slack', 'teams', 'google_chat', 'discord', '
 
 CREATE TABLE chat_integrations (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id),
+    user_id UUID NOT NULL REFERENCES mailboxes(id),
     platform chat_platform NOT NULL,
     webhook_url TEXT NOT NULL,
     channel_name TEXT,

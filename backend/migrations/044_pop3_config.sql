@@ -3,7 +3,7 @@
 
 CREATE TABLE IF NOT EXISTS pop3_configurations (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE UNIQUE,
+    user_id UUID NOT NULL REFERENCES mailboxes(id) ON DELETE CASCADE UNIQUE,
     enabled BOOLEAN NOT NULL DEFAULT false,
     delete_after_download BOOLEAN NOT NULL DEFAULT false,
     retention_days INTEGER DEFAULT NULL,

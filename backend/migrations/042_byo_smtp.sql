@@ -3,7 +3,7 @@
 
 CREATE TABLE smtp_configurations (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES mailboxes(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     host TEXT NOT NULL,
     port INTEGER NOT NULL DEFAULT 587,

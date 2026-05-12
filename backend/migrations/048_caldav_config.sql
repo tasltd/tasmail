@@ -3,7 +3,7 @@
 
 CREATE TABLE IF NOT EXISTS dav_configurations (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES mailboxes(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     server_url TEXT NOT NULL,
     username TEXT NOT NULL,

@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS activesync_policies (
 -- ActiveSync device registrations per user
 CREATE TABLE IF NOT EXISTS activesync_devices (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES mailboxes(id) ON DELETE CASCADE,
     device_id TEXT NOT NULL,
     device_type TEXT NOT NULL,
     device_name TEXT,
