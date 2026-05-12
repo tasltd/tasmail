@@ -54,3 +54,6 @@ pub mod encryption;
 pub mod db_session;
 // Added (TMAIL-165): Cached runtime feature flags.
 pub mod feature_flags;
+// Added (TMAIL-176/177/180): usage-based billing math + rollup loop.
+pub mod billing_math;
+pub mod billing_rollup;

@@ -1,0 +1,105 @@
+/* TMAIL-174 — standalone /pricing page styles, scoped under .pp-* */
+
+.pp-hero {
+  text-align: center;
+  padding: 72px 24px 48px;
+  background: radial-gradient(circle at 30% 0%, #dbeafe 0%, transparent 55%),
+              radial-gradient(circle at 80% 20%, #ede9fe 0%, transparent 55%);
+}
+.pp-hero h1 { margin: 0 0 16px; font-size: clamp(34px, 5vw, 48px); font-weight: 800; letter-spacing: -0.02em; }
+.pp-hero p  { max-width: 640px; margin: 0 auto; color: var(--land-muted); font-size: 16px; }
+
+.pp-calc {
+  max-width: 760px; margin: 0 auto; padding: 48px 24px;
+  text-align: center;
+}
+.pp-calc h2 { font-size: 24px; font-weight: 700; margin: 0 0 6px; }
+.pp-calc > p { color: var(--land-muted); margin: 0 0 24px; }
+
+.pp-calc__panel {
+  background: white;
+  border: 1px solid var(--land-border);
+  border-radius: 14px;
+  padding: 28px 32px;
+  text-align: left;
+}
+.pp-calc__slider {
+  -webkit-appearance: none; appearance: none;
+  width: 100%; height: 6px; background: #e2e8f0; border-radius: 999px; outline: none;
+}
+.pp-calc__slider::-webkit-slider-thumb,
+.pp-calc__slider::-moz-range-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 22px; height: 22px; border-radius: 50%;
+  background: var(--land-accent);
+  cursor: pointer;
+  border: none;
+}
+.pp-calc__values {
+  display: flex; justify-content: space-between; align-items: baseline;
+  margin-top: 18px; font-size: 16px;
+}
+.pp-calc__values strong { font-size: 22px; }
+.pp-calc__price { font-weight: 700; font-size: 22px; }
+.pp-calc__per { font-weight: 500; font-size: 14px; color: var(--land-muted); margin-left: 4px; }
+.pp-calc__usd { font-weight: 500; font-size: 14px; color: var(--land-muted); margin-left: 6px; }
+.pp-calc__hint { color: var(--land-muted); font-size: 13px; margin: 14px 0 0; }
+.pp-calc__cta { text-align: center; margin: 28px 0 0; }
+
+.pp-tiers {
+  background: var(--land-bg-alt);
+  border-top: 1px solid var(--land-border);
+  border-bottom: 1px solid var(--land-border);
+  padding: 64px 24px;
+}
+.pp-tiers h2 { text-align: center; font-size: 26px; font-weight: 700; margin: 0 0 32px; }
+.pp-tier-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 22px;
+  max-width: 880px; margin: 0 auto;
+}
+.pp-tier {
+  background: white; border-radius: 14px; border: 1px solid var(--land-border);
+  padding: 28px;
+  display: flex; flex-direction: column; gap: 14px;
+}
+.pp-tier--primary { border-color: var(--land-accent); box-shadow: 0 12px 32px -16px rgba(37, 99, 235, 0.4); }
+.pp-tier__badge {
+  display: inline-block; background: var(--land-accent); color: white;
+  font-size: 11px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase;
+  padding: 2px 10px; border-radius: 999px;
+  align-self: flex-start;
+}
+.pp-tier__badge--enterprise { background: #475569; }
+.pp-tier h3 { margin: 4px 0 6px; font-size: 22px; font-weight: 700; }
+.pp-tier header p { margin: 0; color: var(--land-muted); font-size: 14px; }
+.pp-tier ul { list-style: none; padding: 0; margin: 0; flex-grow: 1; }
+.pp-tier ul li {
+  padding: 8px 0; border-bottom: 1px solid var(--land-border);
+  font-size: 14px;
+}
+.pp-tier ul li:last-child { border-bottom: none; }
+
+.pp-providers, .pp-faq {
+  max-width: 760px; margin: 0 auto; padding: 56px 24px;
+}
+.pp-providers h2 { font-size: 22px; font-weight: 700; margin: 0 0 12px; }
+.pp-providers p  { color: var(--land-muted); margin: 0 0 18px; }
+.pp-providers__list {
+  display: flex; flex-wrap: wrap; gap: 10px;
+  list-style: none; padding: 0; margin: 0;
+}
+.pp-providers__list li {
+  background: white; border: 1px solid var(--land-border);
+  padding: 8px 14px; border-radius: 999px; font-size: 13.5px;
+}
+
+.pp-faq h2 { font-size: 22px; font-weight: 700; margin: 0 0 18px; text-align: center; }
+.pp-faq details {
+  background: white; border: 1px solid var(--land-border);
+  border-radius: 10px; padding: 14px 18px; margin-bottom: 8px;
+}
+.pp-faq summary { cursor: pointer; font-weight: 600; font-size: 15px; }
+.pp-faq details p { margin: 12px 0 0; color: var(--land-muted); font-size: 14px; line-height: 1.6; }
+.pp-faq code { background: #f1f5f9; padding: 1px 6px; border-radius: 4px; font-size: 12.5px; }

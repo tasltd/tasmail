@@ -171,6 +171,23 @@ pub fn create_router(state: AppState) -> Router {
             "/api/admin/feature-flags/{key}",
             axum::routing::patch(handlers::admin::feature_flags::update_flag),
         )
+        // TMAIL-178/179: usage-based billing dashboard endpoints.
+        .route("/api/billing/usage", get(handlers::usage_billing::get_usage))
+        .route("/api/billing/invoices", get(handlers::usage_billing::list_invoices))
+        // TMAIL-183: admin endpoints for the enterprise quote-request inbox.
+        .route(
+            "/api/admin/quote-requests",
+            get(handlers::admin::quote_requests::list_quote_requests),
+        )
+        .route(
+            "/api/admin/quote-requests/stats",
+            get(handlers::admin::quote_requests::quote_request_stats),
+        )
+        .route(
+            "/api/admin/quote-requests/{id}",
+            get(handlers::admin::quote_requests::get_quote_request)
+                .patch(handlers::admin::quote_requests::update_quote_request),
+        )
         // Scheduled / undo-send
         .route("/api/messages/schedule", post(handlers::scheduled::schedule_send))
         .route("/api/messages/scheduled", get(handlers::scheduled::list_scheduled))

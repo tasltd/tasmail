@@ -1,15 +1,28 @@
-# TASMail — Self-Hosted Email Service
+# TASMail — Webmail UI for any IMAP/SMTP server
 
-A modern, self-hosted email service with a React frontend, Rust (Axum) backend, and Postfix/Dovecot mail infrastructure. Privacy-first, cost-effective alternative to Google Workspace and Microsoft 365.
+TASMail is a fast, modern webmail client (BYOK) that connects to **any** IMAP/SMTP
+server you already use — Gmail, Outlook, Zoho, FastMail, your corporate Exchange,
+ProtonMail Bridge, an existing Dovecot. We never store your email; only the
+encrypted credentials needed to fetch it.
+
+Live at **<https://mail.techatscale.io>** (future home: `tasmail.com`).
 
 ## Why TASMail?
 
-- **Modern Webmail UI** — React 19 SPA with real-time push notifications, rich text composer, and responsive design
-- **High Performance** — Rust backend uses < 100 MB RAM; sub-200ms API responses
-- **Full Privacy** — Your server, your data. No third-party tracking or data mining
-- **Cost Effective** — Runs on a $10-20/month VPS for unlimited users vs $6-22/user/month for Google Workspace
-- **Web Access Anywhere** — Replace desktop email clients with browser-based access from any device
-- **Battle-Tested Infrastructure** — Built on Postfix (SMTP) and Dovecot (IMAP), powering millions of mail servers worldwide
+- **One UI, every account** — bring your own IMAP/SMTP and get a single polished webmail across desktop and mobile
+- **Modern stack** — React 19 SPA with real-time push, rich text composer, PWA + native iOS/Android apps
+- **Privacy by design** — your provider, your storage. We hold encrypted credentials, never the message body
+- **High performance** — Rust/Axum backend uses < 100 MB RAM; sub-200 ms API responses
+- **Optional self-host** — operators can run their own Postfix/Dovecot alongside TASMail (see `docs/SELF-HOST-MAIL-SERVERS.md`); not required for the BYOK product
+
+## Pricing
+
+| Plan | Price | What you get |
+|------|-------|--------------|
+| **TASMail BYOK** | **GHS 1.00 / GB · month** (≈ $0.07 USD), GHS 5 monthly minimum | Connect your own IMAP/SMTP server, unlimited devices, encrypted credentials at rest, email + chat support |
+| **Enterprise** | Custom quote | Single-tenant deployment on your cloud or ours, SAML/OIDC SSO, on-premise option, white-glove onboarding + SLA, compliance reporting |
+
+All invoices settled in Ghana cedis via Paystack, Mastercard MPGS, Cybersource invoicing, or bank transfer (the same providers PayPro uses). Visitors outside Ghana see an indicative USD line next to every price. Live calculator + FAQ at <https://mail.techatscale.io/pricing>.
 
 ## Architecture
 

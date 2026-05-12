@@ -1,0 +1,101 @@
+/* TMAIL-179 — Usage & billing page */
+
+.ubp {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 28px 24px 48px;
+  font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+  color: #0f172a;
+}
+
+.ubp__header { display: flex; justify-content: space-between; gap: 24px; align-items: flex-start; margin-bottom: 24px; }
+.ubp__header h1 { margin: 0 0 6px; font-size: 22px; font-weight: 700; }
+.ubp__header p  { margin: 0; color: #64748b; font-size: 13.5px; max-width: 660px; }
+
+.ubp__loading { padding: 24px; text-align: center; color: #64748b; }
+.ubp__error   { padding: 16px; background: #fef2f2; border: 1px solid #fecaca; color: #b91c1c; border-radius: 8px; margin-bottom: 16px; }
+
+.ubp-hero {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  background: linear-gradient(135deg, #eff6ff 0%, #ede9fe 100%);
+  border: 1px solid #dbeafe;
+  border-radius: 14px;
+  padding: 28px 30px;
+  margin-bottom: 18px;
+}
+.ubp-hero__left  { flex: 1; min-width: 0; }
+.ubp-hero__right { display: flex; align-items: center; gap: 14px; color: #475569; max-width: 240px; }
+.ubp-hero__label { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #2563eb; }
+.ubp-hero__price { font-size: 36px; font-weight: 800; margin: 8px 0 4px; }
+.ubp-hero__usd   { font-size: 16px; font-weight: 500; color: #64748b; }
+.ubp-hero__sub   { margin: 0; font-size: 13px; color: #475569; }
+.ubp-hero__current { font-weight: 700; font-size: 15px; color: #0f172a; }
+
+.ubp-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin-bottom: 24px;
+}
+.ubp-stat { background: white; border: 1px solid #e2e8f0; border-radius: 10px; padding: 16px 18px; }
+.ubp-stat__value { font-size: 22px; font-weight: 700; }
+.ubp-stat__label { font-size: 12.5px; color: #64748b; margin-top: 4px; }
+
+.ubp-invoices h2 {
+  font-size: 16px; font-weight: 700; margin: 0 0 12px;
+  display: flex; align-items: center; gap: 8px;
+  color: #334155;
+}
+.ubp-invoices__empty {
+  background: white; border: 1px dashed #e2e8f0; border-radius: 10px;
+  padding: 32px 16px; text-align: center; color: #94a3b8;
+}
+.ubp-invoices__empty p { margin: 12px 0 0; font-size: 13.5px; }
+.ubp-invoices__table {
+  width: 100%;
+  border-collapse: separate; border-spacing: 0;
+  background: white; border: 1px solid #e2e8f0; border-radius: 10px; overflow: hidden;
+  font-size: 13.5px;
+}
+.ubp-invoices__table th, .ubp-invoices__table td { padding: 10px 14px; text-align: left; }
+.ubp-invoices__table thead { background: #f8fafc; color: #475569; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+.ubp-invoices__table tbody tr:not(:last-child) td { border-bottom: 1px solid #f1f5f9; }
+
+.ubp-min-tag {
+  display: inline-block;
+  margin-left: 8px;
+  background: #fef3c7;
+  color: #854d0e;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.ubp-status {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.ubp-status--pending { background: #fef3c7; color: #854d0e; }
+.ubp-status--paid    { background: #dcfce7; color: #15803d; }
+.ubp-status--failed  { background: #fee2e2; color: #b91c1c; }
+.ubp-status--waived  { background: #f1f5f9; color: #475569; }
+
+.ubp-btn {
+  padding: 8px 14px; border-radius: 8px;
+  background: #2563eb; color: white;
+  border: 1px solid transparent;
+  font-weight: 600; font-size: 13px; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.ubp-btn--ghost { background: white; color: #0f172a; border-color: #cbd5e1; }
+.ubp-btn--ghost:hover { background: #f8fafc; }

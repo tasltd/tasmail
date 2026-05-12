@@ -81,3 +81,40 @@ export async function subscribe(data: SubscribeRequest): Promise<SubscribeRespon
 export async function listPayments(): Promise<Payment[]> {
   return apiClient.get<Payment[]>('/billing/payments');
 }
+
+// =====================================================================
+// TMAIL-178/179 — usage-based billing
+// =====================================================================
+
+export interface UsageResponse {
+  period_start: string;          // YYYY-MM-DD
+  period_end: string;            // YYYY-MM-DD
+  avg_storage_bytes: number;
+  peak_storage_bytes: number;
+  current_storage_bytes: number;
+  sample_count: number;
+  projected_amount_ghs: number;
+  projected_minimum_applied: boolean;
+  projected_billed_gb: number;
+  ghs_per_gb: number;
+  ghs_monthly_min: number;
+}
+
+export interface UsageInvoiceRow {
+  id: string;
+  period_start: string;
+  period_end: string;
+  avg_storage_bytes: number;
+  amount_ghs: number;
+  minimum_applied: boolean;
+  status: 'pending' | 'paid' | 'failed' | 'waived';
+  provider: string | null;
+  provider_reference: string | null;
+  paid_at: string | null;
+  created_at: string | null;
+}
+
+export const usageBillingApi = {
+  usage: () => apiClient.get<UsageResponse>('/billing/usage'),
+  invoices: () => apiClient.get<UsageInvoiceRow[]>('/billing/invoices'),
+};

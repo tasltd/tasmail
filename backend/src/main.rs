@@ -88,6 +88,14 @@ async fn main() -> anyhow::Result<()> {
     .with_worker_concurrency(4);
     queue_processor.start();
 
+    // TMAIL-177: usage-based billing rollup. Wakes daily by default; the operator can
+    // bump TASMAIL_BILLING_ROLLUP_SECS for testing (e.g., 60s in dev).
+    let rollup_secs: u64 = std::env::var("TASMAIL_BILLING_ROLLUP_SECS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(86_400);
+    services::billing_rollup::BillingRollup::new(std::sync::Arc::new(pool.clone()), rollup_secs).start();
+
     // Added: Install Prometheus metrics recorder and collect process metrics (TMAIL-41)
     let metrics_handle = handlers::metrics::install_prometheus_recorder();
     // Added: Register process metrics collector (CPU, memory, FDs)

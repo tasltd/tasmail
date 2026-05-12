@@ -1,16 +1,43 @@
 # Product Requirements Document (PRD)
-# TASMail — Self-Hosted Email Service
+# TASMail — Webmail UI for any IMAP/SMTP server
 
-**Version:** 1.0
-**Date:** 2026-03-07
+**Version:** 2.0
+**Date:** 2026-05-12
 **Author:** TAS Engineering
-**Status:** Draft
+**Status:** Live (mail.techatscale.io)
 
 ---
 
 ## 1. Executive Summary
 
-TASMail is a self-hosted email service that provides a modern webmail experience through a React single-page application (SPA) frontend connected to a high-performance Rust backend (Axum). It leverages proven open-source Linux mail engines — Postfix for SMTP mail transfer and Dovecot for IMAP mail delivery/access — to handle the core email protocol responsibilities. The Rust backend acts as an intelligent API proxy between the browser-based UI and the mail infrastructure, providing authentication, session management, real-time notifications, and a clean REST/WebSocket API.
+TASMail is a fast, modern webmail client that connects to **any** IMAP/SMTP server its
+users already have — Gmail, Outlook, Zoho, FastMail, corporate Exchange, an existing
+Dovecot, ProtonMail Bridge, etc. Users sign up for a TASMail account, attach the
+credentials of their existing mailbox in an onboarding wizard, and then use TASMail's
+React SPA as the daily-driver UI for that mailbox across desktop and mobile. The Rust
+(Axum) backend proxies IMAP/SMTP for the browser using AES-256-GCM-encrypted
+credentials; mail bodies and attachments are never persisted to TASMail's database.
+
+### 1.0 Pricing
+
+Two tiers shipping today:
+
+| Plan | Price | What's included |
+|------|-------|-----------------|
+| **TASMail BYOK** | **GHS 1.00 / GB · month**, **GHS 5.00** monthly minimum | BYO IMAP/SMTP, unlimited devices, encrypted credentials, email + chat support |
+| **Enterprise** | Custom quote | Single-tenant deployment, SAML/OIDC SSO, on-premise option, white-glove onboarding + SLA, compliance reporting |
+
+Storage is metered nightly from the user's IMAP server (`used_bytes` rolled up
+into `billing_periods`), billed at month-close into `billing_invoices`, and settled
+through Paystack / Mastercard MPGS / Cybersource invoicing / bank transfer (the
+same providers PayPro uses, configured per-tenant in `payment_provider_config`).
+Visitors outside Ghana see an indicative USD equivalent next to every GHS price.
+The future product home is `tasmail.com`; we're on `mail.techatscale.io` while
+the move is in flight.
+
+The free / self-host tier was deprecated in v2.0; see
+`docs/SELF-HOST-MAIL-SERVERS.md` for operators who still want to run their
+own Postfix/Dovecot alongside TASMail.
 
 ### 1.1 Problem Statement
 

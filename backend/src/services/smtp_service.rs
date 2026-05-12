@@ -271,6 +271,10 @@ mod tests {
             host: "smtp.example.com".to_string(),
             port: 587,
             tls: true,
+            // notification_* fields gained in commit 4 (TMAIL noreply notification path).
+            notification_from: None,
+            notification_username: None,
+            notification_password: None,
         };
         let _service = SmtpService::new(config);
         // Service created without panic

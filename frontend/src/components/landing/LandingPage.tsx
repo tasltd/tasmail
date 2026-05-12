@@ -55,7 +55,7 @@ export function LandingPage() {
           </Link>
           <nav className="landing-header__nav">
             <a href="#features">Features</a>
-            <a href="#pricing">Pricing</a>
+            <Link to="/pricing">Pricing</Link>
             <a href="#enterprise-quote">Enterprise</a>
             <Link to="/login" className="landing-btn landing-btn--ghost">Sign in</Link>
             <Link to="/signup" className="landing-btn landing-btn--primary">Get started</Link>

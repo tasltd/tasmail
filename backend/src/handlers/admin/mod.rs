@@ -5,3 +5,5 @@ pub mod users;
 pub mod payment_providers;
 // Added (TMAIL-165): Admin CRUD for runtime feature flags.
 pub mod feature_flags;
+// Added (TMAIL-183): Admin endpoints for the enterprise_quote_requests inbox.
+pub mod quote_requests;

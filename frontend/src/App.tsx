@@ -8,7 +8,10 @@ import { LoginPage } from './components/auth/LoginPage';
 import { SignupPage } from './components/auth/SignupPage';
 import { OnboardingWizard } from './components/onboarding/OnboardingWizard';
 import { LandingPage } from './components/landing/LandingPage';
+import { PricingPage } from './components/landing/PricingPage';
 import { FeatureFlagsManager } from './components/admin/FeatureFlagsManager';
+import { QuoteRequestsManager } from './components/admin/QuoteRequestsManager';
+import { UsageBillingPage } from './components/billing/UsageBillingPage';
 import { ErrorBoundary } from './components/shared/ErrorBoundary';
 import './App.css';
 
@@ -72,6 +75,8 @@ function AppContent() {
       <Routes>
         {/* Public landing page at the root */}
         <Route path="/" element={<LandingPage />} />
+        {/* TMAIL-174: dedicated pricing detail page (calculator + FAQ). */}
+        <Route path="/pricing" element={<PricingPage />} />
         {/* Public login page */}
         <Route path="/login" element={<LoginRoute />} />
         {/* Public BYOK signup page */}
@@ -100,6 +105,24 @@ function AppContent() {
           element={
             <RequireAuth>
               <FeatureFlagsManager />
+            </RequireAuth>
+          }
+        />
+        {/* TMAIL-185: admin dashboard for the enterprise quote-request inbox. */}
+        <Route
+          path="/admin/quote-requests"
+          element={
+            <RequireAuth>
+              <QuoteRequestsManager />
+            </RequireAuth>
+          }
+        />
+        {/* TMAIL-179: in-app usage & billing dashboard for the BYOK plan. */}
+        <Route
+          path="/billing"
+          element={
+            <RequireAuth>
+              <UsageBillingPage />
             </RequireAuth>
           }
         />

@@ -78,6 +78,8 @@ pub mod imap_config;
 pub mod mailbox_provision;
 // Added (TMAIL-182): public enterprise quote-request endpoint.
 pub mod enterprise_quote;
+// Added (TMAIL-178/179): usage-based billing endpoints for the in-app dashboard.
+pub mod usage_billing;
 // Added: Plugin management handlers for extensible plugin architecture (TMAIL-132)
 pub mod plugins;
 // Added: Contact group and vCard import/export/merge handlers (TMAIL-119)
