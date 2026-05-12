@@ -11,20 +11,25 @@ export default defineConfig({
   expect: {
     timeout: 5_000,
   },
-  // NOTE: Run tests sequentially in CI for stability; parallel locally
-  fullyParallel: true,
+  // BYOK signup specs share a database — keep them serial so user-collision races
+  // can't flake the suite. Set PLAYWRIGHT_PARALLEL=true for local-only smoke runs.
+  fullyParallel: process.env.PLAYWRIGHT_PARALLEL === 'true',
+  workers: process.env.PLAYWRIGHT_PARALLEL === 'true' ? undefined : 1,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
-  workers: process.env.CI ? 1 : undefined,
   reporter: 'html',
   use: {
-    // Added: Vite dev server base URL
-    baseURL: 'http://localhost:5173',
+    // Default to the live tunnel/proxy URL so specs run end-to-end through the same
+    // Apache → SSH tunnel → backend stack a real user hits. Override with
+    // PLAYWRIGHT_BASE_URL=http://localhost:5273 for local dev runs.
+    baseURL: process.env.PLAYWRIGHT_BASE_URL ?? 'https://mail.techatscale.io',
     // Added: 60s navigation timeout for slow page loads
     navigationTimeout: 60_000,
     trace: 'on-first-retry',
     // Added: Capture screenshot on failure automatically
     screenshot: screenshotsEnabled ? 'on' : 'off',
+    // Production URL has Let's Encrypt cert; localhost dev cert won't be valid.
+    ignoreHTTPSErrors: true,
   },
   projects: [
     {
