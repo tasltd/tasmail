@@ -1,3 +1,7 @@
 pub mod audit;
 pub mod domains;
 pub mod users;
+// Added: Admin CRUD for payment_provider_config (PayPro-style DB-backed credentials).
+pub mod payment_providers;
+// Added (TMAIL-165): Admin CRUD for runtime feature flags.
+pub mod feature_flags;

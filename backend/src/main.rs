@@ -75,12 +75,17 @@ async fn main() -> anyhow::Result<()> {
     );
     scheduler.start();
 
-    // Added: Start background queue processor for retry-enabled email sending (TMAIL-58)
+    // Changed: Queue processor is now BYOK — it loads each item's per-user SMTP config from
+    // smtp_configurations and decrypts the password using the JWT-derived AES key.
+    // Production-grade: FOR UPDATE SKIP LOCKED via EmailQueueItem::claim_batch lets multiple
+    // worker processes run safely; Prometheus metrics are emitted on every cycle.
     let queue_processor = services::queue_processor::QueueProcessor::new(
         std::sync::Arc::new(pool.clone()),
-        config.smtp.clone(),
+        config.jwt.clone(),
         5,
-    );
+    )
+    .with_batch_size(50)
+    .with_worker_concurrency(4);
     queue_processor.start();
 
     // Added: Install Prometheus metrics recorder and collect process metrics (TMAIL-41)
@@ -92,6 +97,8 @@ async fn main() -> anyhow::Result<()> {
 
     // Added: Initialize Redis cache service (degrades gracefully if Redis unavailable)
     let cache = services::cache_service::CacheService::new(&config.redis).await;
+    // Added: Encryption service derived from JWT secret — used for DB-stored credentials
+    let encryption = services::encryption::EncryptionService::from_jwt_secret(&config.jwt.secret);
 
     let state = AppState {
         db: pool,
@@ -100,6 +107,8 @@ async fn main() -> anyhow::Result<()> {
         metrics_handle: Some(metrics_handle),
         // Added: Redis cache for branding/quota/rate-limit/session caching
         cache,
+        // Added: Encryption service for DB-stored payment credentials
+        encryption,
     };
 
     let app = router::create_router(state);

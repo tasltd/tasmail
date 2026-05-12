@@ -66,9 +66,13 @@ pub async fn list_messages(
         .await?
         .ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
 
-    let imap_service = ImapService::new(state.config.imap.clone());
+    let imap_service = ImapService::for_user(&state, mailbox.id).await?;
+    // BYOK: borrow the user-specific IMAP credentials loaded from imap_configurations.
+    let (_imap_user, _imap_pass) = imap_service
+        .user_creds()
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("BYOK IMAP credentials missing")))?;
     let (messages, total) = imap_service
-        .list_messages(&mailbox.username, &mailbox.password_hash, &folder, page, page_size)
+        .list_messages(_imap_user, _imap_pass, &folder, page, page_size)
         .await?;
 
     Ok(Json(serde_json::json!({
@@ -94,9 +98,13 @@ pub async fn get_message(
         .await?
         .ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
 
-    let imap_service = ImapService::new(state.config.imap.clone());
+    let imap_service = ImapService::for_user(&state, mailbox.id).await?;
+    // BYOK: borrow the user-specific IMAP credentials loaded from imap_configurations.
+    let (_imap_user, _imap_pass) = imap_service
+        .user_creds()
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("BYOK IMAP credentials missing")))?;
     let message = imap_service
-        .get_message(&mailbox.username, &mailbox.password_hash, &folder, uid)
+        .get_message(_imap_user, _imap_pass, &folder, uid)
         .await?;
 
     Ok(Json(message))
@@ -117,10 +125,28 @@ pub async fn send_message(
         .await?
         .ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
 
-    let smtp_service = SmtpService::new(state.config.smtp.clone());
-    smtp_service
-        .send(&mailbox.username, &mailbox.password_hash, &body)
-        .await?;
+    // BYOK send: load the user's default SMTP server from smtp_configurations + decrypt the password.
+    // The IMAP credentials we loaded above are the wrong key for SMTP — they likely won't even authenticate.
+    let smtp_cfg = crate::models::smtp_config::SmtpConfiguration::find_default(&state.db, mailbox.id)
+        .await?
+        .ok_or_else(|| AppError::ServiceUnavailable(
+            "No SMTP server configured. Complete the onboarding wizard at /onboarding.".into()
+        ))?;
+    let enc_key = crate::models::ai_config::derive_encryption_key(&state.config.jwt.secret);
+    let smtp_password = smtp_cfg.decrypted_password(&enc_key)
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("Failed to decrypt SMTP password: {}", e)))?;
+    let smtp_from = smtp_cfg.from_address.clone().unwrap_or_else(|| smtp_cfg.username.clone());
+
+    let smtp_runtime_cfg = crate::config::SmtpConfig {
+        host: smtp_cfg.host.clone(),
+        port: smtp_cfg.port as u16,
+        tls: matches!(smtp_cfg.encryption.as_str(), "ssl" | "starttls"),
+        notification_from: None,
+        notification_username: None,
+        notification_password: None,
+    };
+    let smtp_service = SmtpService::new(smtp_runtime_cfg);
+    smtp_service.send(&smtp_from, &smtp_password, &body).await?;
 
     Ok(StatusCode::CREATED)
 }
@@ -147,9 +173,13 @@ pub async fn search_messages(
         .ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
 
     let folder = query.folder.as_deref().unwrap_or("INBOX");
-    let imap_service = ImapService::new(state.config.imap.clone());
+    let imap_service = ImapService::for_user(&state, mailbox.id).await?;
+    // BYOK: borrow the user-specific IMAP credentials loaded from imap_configurations.
+    let (_imap_user, _imap_pass) = imap_service
+        .user_creds()
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("BYOK IMAP credentials missing")))?;
     let messages = imap_service
-        .search_messages(&mailbox.username, &mailbox.password_hash, folder, &query.q)
+        .search_messages(_imap_user, _imap_pass, folder, &query.q)
         .await?;
 
     Ok(Json(serde_json::json!({
@@ -175,9 +205,13 @@ pub async fn delete_message(
         .await?
         .ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
 
-    let imap_service = ImapService::new(state.config.imap.clone());
+    let imap_service = ImapService::for_user(&state, mailbox.id).await?;
+    // BYOK: borrow the user-specific IMAP credentials loaded from imap_configurations.
+    let (_imap_user, _imap_pass) = imap_service
+        .user_creds()
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("BYOK IMAP credentials missing")))?;
     imap_service
-        .delete_message(&mailbox.username, &mailbox.password_hash, &folder, uid)
+        .delete_message(_imap_user, _imap_pass, &folder, uid)
         .await?;
 
     Ok(StatusCode::NO_CONTENT)
@@ -199,9 +233,13 @@ pub async fn move_message(
         .await?
         .ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
 
-    let imap_service = ImapService::new(state.config.imap.clone());
+    let imap_service = ImapService::for_user(&state, mailbox.id).await?;
+    // BYOK: borrow the user-specific IMAP credentials loaded from imap_configurations.
+    let (_imap_user, _imap_pass) = imap_service
+        .user_creds()
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("BYOK IMAP credentials missing")))?;
     imap_service
-        .move_message(&mailbox.username, &mailbox.password_hash, &folder, uid, &body.to_folder)
+        .move_message(_imap_user, _imap_pass, &folder, uid, &body.to_folder)
         .await?;
 
     Ok(StatusCode::NO_CONTENT)
@@ -223,9 +261,13 @@ pub async fn flag_message(
         .await?
         .ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
 
-    let imap_service = ImapService::new(state.config.imap.clone());
+    let imap_service = ImapService::for_user(&state, mailbox.id).await?;
+    // BYOK: borrow the user-specific IMAP credentials loaded from imap_configurations.
+    let (_imap_user, _imap_pass) = imap_service
+        .user_creds()
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("BYOK IMAP credentials missing")))?;
     imap_service
-        .set_flag(&mailbox.username, &mailbox.password_hash, &folder, uid, &body.flag, body.add)
+        .set_flag(_imap_user, _imap_pass, &folder, uid, &body.flag, body.add)
         .await?;
 
     Ok(StatusCode::NO_CONTENT)
@@ -277,9 +319,13 @@ pub async fn save_draft(
         raw_msg.push_str(text);
     }
 
-    let imap_service = ImapService::new(state.config.imap.clone());
+    let imap_service = ImapService::for_user(&state, mailbox.id).await?;
+    // BYOK: borrow the user-specific IMAP credentials loaded from imap_configurations.
+    let (_imap_user, _imap_pass) = imap_service
+        .user_creds()
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("BYOK IMAP credentials missing")))?;
     imap_service
-        .save_draft(&mailbox.username, &mailbox.password_hash, raw_msg.as_bytes())
+        .save_draft(_imap_user, _imap_pass, raw_msg.as_bytes())
         .await?;
 
     Ok(StatusCode::CREATED)

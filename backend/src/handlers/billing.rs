@@ -1,6 +1,6 @@
-// Added: Billing handlers for Paystack/MoMo payment integration (TMAIL-46)
-// PURPOSE: Endpoints for listing plans, managing subscriptions, processing payments and webhooks
-// NOTE: Webhook endpoints are public (no auth) — verified via HMAC signature (Paystack) or callback token (MoMo)
+// Changed: Billing handlers now match PayPro's provider set — Paystack, Mastercard, Cybersource, BankTransfer (TMAIL-46).
+// MoMo provider removed: TASMail mirrors PayPro, which does not use MoMo.
+// Webhook endpoints are public (no auth) — verified via HMAC signature (Paystack/Mastercard).
 
 use axum::{
     extract::{State, Json as AxumJson},
@@ -10,12 +10,32 @@ use axum::{
 
 use crate::error::AppError;
 use crate::models::billing::{BillingPlan, Payment, Subscription, SubscribeRequest, SubscribeResponse};
+// Added: DB-backed credential lookup (PayPro PaymentProviderConfig pattern). Replaces env-var config.
+use crate::models::payment_provider_config::{DecryptedProviderConfig, PaymentProviderConfig};
 use crate::services::auth_service::Claims;
 use crate::services::payment_service::{
-    verify_paystack_signature, PaystackClient, PaystackInitRequest, PaystackWebhookEvent,
-    MomoClient, MomoPaymentStatus,
+    verify_mastercard_webhook, verify_paystack_signature, BankInstructionConfig, CybersourceClient,
+    CybersourceAmount, CybersourceCustomerInfo, CybersourceInvoiceInfo, CybersourceInvoiceRequest,
+    CybersourceOrderInfo, MastercardClient, PaystackClient, PaystackInitRequest, PaystackWebhookEvent,
 };
 use crate::state::AppState;
+
+/// PURPOSE: Load and decrypt the active config row for a provider, returning a 503 if no config exists.
+/// Mirrors PayPro's `PaymentProviderConfigService.findEffectiveConfig(provider, tenantId)`.
+async fn load_provider(
+    state: &AppState,
+    provider: &str,
+) -> Result<DecryptedProviderConfig, AppError> {
+    let row = PaymentProviderConfig::resolve(&state.db, provider, None)
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("DB error loading {} config: {}", provider, e)))?
+        .ok_or_else(|| AppError::ServiceUnavailable(format!(
+            "{} payment provider is not configured. Add a row in payment_provider_config.",
+            provider
+        )))?;
+    row.decrypt_with(&state.encryption)
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("Failed to decrypt {} credentials: {}", provider, e)))
+}
 
 /// PURPOSE: List all active billing plans (public endpoint)
 /// GET /api/billing/plans
@@ -58,18 +78,13 @@ pub async fn subscribe(
         return Err(AppError::BadRequest("Plan is no longer active".to_string()));
     }
 
-    // Added: Validate provider is one of the supported values
-    if body.provider != "paystack" && body.provider != "mtn_momo" {
-        return Err(AppError::BadRequest(
-            "Provider must be 'paystack' or 'mtn_momo'".to_string(),
-        ));
-    }
-
-    // Added: MoMo requires a phone number
-    if body.provider == "mtn_momo" && body.phone_number.is_none() {
-        return Err(AppError::BadRequest(
-            "phone_number is required for MTN MoMo payments".to_string(),
-        ));
+    // Changed: Provider whitelist matches PayPro's four supported providers.
+    let allowed = ["paystack", "mastercard", "cybersource", "bank_transfer"];
+    if !allowed.contains(&body.provider.as_str()) {
+        return Err(AppError::BadRequest(format!(
+            "Provider must be one of: {}",
+            allowed.join(", ")
+        )));
     }
 
     // Added: Create subscription record in pending state
@@ -92,27 +107,22 @@ pub async fn subscribe(
     )
     .await?;
 
-    // Added: Initialize with the appropriate payment provider
+    // Changed: Credentials are now loaded from the payment_provider_config DB table
+    // (mirrors PayPro's PaymentProviderConfig pattern). No env-var fallback for production secrets.
     let authorization_url = match body.provider.as_str() {
         "paystack" => {
-            let paystack_key = state
-                .config
-                .billing
-                .as_ref()
-                .and_then(|b| b.paystack_secret_key.clone())
-                .ok_or_else(|| {
-                    AppError::Internal(anyhow::anyhow!("Paystack secret key not configured"))
-                })?;
-
-            let client = PaystackClient::new(paystack_key);
+            let pcfg = load_provider(&state, "PAYSTACK").await?;
+            let secret = pcfg.secret_key.ok_or_else(|| {
+                AppError::ServiceUnavailable("Paystack secret_key missing in DB config".into())
+            })?;
+            let client = PaystackClient::new(secret);
             let init_req = PaystackInitRequest {
                 email: claims.username.clone(),
                 amount: amount_pesewas,
-                currency: "GHS".to_string(),
+                currency: pcfg.currency.unwrap_or_else(|| "GHS".to_string()),
                 reference: reference.clone(),
-                callback_url: None,
+                callback_url: pcfg.callback_url,
             };
-
             match client.initialize_transaction(&init_req).await {
                 Ok(resp) if resp.status => resp.data.map(|d| d.authorization_url),
                 Ok(resp) => {
@@ -124,38 +134,102 @@ pub async fn subscribe(
                 }
                 Err(e) => {
                     tracing::error!("Paystack API error: {}", e);
-                    return Err(AppError::Internal(anyhow::anyhow!(
-                        "Payment provider unavailable"
-                    )));
+                    return Err(AppError::Internal(anyhow::anyhow!("Payment provider unavailable")));
                 }
             }
         }
-        "mtn_momo" => {
-            let billing_config = state.config.billing.as_ref().ok_or_else(|| {
-                AppError::Internal(anyhow::anyhow!("Billing config not set"))
+        "mastercard" => {
+            let pcfg = load_provider(&state, "MASTERCARD").await?;
+            let merchant_id = pcfg.merchant_id.ok_or_else(|| {
+                AppError::ServiceUnavailable("Mastercard merchant_id missing in DB config".into())
             })?;
-            let momo_key = billing_config.momo_api_key.clone().ok_or_else(|| {
-                AppError::Internal(anyhow::anyhow!("MoMo API key not configured"))
+            let api_password = pcfg.api_password.ok_or_else(|| {
+                AppError::ServiceUnavailable("Mastercard api_password missing in DB config".into())
             })?;
-            let momo_user = billing_config.momo_api_user.clone().ok_or_else(|| {
-                AppError::Internal(anyhow::anyhow!("MoMo API user not configured"))
-            })?;
+            let mut client = MastercardClient::new(merchant_id, api_password);
+            if let Some(url) = pcfg.base_url { client = client.with_base_url(url); }
+            if let Some(cur) = pcfg.currency { client = client.with_currency(cur); }
 
-            let client = MomoClient::new(momo_key, momo_user);
-            let phone = body.phone_number.as_deref().unwrap_or_default();
-            let amount_str = format!("{:.2}", plan.price_cedis);
-
-            if let Err(e) = client
-                .request_payment(&reference, &amount_str, phone, "TASMail subscription")
-                .await
-            {
-                tracing::error!("MoMo payment request failed: {}", e);
-                return Err(AppError::Internal(anyhow::anyhow!(
-                    "MoMo payment request failed"
-                )));
+            let return_url = pcfg.callback_url.unwrap_or_else(|| {
+                format!("https://mail.techatscale.io/billing/callback/mastercard?ref={}", reference)
+            });
+            match client.initialize_payment(&reference, plan.price_cedis, &return_url).await {
+                Ok(resp) if resp.result == "SUCCESS" => {
+                    resp.session.map(|s| format!("mpgs:session:{}", s.id))
+                }
+                Ok(resp) => {
+                    tracing::error!("Mastercard init failed: result={}", resp.result);
+                    return Err(AppError::Internal(anyhow::anyhow!(
+                        "Mastercard payment init failed: {}",
+                        resp.result
+                    )));
+                }
+                Err(e) => {
+                    tracing::error!("Mastercard API error: {}", e);
+                    return Err(AppError::Internal(anyhow::anyhow!("Mastercard provider unavailable")));
+                }
             }
-            // NOTE: MoMo doesn't return a URL — payment is via USSD on the user's phone
-            None
+        }
+        "cybersource" => {
+            let pcfg = load_provider(&state, "CYBERSOURCE").await?;
+            let merchant_id = pcfg.merchant_id.ok_or_else(|| {
+                AppError::ServiceUnavailable("Cybersource merchant_id missing in DB config".into())
+            })?;
+            let key_id = pcfg.key_id.ok_or_else(|| {
+                AppError::ServiceUnavailable("Cybersource key_id missing in DB config".into())
+            })?;
+            let shared = pcfg.shared_secret_key.ok_or_else(|| {
+                AppError::ServiceUnavailable("Cybersource shared_secret_key missing in DB config".into())
+            })?;
+            let mut client = CybersourceClient::new(merchant_id, key_id, shared);
+            if let Some(url) = pcfg.base_url { client = client.with_base_url(url); }
+
+            let due = (chrono::Utc::now() + chrono::Duration::days(7)).format("%Y-%m-%d").to_string();
+            let req = CybersourceInvoiceRequest {
+                invoice_information: CybersourceInvoiceInfo {
+                    invoice_number: reference.clone(),
+                    description: "TASMail Subscription".to_string(),
+                    due_date: due,
+                    send_immediately: true,
+                },
+                customer_information: CybersourceCustomerInfo {
+                    name: claims.username.clone(),
+                    email: claims.username.clone(),
+                },
+                order_information: CybersourceOrderInfo {
+                    amount_details: CybersourceAmount {
+                        total_amount: format!("{:.2}", plan.price_cedis),
+                        currency: pcfg.currency.unwrap_or_else(|| "GHS".to_string()),
+                    },
+                },
+            };
+            match client.initialize_payment(req).await {
+                Ok(resp) => resp.id.map(|invoice_id| format!("cybersource:invoice:{}", invoice_id)),
+                Err(e) => {
+                    tracing::error!("Cybersource API error: {}", e);
+                    return Err(AppError::Internal(anyhow::anyhow!("Cybersource provider unavailable")));
+                }
+            }
+        }
+        "bank_transfer" => {
+            // Bank-transfer details live in pcfg.bank_details (JSONB), not in encrypted columns.
+            let pcfg = load_provider(&state, "BANK_TRANSFER").await?;
+            let details = pcfg.bank_details.clone().ok_or_else(|| {
+                AppError::ServiceUnavailable(
+                    "BANK_TRANSFER row is missing bank_details JSON".into(),
+                )
+            })?;
+            let cfg = BankInstructionConfig {
+                bank_name: details.get("bank_name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                account_name: details.get("account_name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                account_number: details.get("account_number").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                branch: details.get("branch").and_then(|v| v.as_str()).map(String::from),
+                swift_code: details.get("swift_code").and_then(|v| v.as_str()).map(String::from),
+                reference_prefix: details.get("reference_prefix").and_then(|v| v.as_str()).map(String::from),
+            };
+            let currency = pcfg.currency.unwrap_or_else(|| "GHS".to_string());
+            let instructions = cfg.build_instructions(plan.price_cedis, &currency, &reference);
+            Some(format!("bank_transfer:{}", instructions))
         }
         _ => unreachable!(),
     };
@@ -185,12 +259,11 @@ pub async fn webhook_paystack(
         .and_then(|v| v.to_str().ok())
         .ok_or_else(|| AppError::BadRequest("Missing Paystack signature".to_string()))?;
 
-    let paystack_key = state
-        .config
-        .billing
-        .as_ref()
-        .and_then(|b| b.paystack_secret_key.clone())
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Paystack secret key not configured")))?;
+    // Changed: Load Paystack signing secret from payment_provider_config DB row (not env).
+    let pcfg = load_provider(&state, "PAYSTACK").await?;
+    let paystack_key = pcfg.secret_key.ok_or_else(|| {
+        AppError::ServiceUnavailable("Paystack secret_key missing in DB config".into())
+    })?;
 
     if !verify_paystack_signature(&paystack_key, &body, signature) {
         tracing::warn!("Invalid Paystack webhook signature");
@@ -224,29 +297,48 @@ pub async fn webhook_paystack(
     Ok(StatusCode::OK)
 }
 
-/// PURPOSE: MTN MoMo callback handler — processes payment status updates
-/// POST /api/billing/webhook/momo
-pub async fn webhook_momo(
+/// PURPOSE: Mastercard MPGS webhook handler — verifies HMAC-SHA256 signature, activates subscription on PAYMENT_SUCCESS.
+/// POST /api/billing/webhook/mastercard
+/// Replaces the previous MoMo webhook (TASMail mirrors PayPro, which uses Mastercard not MoMo).
+pub async fn webhook_mastercard(
     State(state): State<AppState>,
-    Json(body): Json<MomoPaymentStatus>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
 ) -> Result<StatusCode, AppError> {
-    tracing::info!("MoMo webhook: status={}", body.status);
+    let signature = headers
+        .get("x-notification-secret")
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| AppError::BadRequest("Missing Mastercard signature".to_string()))?;
 
-    let external_id = body
-        .external_id
-        .as_deref()
-        .ok_or_else(|| AppError::BadRequest("Missing externalId in MoMo callback".to_string()))?;
+    // Changed: Load Mastercard webhook secret from payment_provider_config DB row.
+    let pcfg = load_provider(&state, "MASTERCARD").await?;
+    let secret = pcfg.webhook_secret.ok_or_else(|| {
+        AppError::ServiceUnavailable("Mastercard webhook_secret missing in DB config".into())
+    })?;
 
-    // Added: Map MoMo status to our payment status
-    let new_status = match body.status.as_str() {
-        "SUCCESSFUL" => "success",
-        "FAILED" | "REJECTED" => "failed",
+    if !verify_mastercard_webhook(&secret, &body, signature) {
+        tracing::warn!("Invalid Mastercard webhook signature");
+        return Err(AppError::Unauthorized("Invalid signature".to_string()));
+    }
+
+    let event: serde_json::Value = serde_json::from_slice(&body)
+        .map_err(|e| AppError::BadRequest(format!("Invalid Mastercard webhook payload: {}", e)))?;
+
+    let order_id = event
+        .get("order")
+        .and_then(|o| o.get("id"))
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| AppError::BadRequest("Missing order.id in Mastercard webhook".to_string()))?;
+    let result = event.get("result").and_then(|v| v.as_str()).unwrap_or("");
+    let new_status = match result {
+        "SUCCESS" | "CAPTURED" => "success",
+        "FAILURE" | "DECLINED" => "failed",
         _ => "pending",
     };
 
-    let metadata = serde_json::to_value(&body).unwrap_or_default();
-
-    if let Some(payment) = Payment::update_status(&state.db, external_id, new_status, metadata).await? {
+    if let Some(payment) =
+        Payment::update_status(&state.db, order_id, new_status, event.clone()).await?
+    {
         if new_status == "success" {
             if let Some(sub_id) = payment.subscription_id {
                 let now = chrono::Utc::now();

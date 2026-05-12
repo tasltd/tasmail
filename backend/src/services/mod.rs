@@ -48,3 +48,9 @@ pub mod deliverability_service;
 pub mod push_service;
 // Added: Redis cache service for session/branding/rate-limit/token-blacklist caching
 pub mod cache_service;
+// Added: Centralised AES-256-GCM encryption service used by DB-stored credentials.
+pub mod encryption;
+// Added: Per-request DB connection helpers that prime RLS session vars (TMAIL-161).
+pub mod db_session;
+// Added (TMAIL-165): Cached runtime feature flags.
+pub mod feature_flags;

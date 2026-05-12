@@ -74,8 +74,8 @@ impl EmailQueueItem {
         .await
     }
 
-    /// PURPOSE: Fetch items ready to send (pending or failed with next_retry_at <= NOW)
-    /// CONSTRAINTS: Returns at most `limit` items ordered by next_retry_at ASC
+    /// PURPOSE: Fetch items ready to send (pending or failed with next_retry_at <= NOW).
+    /// Kept for tests / introspection — the worker uses `claim_batch` instead.
     pub async fn fetch_ready(
         pool: &PgPool,
         limit: i64,
@@ -85,6 +85,37 @@ impl EmailQueueItem {
              WHERE status IN ('pending', 'failed') AND next_retry_at <= NOW()
              ORDER BY next_retry_at ASC
              LIMIT $1"
+        )
+        .bind(limit)
+        .fetch_all(pool)
+        .await
+    }
+
+    /// PURPOSE: Atomically claim a batch of ready items by transitioning them from
+    /// pending/failed → sending in a single statement. Uses `FOR UPDATE SKIP LOCKED`
+    /// so multiple worker instances/processes can run concurrently without re-sending
+    /// the same email.
+    ///
+    /// PRODUCTION-GRADE: Each item is claimed once across the entire fleet of workers.
+    /// CTE pattern is the standard Postgres recipe for "competing consumers".
+    pub async fn claim_batch(
+        pool: &PgPool,
+        limit: i64,
+    ) -> Result<Vec<Self>, sqlx::Error> {
+        sqlx::query_as::<_, EmailQueueItem>(
+            "WITH claimable AS (
+                 SELECT id
+                 FROM email_queue
+                 WHERE status IN ('pending', 'failed') AND next_retry_at <= NOW()
+                 ORDER BY next_retry_at ASC
+                 LIMIT $1
+                 FOR UPDATE SKIP LOCKED
+             )
+             UPDATE email_queue eq
+             SET status = 'sending'
+             FROM claimable
+             WHERE eq.id = claimable.id
+             RETURNING eq.*",
         )
         .bind(limit)
         .fetch_all(pool)

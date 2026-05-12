@@ -178,6 +178,12 @@ impl SmtpConfiguration {
         .await
     }
 
+    /// Added: Decrypt the stored SMTP password using the same AES-256-GCM key shared with ai_config.
+    /// Returns the plaintext password ready to be passed to lettre's `Credentials`.
+    pub fn decrypted_password(&self, key: &[u8; 32]) -> Result<String, String> {
+        decrypt_api_key(&self.encrypted_password, key)
+    }
+
     /// PURPOSE: Create a new SMTP config
     pub async fn create(
         pool: &PgPool,

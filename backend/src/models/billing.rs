@@ -57,11 +57,13 @@ pub struct Payment {
 }
 
 /// PURPOSE: Request body for subscribing to a plan
+/// Changed: Provider whitelist is now {paystack, mastercard, cybersource, bank_transfer} (PayPro parity).
+/// `phone_number` retained for backwards compatibility but no longer required.
 #[derive(Debug, Deserialize)]
 pub struct SubscribeRequest {
     pub plan_id: Uuid,
     pub provider: String,
-    // Added: Optional phone number for MTN MoMo payments
+    #[serde(default)]
     pub phone_number: Option<String>,
 }
 
@@ -221,12 +223,19 @@ mod tests {
     }
 
     #[test]
-    fn test_subscribe_request_with_phone() {
-        // Added: Verify MoMo request includes phone number
-        let json = r#"{"plan_id": "550e8400-e29b-41d4-a716-446655440000", "provider": "mtn_momo", "phone_number": "0241234567"}"#;
+    fn test_subscribe_request_mastercard() {
+        // Changed: MoMo replaced by Mastercard (PayPro provider parity).
+        let json = r#"{"plan_id": "550e8400-e29b-41d4-a716-446655440000", "provider": "mastercard"}"#;
         let req: SubscribeRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.provider, "mtn_momo");
-        assert_eq!(req.phone_number.as_deref(), Some("0241234567"));
+        assert_eq!(req.provider, "mastercard");
+        assert!(req.phone_number.is_none());
+    }
+
+    #[test]
+    fn test_subscribe_request_bank_transfer() {
+        let json = r#"{"plan_id": "550e8400-e29b-41d4-a716-446655440000", "provider": "bank_transfer"}"#;
+        let req: SubscribeRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.provider, "bank_transfer");
     }
 
     #[test]

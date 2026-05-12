@@ -121,6 +121,93 @@ impl SmtpService {
 
         Ok(())
     }
+
+    /// Added: Send a system-originated notification (billing receipt, OTP, password reset, etc.)
+    /// Uses the configured `notification_from` / `notification_username` / `notification_password`
+    /// fields from SmtpConfig — defaults to noreply@techatscale.io.
+    /// Falls back to anonymous SMTP (no auth) if no notification credentials are set, which works
+    /// for in-house Postfix relays that trust loopback.
+    pub async fn send_notification(&self, request: &SendRequest) -> Result<(), AppError> {
+        let from_address = self
+            .config
+            .notification_from
+            .clone()
+            .unwrap_or_else(|| "noreply@techatscale.io".to_string());
+
+        let from: LettreMailbox = from_address
+            .parse()
+            .map_err(|e| AppError::BadRequest(format!("Invalid notification from address: {}", e)))?;
+
+        let mut builder = Message::builder().from(from);
+        for to in &request.to {
+            let to_mailbox: LettreMailbox = to
+                .parse()
+                .map_err(|e| AppError::BadRequest(format!("Invalid to address '{}': {}", to, e)))?;
+            builder = builder.to(to_mailbox);
+        }
+        builder = builder.subject(&request.subject);
+
+        let email = match (&request.text_body, &request.html_body) {
+            (Some(text), Some(html)) => builder
+                .multipart(
+                    MultiPart::alternative()
+                        .singlepart(SinglePart::builder().header(ContentType::TEXT_PLAIN).body(text.clone()))
+                        .singlepart(SinglePart::builder().header(ContentType::TEXT_HTML).body(html.clone())),
+                )
+                .map_err(|e| AppError::Smtp(format!("Failed to build email: {}", e)))?,
+            (Some(text), None) => builder
+                .header(ContentType::TEXT_PLAIN)
+                .body(text.clone())
+                .map_err(|e| AppError::Smtp(format!("Failed to build email: {}", e)))?,
+            (None, Some(html)) => builder
+                .header(ContentType::TEXT_HTML)
+                .body(html.clone())
+                .map_err(|e| AppError::Smtp(format!("Failed to build email: {}", e)))?,
+            (None, None) => {
+                return Err(AppError::BadRequest(
+                    "Notification email must have a text or HTML body".to_string(),
+                ));
+            }
+        };
+
+        // Build transport with optional notification credentials (or anonymous loopback).
+        let transport = match (&self.config.notification_username, &self.config.notification_password) {
+            (Some(user), Some(pass)) => {
+                let creds = Credentials::new(user.clone(), pass.clone());
+                if self.config.tls {
+                    AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&self.config.host)
+                        .map_err(|e| AppError::Smtp(format!("SMTP transport error: {}", e)))?
+                        .port(self.config.port)
+                        .credentials(creds)
+                        .build()
+                } else {
+                    AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(&self.config.host)
+                        .port(self.config.port)
+                        .credentials(creds)
+                        .build()
+                }
+            }
+            _ => {
+                if self.config.tls {
+                    AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&self.config.host)
+                        .map_err(|e| AppError::Smtp(format!("SMTP transport error: {}", e)))?
+                        .port(self.config.port)
+                        .build()
+                } else {
+                    AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(&self.config.host)
+                        .port(self.config.port)
+                        .build()
+                }
+            }
+        };
+
+        transport
+            .send(email)
+            .await
+            .map_err(|e| AppError::Smtp(format!("Failed to send notification email: {}", e)))?;
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]

@@ -86,14 +86,45 @@ pub struct PushConfig {
     pub apns_key_path: Option<String>,
 }
 
-/// Added: Billing configuration for Paystack and MTN MoMo payment providers (TMAIL-46)
-/// PURPOSE: Stores API keys for payment gateway integration; all fields optional to allow partial config
-#[derive(Debug, Deserialize, Clone)]
+/// Changed: Billing configuration now mirrors PayPro's 4 supported providers.
+/// MTN MoMo removed — TASMail uses only the providers PayPro is already configured for:
+/// Paystack, Mastercard MPGS, Cybersource invoicing, and manual Bank Transfer instructions.
+/// All fields optional so partially-configured deployments keep working.
+#[derive(Debug, Deserialize, Clone, Default)]
 pub struct BillingConfig {
+    // --- Paystack ---
     pub paystack_secret_key: Option<String>,
     pub paystack_public_key: Option<String>,
-    pub momo_api_key: Option<String>,
-    pub momo_api_user: Option<String>,
+    #[serde(default)]
+    pub paystack_base_url: Option<String>,
+
+    // --- Mastercard Payment Gateway Services (MPGS) ---
+    pub mastercard_merchant_id: Option<String>,
+    pub mastercard_api_password: Option<String>,
+    #[serde(default)]
+    pub mastercard_base_url: Option<String>,
+    #[serde(default)]
+    pub mastercard_currency: Option<String>,
+    #[serde(default)]
+    pub mastercard_webhook_secret: Option<String>,
+
+    // --- Cybersource Invoicing ---
+    pub cybersource_merchant_id: Option<String>,
+    pub cybersource_key_id: Option<String>,
+    pub cybersource_shared_secret: Option<String>,
+    #[serde(default)]
+    pub cybersource_base_url: Option<String>,
+
+    // --- Bank Transfer (manual) ---
+    pub bank_name: Option<String>,
+    pub bank_account_name: Option<String>,
+    pub bank_account_number: Option<String>,
+    #[serde(default)]
+    pub bank_branch: Option<String>,
+    #[serde(default)]
+    pub bank_swift_code: Option<String>,
+    #[serde(default)]
+    pub bank_reference_prefix: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -122,6 +153,15 @@ pub struct SmtpConfig {
     pub host: String,
     pub port: u16,
     pub tls: bool,
+    // Added: System "noreply" sender for billing receipts, password resets, OTP, signup confirmations etc.
+    // Per-user outgoing mail still authenticates as the user — these credentials are used only for
+    // notifications originating from TASMail itself (not from a user mailbox).
+    #[serde(default)]
+    pub notification_from: Option<String>,
+    #[serde(default)]
+    pub notification_username: Option<String>,
+    #[serde(default)]
+    pub notification_password: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -206,6 +246,14 @@ impl Config {
                 tls: std::env::var("SMTP_TLS")
                     .map(|v| v != "false")
                     .unwrap_or(true),
+                // Added: System notification sender — defaults to noreply@techatscale.io per the
+                // TASMail product convention. Override via SMTP_NOTIFICATION_FROM env var if needed.
+                notification_from: Some(
+                    std::env::var("SMTP_NOTIFICATION_FROM")
+                        .unwrap_or_else(|_| "noreply@techatscale.io".to_string()),
+                ),
+                notification_username: std::env::var("SMTP_NOTIFICATION_USERNAME").ok(),
+                notification_password: std::env::var("SMTP_NOTIFICATION_PASSWORD").ok(),
             },
             jwt: JwtConfig {
                 // Changed: Log warning when using default dev secret (TMAIL-37)
@@ -237,22 +285,40 @@ impl Config {
                     .unwrap_or_else(default_max_file_size),
                 clamav_socket: std::env::var("CLAMAV_SOCKET").ok(),
             },
-            // Added: Billing config from env vars for TMAIL-46
+            // Changed: Billing config now spans the four PayPro providers (TMAIL-46).
+            // MoMo dropped — TASMail mirrors PayPro, which uses Paystack / Mastercard / Cybersource / Bank Transfer.
+            // Credentials are sourced from env vars at startup; production deployments mirror PayPro's
+            // PaymentProviderConfig table by passing the same values through env.
             billing: {
-                let paystack_secret = std::env::var("PAYSTACK_SECRET_KEY").ok();
-                let paystack_public = std::env::var("PAYSTACK_PUBLIC_KEY").ok();
-                let momo_key = std::env::var("MOMO_API_KEY").ok();
-                let momo_user = std::env::var("MOMO_API_USER").ok();
-                if paystack_secret.is_some() || momo_key.is_some() {
-                    Some(BillingConfig {
-                        paystack_secret_key: paystack_secret,
-                        paystack_public_key: paystack_public,
-                        momo_api_key: momo_key,
-                        momo_api_user: momo_user,
-                    })
-                } else {
-                    None
-                }
+                let cfg = BillingConfig {
+                    paystack_secret_key: std::env::var("PAYSTACK_SECRET_KEY").ok(),
+                    paystack_public_key: std::env::var("PAYSTACK_PUBLIC_KEY").ok(),
+                    paystack_base_url: std::env::var("PAYSTACK_BASE_URL").ok(),
+
+                    mastercard_merchant_id: std::env::var("MASTERCARD_MERCHANT_ID").ok(),
+                    mastercard_api_password: std::env::var("MASTERCARD_API_PASSWORD").ok(),
+                    mastercard_base_url: std::env::var("MASTERCARD_GATEWAY_URL").ok(),
+                    mastercard_currency: std::env::var("MASTERCARD_CURRENCY").ok(),
+                    mastercard_webhook_secret: std::env::var("MASTERCARD_WEBHOOK_SECRET").ok(),
+
+                    cybersource_merchant_id: std::env::var("CYBERSOURCE_MERCHANT_ID").ok(),
+                    cybersource_key_id: std::env::var("CYBERSOURCE_KEY_ID").ok(),
+                    cybersource_shared_secret: std::env::var("CYBERSOURCE_SECRET_KEY").ok(),
+                    cybersource_base_url: std::env::var("CYBERSOURCE_BASE_URL").ok(),
+
+                    bank_name: std::env::var("BANK_NAME").ok(),
+                    bank_account_name: std::env::var("BANK_ACCOUNT_NAME").ok(),
+                    bank_account_number: std::env::var("BANK_ACCOUNT_NUMBER").ok(),
+                    bank_branch: std::env::var("BANK_BRANCH").ok(),
+                    bank_swift_code: std::env::var("BANK_SWIFT_CODE").ok(),
+                    bank_reference_prefix: std::env::var("BANK_REFERENCE_PREFIX").ok(),
+                };
+                // Only attach billing if at least one provider has credentials configured.
+                let has_any = cfg.paystack_secret_key.is_some()
+                    || cfg.mastercard_merchant_id.is_some()
+                    || cfg.cybersource_merchant_id.is_some()
+                    || cfg.bank_account_number.is_some();
+                if has_any { Some(cfg) } else { None }
             },
             // Added: Redis config from env vars
             redis: RedisConfig {
