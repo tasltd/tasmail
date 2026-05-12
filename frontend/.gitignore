@@ -26,4 +26,6 @@ dist-ssr
 # Added: Playwright E2E test artifacts (TMAIL-36)
 test-results/
 playwright-report/
-e2e/screenshots/*.png
+# Note: e2e/screenshots/*.png are intentionally tracked so the curated baseline
+# can be reviewed in PRs. Drop new shots into git locally if you want them
+# part of the baseline; they are also rebuilt every test run.

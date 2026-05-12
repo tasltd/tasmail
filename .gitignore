@@ -28,6 +28,9 @@ Thumbs.db
 test-results/
 playwright-report/
 screenshots/
+# Allow the curated E2E screenshot baseline to be committed for code review
+!frontend/e2e/screenshots/
+!frontend/e2e/screenshots/**
 
 # Claude context (internal)
 .claude/
