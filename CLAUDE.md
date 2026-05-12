@@ -4,7 +4,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-TASMail — a self-hosted email service with a React 19 SPA frontend, Rust/Axum backend, and Postfix/Dovecot mail infrastructure. GitHub: tasltd/tasmail. TASCIM PM project: TMAIL.
+TASMail is a **webmail UI for any IMAP/SMTP server** (BYOK — bring your own key).
+Users sign up for a TASMail account, then attach the credentials of their existing
+mail server (Gmail, Outlook, Zoho, FastMail, ProtonMail Bridge, an existing Dovecot,
+corporate Exchange, etc.) in the onboarding wizard. TASMail never stores email — it
+proxies IMAP/SMTP for the browser using the user's encrypted credentials.
+
+Stack: React 19 SPA frontend, Rust/Axum backend, Flutter mobile app, PostgreSQL.
+GitHub: `tasltd/tasmail`. TASCIM PM project: `TMAIL`. Live at `https://mail.techatscale.io`.
+
+The repo also ships an **optional** Postfix/Dovecot installer (`deploy/scripts/setup-all.sh`)
+for operators who want to run their own mail server alongside TASMail. That setup is
+**not** wired into mail.techatscale.io — see `docs/SELF-HOST-MAIL-SERVERS.md` for the
+deferred-install rationale and instructions.
 
 ## Build & Run Commands
 
@@ -81,6 +93,25 @@ The dev server proxies `/api` → `http://127.0.0.1:3000` and `/ws` → `ws://12
 - **Frontend E2E**: Playwright with Firefox as default project (`npm run e2e`)
 - **Backend**: Standard `#[cfg(test)]` modules and `tokio-test`. Rust edition 2024
 
+### Mobile App (`mobile/`)
+Flutter app (Dart SDK ^3.11.3) targeting Android and iOS:
+
+```bash
+cd mobile
+flutter pub get                # Install dependencies
+flutter run -d chrome          # Run on Chrome (web debug)
+flutter run                    # Run on connected device/emulator
+flutter test                   # Run unit tests
+flutter build apk              # Build Android APK
+```
+
+- **`lib/api/`** — API client matching backend endpoints
+- **`lib/models/`** — Dart data classes for API responses
+- **`lib/providers/`** — State management
+- **`lib/screens/`** — App screens
+- **`lib/services/`** — Business logic (auth, sync, notifications)
+- **`lib/l10n/`** — Localization (includes Twi, Ewe, Ga, Hausa for Ghana market)
+
 ### Deployment (`deploy/`)
 Production infrastructure configs: `docker-compose.yml`, plus config directories for `nginx`, `postfix`, `dovecot`, `dns`, `tls`, `systemd`, and helper `scripts/`. Environment template: `tasmail.env.example`.
 
@@ -133,6 +164,55 @@ Key route groups:
 - `/api/billing/*` — Subscription plans, Paystack/MoMo webhooks
 - `/ws` — WebSocket (auth via token query param)
 
+## BYOK signup + onboarding
+
+The webmail-for-any-IMAP positioning is wired end-to-end:
+
+| Piece | Location |
+|---|---|
+| Public signup page | `frontend/src/components/auth/SignupPage.tsx` → `/signup` |
+| Public landing page | `frontend/src/components/landing/LandingPage.tsx` → `/` |
+| Onboarding wizard | `frontend/src/components/onboarding/OnboardingWizard.tsx` → `/onboarding` |
+| Per-user IMAP servers | migration `055_imap_configurations.sql` + `models/imap_config.rs` + `handlers/imap_config.rs` |
+| Per-user SMTP servers | migration `042_byo_smtp.sql` + `models/smtp_config.rs` + `handlers/smtp_config.rs` (already existed) |
+| Synthetic byok.tasmail domain | migration `056_byok_signup.sql` (so signups don't require an admin to pre-create a domain) |
+| `POST /api/auth/signup` | `handlers/auth.rs::signup` — public, returns JWT pair |
+| `GET /api/imap-configs/presets` | 11 popular providers auto-fill the wizard (Gmail/Outlook/Yahoo/Zoho/FastMail/iCloud/ProtonMail Bridge/etc.) |
+| `POST /api/imap-configs/test` | TCP+LOGIN test before save |
+| `ImapService::for_user(state, user_id)` | Loads the user's default IMAP config + decrypts password — used by `handlers/folders.rs` (other handlers still pending migration; see `docs/SELF-HOST-MAIL-SERVERS.md`) |
+
+## Payment provider config
+
+Credentials live in the **DB**, not env vars (mirrors PayPro's `payment_provider_config`):
+
+* Migration `054_payment_provider_config.sql` — table with AES-256-GCM-encrypted columns
+* `models/payment_provider_config.rs` — `PaymentProviderConfig::resolve(provider, tenant_id)` returns the effective row (tenant-scoped row beats global)
+* `services/encryption.rs::EncryptionService` — derives 32-byte key from `JWT_SECRET`, used for all DB-stored secrets
+* `handlers/admin/payment_providers.rs` — `GET/POST /api/admin/payment-providers` and `DELETE /api/admin/payment-providers/{id}` for credential CRUD
+* `handlers/billing.rs` — calls `load_provider(&state, "PAYSTACK"|"MASTERCARD"|"CYBERSOURCE"|"BANK_TRANSFER")` per request; returns 503 with actionable message if the row is missing
+
+The four providers mirror PayPro: **Paystack, Mastercard MPGS, Cybersource invoicing,
+manual Bank Transfer**. MTN MoMo was removed during the pivot.
+
+## Live deployment (mail.techatscale.io)
+
+Backend runs on the workstation (`tas-src-1`), not the proxy server:
+
+* Backend: Rust/Axum on `127.0.0.1:3300` (managed by systemd user unit `tasmail-backend.service`)
+* Frontend: Vite dev server on `127.0.0.1:5273` (`tasmail-vite.service`)
+* SSH reverse tunnel: `9601→3300`, `9602→5273` to `140.82.32.141` (`tasmail-tunnel.service`, script in `~/Documents/code/tas-src-rtunnel/tasmail-tunnel.sh`)
+* Apache vhost on the proxy: `/api`, `/metrics`, `/ws` → backend; `/` → Vite SPA. Let's Encrypt cert.
+* Postfix/Dovecot are intentionally NOT installed — TASMail is BYOK, see `docs/SELF-HOST-MAIL-SERVERS.md`
+
+Manage the live site:
+
+```bash
+systemctl --user status tasmail-{backend,vite,tunnel}.service
+systemctl --user restart tasmail-backend.service   # picks up new release binary
+~/Documents/code/tas-src-rtunnel/tasmail-tunnel.sh status
+journalctl --user -u tasmail-backend.service -f
+```
+
 ## Documentation
 
-Detailed docs in `docs/`: PRD, Architecture (SRS), API Specification, Development Setup, Deployment Guide, Security, Project Management Plan, and Ghana Business Validation.
+Detailed docs in `docs/`: PRD, Architecture (SRS), API Specification, Development Setup, Deployment Guide, Security, Project Management Plan, Ghana Business Validation, and `SELF-HOST-MAIL-SERVERS.md` (optional Postfix/Dovecot install path).
