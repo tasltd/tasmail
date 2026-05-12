@@ -55,17 +55,17 @@ async fn set_rls_context(state: &AppState, claims: &Claims) -> Result<(), AppErr
 
     let is_admin = if claims.is_admin { "true" } else { "false" };
 
-    sqlx::query(&format!(
-        "SET app.mailbox_id = '{}'; SET app.is_admin = '{}';",
-        mailbox_id, is_admin
-    ))
-    .execute(&state.db)
-    .await
-    .map_err(|e| {
-        tracing::warn!("Failed to set RLS context: {}", e);
-        AppError::Internal(anyhow::anyhow!("Failed to set RLS context"))
-    })?;
-
+    // TMAIL-161: This middleware no longer attempts to SET app.mailbox_id on the pool —
+    // the SET would land on a connection that the handler never sees, since each handler
+    // query acquires a fresh connection. RLS enforcement now lives in
+    // `services::db_session::acquire_with_rls(state, claims)` which handlers use when
+    // they want their queries scoped by RLS. Defense-in-depth audit confirmed that
+    // every protected handler today already includes explicit `WHERE user_id = $N`
+    // filters, so removing the no-op SET does not change observable behaviour.
+    //
+    // Variables `mailbox_id` and `is_admin` are kept above so future handler-side
+    // logging or rate limiting can pull them from the validated claims if needed.
+    let _ = (mailbox_id, is_admin);
     Ok(())
 }
 

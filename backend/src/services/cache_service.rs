@@ -17,6 +17,13 @@ const PREFIX_QUOTA: &str = "tasmail:quota";
 const PREFIX_RATE_LIMIT: &str = "tasmail:rl";
 const PREFIX_SESSION: &str = "tasmail:session";
 const PREFIX_BLACKLIST: &str = "tasmail:jwt_blacklist";
+// Added (TMAIL-162): per-user IMAP/SMTP config caches.
+// Cuts the DB+decrypt round trip on every page load that hits a BYOK route.
+const PREFIX_IMAP_CFG: &str = "tasmail:imap_cfg";
+const PREFIX_SMTP_CFG: &str = "tasmail:smtp_cfg";
+// 5 minute TTL for per-user mail-server config — same convention as branding.
+// Worst-case staleness window after a user updates their server credentials.
+const TTL_USER_CFG_SECS: u64 = 300;
 
 /// Added: Redis-backed cache service with graceful degradation
 /// PURPOSE: Wraps Redis connection manager and provides typed get/set with TTL
@@ -139,6 +146,60 @@ impl CacheService {
     pub async fn invalidate_quota(&self, mailbox_id: &str) -> bool {
         let key = format!("{}:{}", PREFIX_QUOTA, mailbox_id);
         self.del(&key).await
+    }
+
+    // --- Per-user IMAP / SMTP config (BYOK) cache (TMAIL-162) ---
+
+    /// Get the cached default IMAP config for a mailbox. Returns None if absent or Redis is down.
+    pub async fn get_user_imap_config<T: DeserializeOwned>(&self, mailbox_id: &str) -> Option<T> {
+        let key = format!("{}:{}", PREFIX_IMAP_CFG, mailbox_id);
+        self.get_json(&key).await
+    }
+
+    /// Cache the default IMAP config for a mailbox.
+    /// CONSTRAINTS: Caller must NOT cache the plaintext password — pass the encrypted ciphertext only.
+    pub async fn set_user_imap_config<T: Serialize>(&self, mailbox_id: &str, cfg: &T) -> bool {
+        let key = format!("{}:{}", PREFIX_IMAP_CFG, mailbox_id);
+        self.set_json(&key, cfg, TTL_USER_CFG_SECS).await
+    }
+
+    /// Drop the cached IMAP config row. Called from POST/DELETE /api/imap-configs handlers.
+    pub async fn invalidate_user_imap_config(&self, mailbox_id: &str) -> bool {
+        let key = format!("{}:{}", PREFIX_IMAP_CFG, mailbox_id);
+        self.del(&key).await
+    }
+
+    pub async fn get_user_smtp_config<T: DeserializeOwned>(&self, mailbox_id: &str) -> Option<T> {
+        let key = format!("{}:{}", PREFIX_SMTP_CFG, mailbox_id);
+        self.get_json(&key).await
+    }
+
+    pub async fn set_user_smtp_config<T: Serialize>(&self, mailbox_id: &str, cfg: &T) -> bool {
+        let key = format!("{}:{}", PREFIX_SMTP_CFG, mailbox_id);
+        self.set_json(&key, cfg, TTL_USER_CFG_SECS).await
+    }
+
+    pub async fn invalidate_user_smtp_config(&self, mailbox_id: &str) -> bool {
+        let key = format!("{}:{}", PREFIX_SMTP_CFG, mailbox_id);
+        self.del(&key).await
+    }
+
+    // --- Generic typed get/set/del (TMAIL-165 feature flags + future use cases) ---
+
+    /// Get any JSON-serialisable value at the literal key (no prefix munging).
+    /// Use this for ad-hoc caches that already include their own namespace prefix.
+    pub async fn get_typed<T: DeserializeOwned>(&self, key: &str) -> Option<T> {
+        self.get_json(key).await
+    }
+
+    /// Set any JSON-serialisable value at the literal key with the given TTL.
+    pub async fn set_typed<T: Serialize>(&self, key: &str, value: &T, ttl_secs: u64) -> bool {
+        self.set_json(key, value, ttl_secs).await
+    }
+
+    /// Delete any literal key.
+    pub async fn del_typed(&self, key: &str) -> bool {
+        self.del(key).await
     }
 
     // --- Rate limiting ---

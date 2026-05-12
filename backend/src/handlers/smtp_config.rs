@@ -78,6 +78,8 @@ pub async fn create_smtp_config(
     )
     .await?;
 
+    // TMAIL-162: invalidate per-user cache so the queue processor + send handler pick up the new default.
+    let _ = state.cache.invalidate_user_smtp_config(&user_id.to_string()).await;
     Ok((StatusCode::CREATED, Json(config.to_response(&encryption_key))))
 }
 
@@ -135,6 +137,8 @@ pub async fn update_smtp_config(
     .await?
     .ok_or_else(|| AppError::NotFound("SMTP configuration not found".to_string()))?;
 
+    // TMAIL-162: invalidate per-user cache after update.
+    let _ = state.cache.invalidate_user_smtp_config(&user_id.to_string()).await;
     Ok(Json(config.to_response(&encryption_key)))
 }
 
@@ -148,6 +152,8 @@ pub async fn delete_smtp_config(
     let user_id = parse_user_id(&claims)?;
     let deleted = SmtpConfiguration::delete(&state.db, id, user_id).await?;
     if deleted {
+        // TMAIL-162: invalidate per-user cache after delete.
+        let _ = state.cache.invalidate_user_smtp_config(&user_id.to_string()).await;
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(AppError::NotFound("SMTP configuration not found".to_string()))
