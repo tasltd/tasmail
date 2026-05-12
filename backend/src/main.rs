@@ -116,7 +116,13 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Listening on {}", addr);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+    // into_make_service_with_connect_info exposes the client SocketAddr to handlers
+    // (used by ConnectInfo<SocketAddr> in handlers::enterprise_quote, TMAIL-182).
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .await?;
 
     Ok(())
 }

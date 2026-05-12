@@ -1,0 +1,88 @@
+/* TMAIL-184: enterprise quote-request form, scoped under .eqf */
+
+.eqf {
+  max-width: 620px;
+  margin: 0 auto;
+  text-align: left;
+  background: white;
+  padding: 28px;
+  border-radius: 14px;
+  border: 1px solid var(--land-border);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.eqf__row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+@media (max-width: 540px) {
+  .eqf__row { grid-template-columns: 1fr; }
+}
+
+.eqf__field { display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
+.eqf__field > span { font-weight: 600; color: #334155; }
+.eqf__optional { font-weight: 400; color: var(--land-muted); font-size: 12.5px; }
+.eqf__field input,
+.eqf__field textarea {
+  padding: 10px 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 14px;
+  background: white;
+  color: var(--land-text);
+}
+.eqf__field input:focus,
+.eqf__field textarea:focus {
+  outline: none;
+  border-color: var(--land-accent);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+}
+.eqf__field textarea { resize: vertical; min-height: 110px; }
+
+.eqf__error {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #b91c1c;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 13.5px;
+}
+.eqf__hint {
+  margin: 0;
+  color: var(--land-muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.eqf-success {
+  max-width: 520px;
+  margin: 0 auto;
+  background: white;
+  padding: 36px;
+  border-radius: 14px;
+  border: 1px solid #bbf7d0;
+  text-align: center;
+}
+.eqf-success__check {
+  width: 56px; height: 56px;
+  border-radius: 50%;
+  background: #16a34a;
+  color: white;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 30px; font-weight: 700;
+  margin-bottom: 16px;
+}
+.eqf-success h3 { margin: 0 0 8px; font-size: 19px; color: var(--land-text); }
+.eqf-success p { margin: 6px 0; color: var(--land-text); font-size: 14px; }
+.eqf-success code {
+  background: #f1f5f9;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-family: ui-monospace, Consolas, monospace;
+}
+.eqf-success__hint { color: var(--land-muted); font-size: 13px; }
+.eqf-success a { color: var(--land-accent); text-decoration: none; font-weight: 600; }

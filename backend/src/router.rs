@@ -57,6 +57,8 @@ pub fn create_router(state: AppState) -> Router {
         // TMAIL-165: public subset of feature flags (no auth) so the SPA can decide
         // which signup/onboarding paths to show before the user is logged in.
         .route("/api/feature-flags", get(handlers::admin::feature_flags::list_public_flags))
+        // TMAIL-182: public enterprise quote-request endpoint (rate-limited per IP).
+        .route("/api/enterprise/quote-request", post(handlers::enterprise_quote::submit_quote_request))
         // Added: Public download endpoint for shared files (TMAIL-138)
         .route("/api/dl/{token}", get(handlers::shared_files::download_by_token))
         // Added: Public SAML SSO login and callback routes for TMAIL-101

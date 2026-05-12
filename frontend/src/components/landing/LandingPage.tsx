@@ -1,7 +1,45 @@
 // Added: Public landing page for TASMail at the root path (/).
 // Marketing-style hero, feature grid, pricing, footer. CTA buttons route to /login.
 import { Link } from 'react-router-dom';
+import { EnterpriseQuoteForm } from './EnterpriseQuoteForm';
 import './LandingPage.css';
+
+/**
+ * Browser-locale-driven currency hint.
+ *
+ * GHS prices stay primary (we settle in GHS through Paystack/Mastercard/Cybersource/
+ * bank transfer). For visitors whose browser locale is *not* en-GH/ak/tw/ee/ga we
+ * also render a USD equivalent next to the price using a fixed reference rate.
+ *
+ * The rate is intentionally fixed in source — no live FX feed — so prices don't
+ * jitter and we don't owe the visitor whatever their bank quotes them at checkout.
+ * Update it manually when you bump the marketing page.
+ */
+const GHS_TO_USD_RATE = 0.067; // 1 GHS ≈ 0.067 USD as of 2026-05; update with each deploy
+const GH_LOCALE_RE = /(^en-GH$|^en-GH-|-GH$|-gh$|^ak\b|^tw\b|^ee\b|^ga\b|-Gh-)/i;
+
+function isGhanaLocale(): boolean {
+  if (typeof navigator === 'undefined') return true;
+  const langs = navigator.languages?.length ? navigator.languages : [navigator.language];
+  return langs.some((l) => GH_LOCALE_RE.test(l));
+}
+
+/**
+ * Render `GHS X` plus, when the visitor isn't on a GH locale, a `(≈ $Y.YY)`
+ * suffix in muted text. Pure presentational helper — used inside the GHS-priced
+ * pricing card and the deploy/details copy.
+ */
+export function GhsPrice({ ghs, suffix }: { ghs: number; suffix?: string }) {
+  const showUsd = !isGhanaLocale();
+  const usd = (ghs * GHS_TO_USD_RATE).toFixed(2);
+  return (
+    <span className="ghs-price">
+      <span className="ghs-price__primary">GHS {ghs}</span>
+      {suffix && <span className="ghs-price__suffix"> {suffix}</span>}
+      {showUsd && <span className="ghs-price__usd"> (≈ ${usd} USD)</span>}
+    </span>
+  );
+}
 
 export function LandingPage() {
   return (
@@ -18,7 +56,7 @@ export function LandingPage() {
           <nav className="landing-header__nav">
             <a href="#features">Features</a>
             <a href="#pricing">Pricing</a>
-            <a href="#deploy">Self-host</a>
+            <a href="#enterprise-quote">Enterprise</a>
             <Link to="/login" className="landing-btn landing-btn--ghost">Sign in</Link>
             <Link to="/signup" className="landing-btn landing-btn--primary">Get started</Link>
           </nav>
@@ -27,7 +65,7 @@ export function LandingPage() {
 
       <section className="landing-hero">
         <div className="landing-hero__inner">
-          <span className="landing-hero__badge">Bring your own IMAP &middot; works with Gmail, Outlook, Zoho, FastMail…</span>
+          <span className="landing-hero__badge">Bring your own IMAP · works with Gmail, Outlook, Zoho, FastMail…</span>
           <h1 className="landing-hero__title">
             One <span className="landing-hero__accent">webmail UI</span> for all your accounts.
           </h1>
@@ -43,7 +81,7 @@ export function LandingPage() {
             </Link>
           </div>
           <p className="landing-hero__caption">
-            Powers <code>mail.techatscale.io</code> &middot; runs on a single $10/month VPS &middot; unlimited users
+            Powers <code>mail.techatscale.io</code> · runs on a single $10/month VPS · unlimited users
           </p>
         </div>
       </section>
@@ -76,67 +114,60 @@ export function LandingPage() {
 
       <section id="pricing" className="landing-pricing">
         <div className="landing-pricing__inner">
-          <h2 className="landing-section__title">Simple pricing</h2>
+          <h2 className="landing-section__title">Pay for what you store</h2>
           <p className="landing-pricing__subtitle">
-            Self-hosted is always free. Hosted plans are coming soon and will be billed in Ghana cedis (GHS) via Paystack, Mastercard, Cybersource, or bank transfer — the same providers PayPro uses.
+            One simple price for the BYOK webmail, custom quotes for everything bigger. All
+            invoices are settled in Ghana cedis (GHS) via Paystack, Mastercard, Cybersource,
+            or bank transfer — the same providers PayPro uses.
           </p>
-          <div className="landing-pricing__grid">
+          <div className="landing-pricing__grid landing-pricing__grid--two">
             <PricingCard
-              name="Self-host"
-              price="Free"
-              tagline="Run TASMail on your own VPS"
+              name="TASMail BYOK"
+              price={<GhsPrice ghs={1} suffix="/ GB · month" />}
+              tagline="Connect your own IMAP/SMTP server"
               features={[
-                'Unlimited mailboxes',
-                'Full source code (MIT)',
-                'Bring your own DNS, certs, and storage',
-                'Community support',
-              ]}
-              cta="View on GitHub"
-              ctaHref="https://github.com/tasltd/tasmail"
-              ctaExternal
-            />
-            <PricingCard
-              name="Hosted"
-              price="GHS 25"
-              priceSuffix="/user/month"
-              tagline="Managed by Tech at Scale"
-              features={[
-                'Mailboxes on @techatscale.io or your own domain',
-                '25 GB per user',
-                'Daily backups + 30-day retention',
+                'Bring your own IMAP/SMTP (Gmail, Outlook, Zoho, FastMail, your corporate Exchange…)',
+                'No mailbox provided — TASMail proxies the one you already use',
+                'Unlimited devices · PWA + native iOS/Android',
+                'Encrypted credentials at rest, never your email body',
+                'GHS 5 monthly minimum',
                 'Email + chat support',
               ]}
-              cta="Sign in"
-              ctaHref="/login"
+              cta="Get started"
+              ctaHref="/signup"
               highlight
             />
             <PricingCard
               name="Enterprise"
               price="Custom"
-              tagline="For organisations"
+              tagline="Single-tenant deployment, custom setup"
               features={[
-                'Dedicated infrastructure',
-                'SAML / OIDC SSO',
-                'SLA + onboarding',
-                'Compliance reporting (eDiscovery, DLP, retention)',
+                'Dedicated infrastructure on your cloud or ours',
+                'On-premise option for regulated environments',
+                'SAML / OIDC SSO · SCIM provisioning',
+                'White-glove onboarding + SLA',
+                'Compliance reporting (eDiscovery, DLP, retention, audit)',
+                'Negotiated pricing — we work with your budget cycle',
               ]}
-              cta="Contact sales"
-              ctaHref="mailto:hello@techatscale.io"
-              ctaExternal
+              cta="Request a quote"
+              ctaHref="#enterprise-quote"
             />
           </div>
+          <p className="landing-pricing__footnote">
+            Future home: <code>tasmail.com</code>. We&apos;re still on <code>mail.techatscale.io</code> while the move is in flight.
+          </p>
         </div>
       </section>
 
-      <section id="deploy" className="landing-deploy">
+      <section id="enterprise-quote" className="landing-deploy">
         <div className="landing-deploy__inner">
-          <h2 className="landing-section__title">Deploy in minutes</h2>
+          <h2 className="landing-section__title">Talk to us about Enterprise</h2>
           <p className="landing-deploy__subtitle">
-            Clone the repository, point a $10 VPS at your domain, run the setup script. That&apos;s the entire deployment.
+            Single-tenant deployment, on your cloud or ours, sized to your team and
+            your compliance posture. Tell us a bit about your setup — we&apos;ll come
+            back with a tailored quote within one business day.
           </p>
-          <pre className="landing-deploy__code">{`git clone https://github.com/tasltd/tasmail
-cd tasmail/deploy/scripts
-sudo ./setup-all.sh --domain example.com --hostname mail.example.com`}</pre>
+          <EnterpriseQuotePlaceholder />
         </div>
       </section>
 
@@ -144,7 +175,7 @@ sudo ./setup-all.sh --domain example.com --hostname mail.example.com`}</pre>
         <div className="landing-footer__inner">
           <div className="landing-footer__col">
             <strong>TASMail</strong>
-            <p>Self-hosted email by Tech at Scale.</p>
+            <p>Webmail for any IMAP/SMTP server, by Tech at Scale.</p>
           </div>
           <div className="landing-footer__col">
             <strong>Product</strong>
@@ -203,7 +234,12 @@ function FeatureIcon({ name }: { name: FeatureProps['icon'] }) {
 
 interface PricingProps {
   name: string;
-  price: string;
+  /**
+   * Either a literal string ("Custom") or a JSX node (e.g., <GhsPrice/> with the
+   * locale-aware USD equivalent). Accepting ReactNode lets the BYOK card render
+   * its own GHS+USD double-line without forcing every other tier to do so.
+   */
+  price: React.ReactNode;
   priceSuffix?: string;
   tagline: string;
   features: string[];
@@ -211,6 +247,11 @@ interface PricingProps {
   ctaHref: string;
   ctaExternal?: boolean;
   highlight?: boolean;
+}
+
+// Wrapper kept for backwards compatibility with the section's existing markup.
+function EnterpriseQuotePlaceholder() {
+  return <EnterpriseQuoteForm />;
 }
 
 function PricingCard({ name, price, priceSuffix, tagline, features, cta, ctaHref, ctaExternal, highlight }: PricingProps) {

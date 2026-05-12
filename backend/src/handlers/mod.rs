@@ -76,6 +76,8 @@ pub mod smtp_config;
 pub mod imap_config;
 // Added (TMAIL-167): managed-mailbox provisioning endpoint (DNS-MX onboarding path).
 pub mod mailbox_provision;
+// Added (TMAIL-182): public enterprise quote-request endpoint.
+pub mod enterprise_quote;
 // Added: Plugin management handlers for extensible plugin architecture (TMAIL-132)
 pub mod plugins;
 // Added: Contact group and vCard import/export/merge handlers (TMAIL-119)

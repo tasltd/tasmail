@@ -27,15 +27,18 @@ test.describe('Landing page', () => {
     await page.locator('#features').scrollIntoViewIfNeeded();
     await takeScreenshot(page, 'landing/02-features-grid');
 
-    // Three pricing tiers
-    await expect(page.locator('.landing-price-card')).toHaveCount(3);
+    // TMAIL-173: now two pricing tiers (free/self-host removed).
+    await expect(page.locator('.landing-price-card')).toHaveCount(2);
     await page.locator('#pricing').scrollIntoViewIfNeeded();
+    await expect(page.locator('.landing-price-card', { hasText: 'TASMail BYOK' })).toBeVisible();
+    await expect(page.locator('.landing-price-card', { hasText: 'Enterprise' })).toBeVisible();
     await takeScreenshot(page, 'landing/03-pricing-tiers');
 
-    // Deploy section + footer
-    await page.locator('#deploy').scrollIntoViewIfNeeded();
-    await expect(page.locator('.landing-deploy__code')).toContainText('git clone');
-    await takeScreenshot(page, 'landing/04-deploy-snippet');
+    // Enterprise quote-request form (replaced the deploy snippet section).
+    await page.locator('#enterprise-quote').scrollIntoViewIfNeeded();
+    await expect(page.locator('.eqf')).toBeVisible();
+    await expect(page.locator('button.landing-btn--primary', { hasText: 'Request a quote' })).toBeVisible();
+    await takeScreenshot(page, 'landing/04-enterprise-quote-form');
 
     await page.locator('.landing-footer').scrollIntoViewIfNeeded();
     await expect(page.locator('.landing-footer__copy')).toContainText('Tech at Scale');
