@@ -81,7 +81,7 @@ React 19 SPA with Vite 8, TypeScript 6, React Router 7, TanStack Query 5, Zustan
   - `auth/` — LoginPage
   - `shared/` — ErrorBoundary, LoadingSkeleton
 - **`types/`** — TypeScript interfaces matching backend API responses
-- **`utils/`** — `offline-cache.ts` (IndexedDB), `background-sync.ts` (service worker sync), `sanitize.ts` (DOMPurify for HTML email), `date.ts`, `constants.ts`
+- **`utils/`** — `offline-cache.ts` (IndexedDB), `background-sync.ts` (service worker sync — consumes `/api/messages/schedule`, `/api/folders/{folder}/messages/{uid}/{move,flag}`, `/api/drafts` via **dynamic imports**, so static traceability scans miss them), `sanitize.ts` (DOMPurify for HTML email), `date.ts`, `constants.ts`
 
 PWA enabled via `vite-plugin-pwa` with Workbox runtime caching for API responses (`NetworkFirst`, 5s timeout, 100 entries max).
 
@@ -166,6 +166,8 @@ Key route groups:
 - `/api/auto-reply` — Vacation responder
 - `/api/quota` — Storage quota
 - `/api/migration/*` — IMAP, MBOX, and PST import
+- `/api/mobile/*` — Flutter-app surface (mobile/), not consumed by the web SPA. Six routes: inbox, message, folders, unread-count, batch, sync.
+- `/api/sync/checkpoint/{folder}`, `/api/sync/resolve-conflict` — used by the mobile app's offline sync; not consumed by the web SPA. Distinct from `frontend/src/utils/background-sync.ts` which is the SPA's own offline queue.
 - `/api/admin/*` — Domains, users, audit, branding, retention/legal-holds, custom hostnames, LDAP/AD, SAML, bulk user import
 - `/api/billing/*` — Subscription plans, Paystack/MoMo webhooks
 - `/ws` — WebSocket (auth via token query param)

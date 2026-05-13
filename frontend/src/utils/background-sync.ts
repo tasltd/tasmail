@@ -2,6 +2,17 @@
  * Background sync queue for offline email actions.
  * Queues actions (send, move, delete, flag) in IndexedDB when offline,
  * replays them when connectivity is restored.
+ *
+ * Backend routes consumed (TMAIL-207 — dynamic imports, so static analysers
+ * such as scripts/trace-check.py won't see them):
+ *   - POST /api/messages/schedule   (via api/scheduled.ts → scheduledApi.scheduleSend)
+ *   - POST /api/folders/{folder}/messages/{uid}/move    (via api/messages.ts → moveMessage)
+ *   - DELETE /api/folders/{folder}/messages/{uid}        (via api/messages.ts → deleteMessage)
+ *   - POST /api/folders/{folder}/messages/{uid}/flag    (via api/messages.ts → flagMessage)
+ *   - POST /api/drafts                                   (via api/messages.ts → saveDraft)
+ *
+ * The dynamic-import pattern is intentional: keeps the api/ modules out of
+ * the main bundle until the user actually goes offline + queues an action.
  */
 
 const DB_NAME = 'tasmail-sync';
