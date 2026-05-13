@@ -1,13 +1,12 @@
 // TMAIL-184: enterprise quote-request form embedded on the landing page.
 // Inline (not a modal) so it's reachable via the #enterprise-quote anchor and
 // crawlable by search engines without JS gymnastics.
+// Changed: TMAIL-206 — submit through quoteRequestsApi so the same base-URL +
+// 401-refresh plumbing every other call uses applies here too.
 import { useState } from 'react';
+import { quoteRequestsApi } from '../../api/quoteRequests';
+import { ApiError } from '../../api/client';
 import './EnterpriseQuoteForm.css';
-
-interface QuoteResponse {
-  id: string;
-  status: string;
-}
 
 export function EnterpriseQuoteForm() {
   const [name, setName] = useState('');
@@ -30,25 +29,30 @@ export function EnterpriseQuoteForm() {
 
     setBusy(true);
     try {
-      const resp = await fetch('/api/enterprise/quote-request', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contact_name: name.trim(),
-          contact_email: email.trim().toLowerCase(),
-          company: company.trim() || undefined,
-          estimated_users: users ? parseInt(users, 10) : undefined,
-          message: message.trim(),
-        }),
+      const data = await quoteRequestsApi.submit({
+        contact_name: name.trim(),
+        contact_email: email.trim().toLowerCase(),
+        company: company.trim() || undefined,
+        estimated_users: users ? parseInt(users, 10) : undefined,
+        message: message.trim(),
       });
-      if (!resp.ok) {
-        const body = await resp.json().catch(() => ({ error: `HTTP ${resp.status}` }));
-        throw new Error(body.error ?? `HTTP ${resp.status}`);
-      }
-      const data = (await resp.json()) as QuoteResponse;
       setSuccess({ id: data.id });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Submission failed.');
+      // NOTE: apiClient surfaces non-2xx as ApiError with the raw body as message.
+      // The backend returns `{ "error": "..." }` JSON; try to pull the human
+      // string out first, fall back to the raw body / generic copy.
+      let msg = 'Submission failed.';
+      if (err instanceof ApiError) {
+        try {
+          const body = JSON.parse(err.message);
+          msg = body.error ?? body.message ?? err.message;
+        } catch {
+          msg = err.message || `HTTP ${err.status}`;
+        }
+      } else if (err instanceof Error) {
+        msg = err.message;
+      }
+      setError(msg);
     } finally {
       setBusy(false);
     }

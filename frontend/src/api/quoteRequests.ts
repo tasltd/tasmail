@@ -32,7 +32,27 @@ export interface StatusCount {
   count: number;
 }
 
+// Added: TMAIL-206 — public submission shape (subset of QuoteRequest the form sends).
+export interface QuoteSubmitBody {
+  contact_name: string;
+  contact_email: string;
+  company?: string;
+  estimated_users?: number;
+  message: string;
+}
+
+export interface QuoteSubmitResponse {
+  id: string;
+  status: QuoteStatus;
+}
+
 export const quoteRequestsApi = {
+  // Added: TMAIL-206 — public submission via apiClient so the landing-page form
+  // picks up the same base-URL + retry plumbing every other client uses. The
+  // endpoint itself is public; apiClient simply omits the Authorization header
+  // when no access token is set.
+  submit: (body: QuoteSubmitBody) =>
+    apiClient.post<QuoteSubmitResponse>('/enterprise/quote-request', body),
   list: (status?: QuoteStatus, limit = 50, offset = 0) => {
     const params = new URLSearchParams();
     if (status) params.set('status', status);
