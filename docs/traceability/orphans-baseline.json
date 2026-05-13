@@ -1,0 +1,383 @@
+{
+  "generated_by": "scripts/trace-check.py --update",
+  "orphan_count": 50,
+  "by_feature_count": {
+    "admin/audit-log": 1,
+    "admin/cache": 3,
+    "admin/domains": 3,
+    "admin/payment-providers": 3,
+    "admin/users": 3,
+    "admin/warmup": 3,
+    "attachments": 2,
+    "auth": 3,
+    "billing": 2,
+    "calendar": 1,
+    "contacts": 1,
+    "dane": 1,
+    "dl": 1,
+    "folders": 2,
+    "health": 1,
+    "mailbox": 1,
+    "messages": 1,
+    "metrics": 1,
+    "mobile": 6,
+    "push": 4,
+    "queue": 1,
+    "shared-files": 1,
+    "sync": 3,
+    "tasks": 1,
+    "ws": 1
+  },
+  "orphans": [
+    {
+      "method": "GET",
+      "path": "/api/admin/audit-log",
+      "handler": "admin::audit::list_audit_logs",
+      "auth": false,
+      "feature": "admin/audit-log"
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/cache/flush",
+      "handler": "cache::flush_cache",
+      "auth": false,
+      "feature": "admin/cache"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/cache/stats",
+      "handler": "cache::get_cache_stats",
+      "auth": false,
+      "feature": "admin/cache"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/cache/status",
+      "handler": "cache::get_cache_status",
+      "auth": false,
+      "feature": "admin/cache"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/domains",
+      "handler": "admin::domains::list_domains",
+      "auth": false,
+      "feature": "admin/domains"
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/domains",
+      "handler": "admin::domains::create_domain",
+      "auth": false,
+      "feature": "admin/domains"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/admin/domains/{id}",
+      "handler": "admin::domains::delete_domain",
+      "auth": false,
+      "feature": "admin/domains"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/payment-providers",
+      "handler": "admin::payment_providers::list_providers",
+      "auth": false,
+      "feature": "admin/payment-providers"
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/payment-providers",
+      "handler": "admin::payment_providers::create_provider",
+      "auth": false,
+      "feature": "admin/payment-providers"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/admin/payment-providers/{id}",
+      "handler": "admin::payment_providers::archive_provider",
+      "auth": false,
+      "feature": "admin/payment-providers"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/users",
+      "handler": "admin::users::list_users",
+      "auth": false,
+      "feature": "admin/users"
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/users",
+      "handler": "admin::users::create_user",
+      "auth": false,
+      "feature": "admin/users"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/admin/users/{id}",
+      "handler": "admin::users::delete_user",
+      "auth": false,
+      "feature": "admin/users"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/warmup/schedule",
+      "handler": "warmup::get_warmup_schedule",
+      "auth": false,
+      "feature": "admin/warmup"
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/warmup/start",
+      "handler": "warmup::start_warmup",
+      "auth": false,
+      "feature": "admin/warmup"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/warmup/status",
+      "handler": "warmup::get_warmup_status",
+      "auth": false,
+      "feature": "admin/warmup"
+    },
+    {
+      "method": "POST",
+      "path": "/api/attachments",
+      "handler": "attachments::upload_attachment",
+      "auth": false,
+      "feature": "attachments"
+    },
+    {
+      "method": "GET",
+      "path": "/api/attachments/{id}/download",
+      "handler": "attachments::download_attachment",
+      "auth": false,
+      "feature": "attachments"
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/oidc/callback",
+      "handler": "oidc::oidc_callback",
+      "auth": false,
+      "feature": "auth"
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/refresh",
+      "handler": "auth::refresh",
+      "auth": false,
+      "feature": "auth"
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/saml/callback",
+      "handler": "saml::saml_callback",
+      "auth": false,
+      "feature": "auth"
+    },
+    {
+      "method": "POST",
+      "path": "/api/billing/webhook/mastercard",
+      "handler": "billing::webhook_mastercard",
+      "auth": false,
+      "feature": "billing"
+    },
+    {
+      "method": "POST",
+      "path": "/api/billing/webhook/paystack",
+      "handler": "billing::webhook_paystack",
+      "auth": false,
+      "feature": "billing"
+    },
+    {
+      "method": "GET",
+      "path": "/api/calendar/events",
+      "handler": "calendar::list_events",
+      "auth": false,
+      "feature": "calendar"
+    },
+    {
+      "method": "GET",
+      "path": "/api/contacts",
+      "handler": "contacts::list_contacts",
+      "auth": false,
+      "feature": "contacts"
+    },
+    {
+      "method": "GET",
+      "path": "/api/dane/verifications",
+      "handler": "dane::list_verifications",
+      "auth": false,
+      "feature": "dane"
+    },
+    {
+      "method": "GET",
+      "path": "/api/dl/{token}",
+      "handler": "shared_files::download_by_token",
+      "auth": false,
+      "feature": "dl"
+    },
+    {
+      "method": "POST",
+      "path": "/api/folders/{folder}/import-eml",
+      "handler": "eml::import_eml",
+      "auth": false,
+      "feature": "folders"
+    },
+    {
+      "method": "GET",
+      "path": "/api/folders/{folder}/messages/{uid}/eml",
+      "handler": "eml::export_eml",
+      "auth": false,
+      "feature": "folders"
+    },
+    {
+      "method": "GET",
+      "path": "/api/health",
+      "handler": "health::health_check",
+      "auth": false,
+      "feature": "health"
+    },
+    {
+      "method": "POST",
+      "path": "/api/mailbox/provision",
+      "handler": "mailbox_provision::provision_managed_mailbox",
+      "auth": false,
+      "feature": "mailbox"
+    },
+    {
+      "method": "GET",
+      "path": "/api/messages/scheduled",
+      "handler": "scheduled::list_scheduled",
+      "auth": false,
+      "feature": "messages"
+    },
+    {
+      "method": "GET",
+      "path": "/metrics",
+      "handler": "metrics::metrics_handler",
+      "auth": false,
+      "feature": "metrics"
+    },
+    {
+      "method": "POST",
+      "path": "/api/mobile/batch",
+      "handler": "mobile::mobile_batch",
+      "auth": false,
+      "feature": "mobile"
+    },
+    {
+      "method": "GET",
+      "path": "/api/mobile/folders",
+      "handler": "mobile::mobile_folders",
+      "auth": false,
+      "feature": "mobile"
+    },
+    {
+      "method": "GET",
+      "path": "/api/mobile/inbox",
+      "handler": "mobile::mobile_inbox",
+      "auth": false,
+      "feature": "mobile"
+    },
+    {
+      "method": "GET",
+      "path": "/api/mobile/message/{folder}/{uid}",
+      "handler": "mobile::mobile_message",
+      "auth": false,
+      "feature": "mobile"
+    },
+    {
+      "method": "GET",
+      "path": "/api/mobile/sync",
+      "handler": "mobile::mobile_sync",
+      "auth": false,
+      "feature": "mobile"
+    },
+    {
+      "method": "GET",
+      "path": "/api/mobile/unread-count",
+      "handler": "mobile::mobile_unread_count",
+      "auth": false,
+      "feature": "mobile"
+    },
+    {
+      "method": "GET",
+      "path": "/api/push/devices",
+      "handler": "push::list_devices",
+      "auth": false,
+      "feature": "push"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/push/devices/{id}",
+      "handler": "push::unregister_device",
+      "auth": false,
+      "feature": "push"
+    },
+    {
+      "method": "POST",
+      "path": "/api/push/register",
+      "handler": "push::register_device",
+      "auth": false,
+      "feature": "push"
+    },
+    {
+      "method": "POST",
+      "path": "/api/push/test",
+      "handler": "push::test_notification",
+      "auth": false,
+      "feature": "push"
+    },
+    {
+      "method": "GET",
+      "path": "/api/queue",
+      "handler": "queue::list_queue",
+      "auth": false,
+      "feature": "queue"
+    },
+    {
+      "method": "POST",
+      "path": "/api/shared-files/upload",
+      "handler": "shared_files::upload_shared_file",
+      "auth": false,
+      "feature": "shared-files"
+    },
+    {
+      "method": "GET",
+      "path": "/api/sync/checkpoint/{folder}",
+      "handler": "sync::get_checkpoint",
+      "auth": false,
+      "feature": "sync"
+    },
+    {
+      "method": "POST",
+      "path": "/api/sync/checkpoint/{folder}",
+      "handler": "sync::update_checkpoint",
+      "auth": false,
+      "feature": "sync"
+    },
+    {
+      "method": "POST",
+      "path": "/api/sync/resolve-conflict",
+      "handler": "sync::resolve_conflict",
+      "auth": false,
+      "feature": "sync"
+    },
+    {
+      "method": "GET",
+      "path": "/api/tasks",
+      "handler": "tasks::list_tasks",
+      "auth": false,
+      "feature": "tasks"
+    },
+    {
+      "method": "GET",
+      "path": "/ws",
+      "handler": "websocket::ws_handler",
+      "auth": false,
+      "feature": "ws"
+    }
+  ]
+}

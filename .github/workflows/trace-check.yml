@@ -1,0 +1,38 @@
+# TMAIL-208: traceability drift gate.
+#
+# Fails the build when a shipped backend route in a critical category
+# (auth, billing, folders, messages, signatures, contacts) loses its
+# SPA consumer. See scripts/trace-check.py for the full rule set and
+# docs/traceability/orphans-baseline.json for the current snapshot.
+#
+# Security note: no step interpolates GitHub-event input into a shell
+# command. The single `run:` line invokes a static repo-checked-in script
+# with no arguments derived from event payloads.
+name: trace-check
+
+on:
+  pull_request:
+    paths:
+      - "backend/src/router.rs"
+      - "backend/src/handlers/**"
+      - "frontend/src/api/**"
+      - "frontend/src/components/**"
+      - "frontend/src/hooks/**"
+      - "frontend/src/utils/**"
+      - "scripts/trace-check.py"
+      - "docs/traceability/orphans-baseline.json"
+  push:
+    branches: [main]
+
+jobs:
+  trace-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run traceability drift gate
+        run: python3 scripts/trace-check.py

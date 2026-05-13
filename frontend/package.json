@@ -12,7 +12,9 @@
     "test:watch": "vitest",
     "e2e": "playwright test --project=firefox",
     "e2e:headed": "playwright test --project=firefox --headed",
-    "e2e:report": "playwright show-report"
+    "e2e:report": "playwright show-report",
+    "trace-check": "python3 ../scripts/trace-check.py",
+    "trace-check:update": "python3 ../scripts/trace-check.py --update"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.97.0",
