@@ -1,6 +1,6 @@
 import React from 'react';
 import { useState, useEffect } from 'react';
-import { Mail } from 'lucide-react';
+import { TasmailLogo } from '../shared/TasmailLogo';
 import { listLoginProviders, getAuthorizeUrl } from '../../api/oidc';
 import type { OidcLoginProvider } from '../../api/oidc';
 
@@ -64,9 +64,9 @@ export function LoginPage({ onLogin }: LoginPageProps) {
     <div className="login-page">
       <div className="login-card">
         <div className="login-card__header">
-          <Mail size={40} />
+          <TasmailLogo size={64} />
           <h1>TASMail</h1>
-          <p>Self-hosted email service</p>
+          <p>Webmail for any IMAP/SMTP server</p>
         </div>
 
         {error && <div className="login-card__error">{error}</div>}

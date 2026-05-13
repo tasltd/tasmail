@@ -21,7 +21,7 @@
    font-weight="700"
    text-anchor="middle">
   <text x="8.6"  y="16.7" font-size="4.6" letter-spacing="-0.12" fill="#0f172a">t</text>
-  <text x="12"   y="16.95" font-size="5.2" letter-spacing="-0.12" fill="#2dd4bf">@</text>
+  <text x="12"   y="16.95" font-size="5.2" letter-spacing="-0.12" fill="#0f172a">@</text>
   <text x="15.4" y="16.7" font-size="4.6" letter-spacing="-0.12" fill="#0f172a">s</text>
 </g>
         </svg>

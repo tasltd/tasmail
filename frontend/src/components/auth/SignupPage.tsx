@@ -2,8 +2,8 @@
 // straight into the IMAP/SMTP onboarding wizard. Mirrors LoginPage layout.
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Mail } from 'lucide-react';
 import { signup } from '../../api/auth';
+import { TasmailLogo } from '../shared/TasmailLogo';
 
 export function SignupPage() {
   const navigate = useNavigate();
@@ -41,7 +41,7 @@ export function SignupPage() {
     <div className="login-page">
       <div className="login-card">
         <div className="login-card__header">
-          <Mail size={36} />
+          <TasmailLogo size={56} />
           <h1>TASMail</h1>
           <p>Create an account &middot; bring your own IMAP/SMTP server</p>
         </div>

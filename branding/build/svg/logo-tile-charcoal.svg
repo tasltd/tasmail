@@ -5,23 +5,23 @@
              role="img"
              aria-label="TASMail">
           <title>TASMail</title>
-
+          <rect x="0" y="0" width="24" height="24" rx="4.5" ry="4.5" fill="#0f172a"/>
           <!-- envelope outline -->
 <rect x="3.5" y="6"  width="17" height="12"
       rx="1.4" ry="1.4"
-      fill="none" stroke="#0f172a" stroke-width="1.6"
+      fill="none" stroke="#ffffff" stroke-width="1.6"
       stroke-linejoin="round"/>
 <!-- top flap: single inverted V meeting at the midpoint -->
 <path d="M 3.5 6 L 12 13.2 L 20.5 6"
-      fill="none" stroke="#0f172a" stroke-width="1.6"
+      fill="none" stroke="#ffffff" stroke-width="1.6"
       stroke-linejoin="round" stroke-linecap="round"/>
 
 <!-- inner wordmark t@s — baseline y=16.6 (lower half of envelope) -->
 <g font-family="'Inter','SF Pro Display','Segoe UI',system-ui,sans-serif"
    font-weight="700"
    text-anchor="middle">
-  <text x="8.6"  y="16.7" font-size="4.6" letter-spacing="-0.12" fill="#0f172a">t</text>
+  <text x="8.6"  y="16.7" font-size="4.6" letter-spacing="-0.12" fill="#ffffff">t</text>
   <text x="12"   y="16.95" font-size="5.2" letter-spacing="-0.12" fill="#2dd4bf">@</text>
-  <text x="15.4" y="16.7" font-size="4.6" letter-spacing="-0.12" fill="#0f172a">s</text>
+  <text x="15.4" y="16.7" font-size="4.6" letter-spacing="-0.12" fill="#ffffff">s</text>
 </g>
         </svg>

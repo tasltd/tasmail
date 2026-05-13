@@ -2,6 +2,7 @@
 // Marketing-style hero, feature grid, pricing, footer. CTA buttons route to /login.
 import { Link } from 'react-router-dom';
 import { EnterpriseQuoteForm } from './EnterpriseQuoteForm';
+import { TasmailLogo } from '../shared/TasmailLogo';
 import './LandingPage.css';
 
 /**
@@ -47,10 +48,7 @@ export function LandingPage() {
       <header className="landing-header">
         <div className="landing-header__inner">
           <Link to="/" className="landing-header__brand" aria-label="TASMail home">
-            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <rect width="20" height="16" x="2" y="4" rx="2" />
-              <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
-            </svg>
+            <TasmailLogo size={32} />
             <span>TASMail</span>
           </Link>
           <nav className="landing-header__nav">
