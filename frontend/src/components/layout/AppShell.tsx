@@ -70,6 +70,8 @@ import { SpamFilterManager } from '../settings/SpamFilterManager';
 import { BillingManager } from '../settings/BillingManager';
 // Added: Email deliverability testing component for TMAIL-39
 import { DeliverabilityReport } from '../settings/DeliverabilityReport';
+// Added: TMAIL-204 — push device management
+import { PushDevicesManager } from '../settings/PushDevicesManager';
 import { useMailStore } from '../../stores/mailStore';
 import { useUiStore } from '../../stores/uiStore';
 // Added: Keyboard shortcuts hook and help dialog for TMAIL-121
@@ -118,6 +120,8 @@ export function AppShell({ onLogout }: AppShellProps) {
           {viewMode === 'signatures' && <SignatureManager />}
           {viewMode === 'contacts' && <ContactManager />}
           {viewMode === 'security' && <TwoFactorManager />}
+          {/* Added: TMAIL-204 — push notification device management */}
+          {viewMode === 'push-devices' && <PushDevicesManager />}
           {viewMode === 'vacation' && <VacationResponder />}
           {viewMode === 'groups' && <GroupManager />}
           {viewMode === 'migration' && <MigrationManager />}

@@ -103,8 +103,11 @@ impl PushDevice {
         app_version: Option<&str>,
     ) -> Result<PushDevice, sqlx::Error> {
         sqlx::query_as::<_, PushDevice>(
+            // Changed: TMAIL-204 — migration 061 widened platform from the
+            // push_platform ENUM to TEXT + CHECK; the cast is no longer valid
+            // (the type was dropped) and not needed (sqlx binds &str directly).
             "INSERT INTO push_devices (user_id, platform, device_token, device_name, app_version) \
-             VALUES ($1, $2::push_platform, $3, $4, $5) \
+             VALUES ($1, $2, $3, $4, $5) \
              ON CONFLICT (user_id, device_token) DO UPDATE SET \
                 platform = EXCLUDED.platform, \
                 device_name = EXCLUDED.device_name, \

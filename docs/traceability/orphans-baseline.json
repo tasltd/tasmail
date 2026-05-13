@@ -1,6 +1,6 @@
 {
   "generated_by": "scripts/trace-check.py --update",
-  "orphan_count": 50,
+  "orphan_count": 46,
   "by_feature_count": {
     "admin/audit-log": 1,
     "admin/cache": 3,
@@ -21,7 +21,6 @@
     "messages": 1,
     "metrics": 1,
     "mobile": 6,
-    "push": 4,
     "queue": 1,
     "shared-files": 1,
     "sync": 3,
@@ -301,34 +300,6 @@
       "handler": "mobile::mobile_unread_count",
       "auth": false,
       "feature": "mobile"
-    },
-    {
-      "method": "GET",
-      "path": "/api/push/devices",
-      "handler": "push::list_devices",
-      "auth": false,
-      "feature": "push"
-    },
-    {
-      "method": "DELETE",
-      "path": "/api/push/devices/{id}",
-      "handler": "push::unregister_device",
-      "auth": false,
-      "feature": "push"
-    },
-    {
-      "method": "POST",
-      "path": "/api/push/register",
-      "handler": "push::register_device",
-      "auth": false,
-      "feature": "push"
-    },
-    {
-      "method": "POST",
-      "path": "/api/push/test",
-      "handler": "push::test_notification",
-      "auth": false,
-      "feature": "push"
     },
     {
       "method": "GET",

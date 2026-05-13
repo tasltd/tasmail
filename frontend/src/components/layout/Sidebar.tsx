@@ -27,7 +27,7 @@
 // Added: ShieldBan icon for Rspamd spam filter sidebar entry (TMAIL-15)
 // Added: CreditCard icon for billing sidebar entry (TMAIL-46)
 // Added: Activity icon for deliverability testing sidebar entry (TMAIL-39)
-import { PenSquare, FileSignature, Users, Shield, Plane, UsersRound, Upload, Gauge, Filter, Mailbox, ListTodo, CheckSquare, Webhook, Palette, Archive, Globe, FileUp, UserPlus, MessageSquare, Calendar, Network, Brain, KeyRound, LogIn, Search, ShieldCheck, ShieldAlert, Send, Puzzle, BookUser, Download, HardDrive, Smartphone, Server, CloudCog, ShieldBan, CreditCard, Activity } from 'lucide-react';
+import { PenSquare, FileSignature, Users, Shield, Plane, UsersRound, Upload, Gauge, Filter, Mailbox, ListTodo, CheckSquare, Webhook, Palette, Archive, Globe, FileUp, UserPlus, MessageSquare, Calendar, Network, Brain, KeyRound, LogIn, Search, ShieldCheck, ShieldAlert, Send, Puzzle, BookUser, Download, HardDrive, Smartphone, Server, CloudCog, ShieldBan, CreditCard, Activity, Bell } from 'lucide-react';
 import { FolderTree } from '../mail/FolderTree';
 import { QuotaBar } from './QuotaBar';
 import { useMailStore } from '../../stores/mailStore';
@@ -80,6 +80,14 @@ export function Sidebar() {
         >
           <Shield size={18} />
           <span className="folder-item__name">Security</span>
+        </button>
+        {/* Added: TMAIL-204 — push notification device management */}
+        <button
+          className={`folder-item ${viewMode === 'push-devices' ? 'folder-item--active' : ''}`}
+          onClick={() => handleNavClick('push-devices')}
+        >
+          <Bell size={18} />
+          <span className="folder-item__name">Notifications</span>
         </button>
         <button
           className={`folder-item ${viewMode === 'vacation' ? 'folder-item--active' : ''}`}

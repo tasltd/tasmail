@@ -30,7 +30,8 @@ import type { AdvancedSearchParams } from '../api/messages';
 // Added: 'spam' view mode for Rspamd spam filter management (TMAIL-15)
 // Added: 'billing' view mode for Paystack/MoMo billing management (TMAIL-46)
 // Added: 'deliverability' view mode for email deliverability testing (TMAIL-39)
-type ViewMode = 'list' | 'reader' | 'compose' | 'search' | 'signatures' | 'contacts' | 'security' | 'vacation' | 'groups' | 'migration' | 'bandwidth' | 'filters' | 'shared' | 'queue' | 'tasks' | 'webhooks' | 'branding' | 'retention' | 'hostnames' | 'shared-files' | 'bulk-import' | 'chat' | 'calendar' | 'ldap' | 'ai-config' | 'saml' | 'oidc' | 'ediscovery' | 'dlp' | 'dane' | 'smtp-config' | 'plugins' | 'contacts-app' | 'pop3' | 'archive' | 'activesync' | 'ollama' | 'dav-config' | 'spam' | 'billing' | 'deliverability';
+// Added: 'push-devices' view mode for push notification device management (TMAIL-204)
+type ViewMode = 'list' | 'reader' | 'compose' | 'search' | 'signatures' | 'contacts' | 'security' | 'vacation' | 'groups' | 'migration' | 'bandwidth' | 'filters' | 'shared' | 'queue' | 'tasks' | 'webhooks' | 'branding' | 'retention' | 'hostnames' | 'shared-files' | 'bulk-import' | 'chat' | 'calendar' | 'ldap' | 'ai-config' | 'saml' | 'oidc' | 'ediscovery' | 'dlp' | 'dane' | 'smtp-config' | 'plugins' | 'contacts-app' | 'pop3' | 'archive' | 'activesync' | 'ollama' | 'dav-config' | 'spam' | 'billing' | 'deliverability' | 'push-devices';
 
 interface MailState {
   selectedFolder: string;
