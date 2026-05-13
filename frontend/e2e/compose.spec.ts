@@ -229,16 +229,20 @@ test.describe('Email Composer', () => {
       }
     });
 
-    // Added: Track send API calls for SPA validation
+    // Changed: Composer now posts to /api/messages/schedule (10s undo window) via
+    // scheduledApi.scheduleSend(), not the legacy /api/messages/send. Mock both
+    // so the assertion below catches either contract.
     let sendCalled = false;
-    await page.route('**/api/messages/send', async (route) => {
+    const trackSend = async (route: import('@playwright/test').Route) => {
       sendCalled = true;
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({ success: true, cancel_token: 'test-token' }),
+        body: JSON.stringify({ id: 'sched-1', cancel_token: 'test-token' }),
       });
-    });
+    };
+    await page.route('**/api/messages/send', trackSend);
+    await page.route('**/api/messages/schedule', trackSend);
 
     // Added: Open composer via sidebar button
     await page.locator('.sidebar .btn--compose').click();

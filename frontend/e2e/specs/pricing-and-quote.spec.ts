@@ -91,6 +91,12 @@ test.describe('Enterprise quote-request flow (TMAIL-184/186)', () => {
 
   test('rejects submissions with missing required fields', async ({ page, takeScreenshot }) => {
     await page.goto('/');
+    // Added: wait for the landing hero before drilling into the quote section.
+    // The previous test in this describe POSTs to /api/enterprise/quote-request
+    // twice; against the live deployment the next page.goto sometimes returns a
+    // blank document until the SPA fully hydrates. Anchor on a stable top-of-page
+    // element first so subsequent locators get a real DOM to work against.
+    await page.locator('.landing-hero__title').waitFor({ state: 'visible', timeout: 30_000 });
     await page.locator('#enterprise-quote').scrollIntoViewIfNeeded();
 
     // Fill only name — email + message missing → required-field error before request fires

@@ -44,7 +44,7 @@ npm run e2e:headed             # Playwright E2E (headed Firefox)
 ```
 
 ### Database
-PostgreSQL 16+. Default dev connection: `postgres://tasmail:tasmail@localhost/tasmail`. Migrations run automatically on backend startup via `sqlx::migrate!("./migrations")`. 53 migration files (001–053) covering the full schema.
+PostgreSQL 16+. Default dev connection: `postgres://tasmail:tasmail@localhost/tasmail`. Migrations run automatically on backend startup via `sqlx::migrate!("./migrations")`. 59 migration files (001–059) covering the full schema; the latest set adds feature flags (`057`), usage-based billing (`058`) and enterprise quote requests (`059`).
 
 ## Architecture
 
@@ -114,6 +114,12 @@ flutter build apk              # Build Android APK
 
 ### Deployment (`deploy/`)
 Production infrastructure configs: `docker-compose.yml`, plus config directories for `nginx`, `postfix`, `dovecot`, `dns`, `tls`, `systemd`, and helper `scripts/`. Environment template: `tasmail.env.example`.
+
+### Brand kit (`branding/`)
+Source-of-truth for the TASMail mark + palette. `BRAND.md` documents the `t@s` envelope mark, palette tokens (`--tm-blue-600`, `--tm-teal-400`, etc.), typography, and contrast rules. `src/build_logo.py` and `src/build_assets.py` regenerate every derivative in `build/` (`app-icons/`, `ico/`, `png/`, `social/`, `svg/`, `wordmark/`) from those primitives, and the published downloadable archive ships from the same pipeline. Run the scripts from `branding/` after any palette or glyph change rather than editing the rendered assets by hand.
+
+### Repo-root `scripts/`
+Currently just `notebooklm-login-firefox.mjs` (NotebookLM auth helper). Operational scripts live under `deploy/scripts/` and `backend/`, not here — keep this folder for ad-hoc Node utilities only.
 
 ## Configuration
 
