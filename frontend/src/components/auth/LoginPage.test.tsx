@@ -19,8 +19,11 @@ describe('LoginPage', () => {
 
   it('renders TASMail branding', () => {
     render(<LoginPage onLogin={mockOnLogin} />);
-    expect(screen.getByText('TASMail')).toBeInTheDocument();
-    expect(screen.getByText('Self-hosted email service')).toBeInTheDocument();
+    // Changed: TasmailLogo also renders the brand name as an aria-label /
+    // <title>, so getByText('TASMail') now returns multiple nodes. Anchor on
+    // the H1 explicitly and use the post-BYOK-pivot subtitle copy.
+    expect(screen.getByRole('heading', { level: 1, name: 'TASMail' })).toBeInTheDocument();
+    expect(screen.getByText('Webmail for any IMAP/SMTP server')).toBeInTheDocument();
   });
 
   it('shows error when submitting empty form', async () => {

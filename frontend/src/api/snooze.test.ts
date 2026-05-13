@@ -17,21 +17,21 @@ describe('snooze API', () => {
     const mockSnooze = { id: 's1', folder: 'INBOX', message_uid: 42, snooze_until: '2026-04-15T09:00:00Z' };
     vi.mocked(apiClient.post).mockResolvedValue(mockSnooze);
     const result = await snoozeMessage({ folder: 'INBOX', message_uid: 42, snooze_until: '2026-04-15T09:00:00Z' });
-    expect(apiClient.post).toHaveBeenCalledWith('/api/messages/snooze', expect.objectContaining({ message_uid: 42 }));
+    expect(apiClient.post).toHaveBeenCalledWith('/messages/snooze', expect.objectContaining({ message_uid: 42 }));
     expect(result.id).toBe('s1');
   });
 
   it('lists snoozed emails', async () => {
     vi.mocked(apiClient.get).mockResolvedValue([]);
     const result = await listSnoozed();
-    expect(apiClient.get).toHaveBeenCalledWith('/api/messages/snoozed');
+    expect(apiClient.get).toHaveBeenCalledWith('/messages/snoozed');
     expect(result).toHaveLength(0);
   });
 
   it('cancels a snooze', async () => {
     vi.mocked(apiClient.delete).mockResolvedValue(undefined);
     await cancelSnooze('s1');
-    expect(apiClient.delete).toHaveBeenCalledWith('/api/messages/snooze/s1');
+    expect(apiClient.delete).toHaveBeenCalledWith('/messages/snooze/s1');
   });
 });
 

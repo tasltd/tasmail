@@ -15,6 +15,8 @@ import { LoadingSkeleton } from '../shared/LoadingSkeleton';
 import { CommentThread } from './CommentThread';
 // Added: Smart reply suggestion bar for TMAIL-104
 import { SmartReplyBar } from './SmartReplyBar';
+// Added: TMAIL-205 — Snooze button in the toolbar (closes the snooze.ts orphan).
+import { SnoozeMenu } from './SnoozeMenu';
 // Added: Email summarization component for TMAIL-103
 import { EmailSummary } from './EmailSummary';
 
@@ -159,6 +161,12 @@ export function MessageView() {
         >
           <FolderInput size={20} />
         </button>
+        {/* Added: TMAIL-205 — snooze the message until a preset time. */}
+        <SnoozeMenu
+          folder={selectedFolder}
+          uid={message.uid}
+          onSnoozed={() => setSelectedUid(null)}
+        />
         <button
           className="btn btn--icon btn--danger"
           onClick={() => deleteMut.mutate()}

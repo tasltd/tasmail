@@ -1,3 +1,5 @@
+// TMAIL-205: fix double-prefix bug — apiClient already prepends /api via
+// API_BASE_URL, so paths here drop the /api/ prefix.
 import { apiClient } from './client';
 
 export interface SnoozedEmail {
@@ -17,15 +19,15 @@ export interface CreateSnoozeRequest {
 }
 
 export async function snoozeMessage(data: CreateSnoozeRequest): Promise<SnoozedEmail> {
-  return apiClient.post('/api/messages/snooze', data);
+  return apiClient.post('/messages/snooze', data);
 }
 
 export async function listSnoozed(): Promise<SnoozedEmail[]> {
-  return apiClient.get('/api/messages/snoozed');
+  return apiClient.get('/messages/snoozed');
 }
 
 export async function cancelSnooze(id: string): Promise<void> {
-  return apiClient.delete(`/api/messages/snooze/${id}`);
+  return apiClient.delete(`/messages/snooze/${id}`);
 }
 
 // Added: common snooze presets
