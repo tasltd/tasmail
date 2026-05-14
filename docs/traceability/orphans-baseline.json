@@ -1,8 +1,7 @@
 {
   "generated_by": "scripts/trace-check.py --update",
-  "orphan_count": 42,
+  "orphan_count": 39,
   "by_feature_count": {
-    "admin/domains": 3,
     "admin/payment-providers": 3,
     "admin/users": 3,
     "admin/warmup": 3,
@@ -26,27 +25,6 @@
     "ws": 1
   },
   "orphans": [
-    {
-      "method": "GET",
-      "path": "/api/admin/domains",
-      "handler": "admin::domains::list_domains",
-      "auth": false,
-      "feature": "admin/domains"
-    },
-    {
-      "method": "POST",
-      "path": "/api/admin/domains",
-      "handler": "admin::domains::create_domain",
-      "auth": false,
-      "feature": "admin/domains"
-    },
-    {
-      "method": "DELETE",
-      "path": "/api/admin/domains/{id}",
-      "handler": "admin::domains::delete_domain",
-      "auth": false,
-      "feature": "admin/domains"
-    },
     {
       "method": "GET",
       "path": "/api/admin/payment-providers",

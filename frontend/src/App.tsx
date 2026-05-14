@@ -17,6 +17,7 @@ import { AdminShell, AdminPlaceholder } from './components/admin/AdminShell';
 import { RequireAdmin } from './components/admin/RequireAdmin';
 import { AuditLogManager } from './components/admin/AuditLogManager';
 import { CacheManager } from './components/admin/CacheManager';
+import { DomainsManager } from './components/admin/DomainsManager';
 import { UsageBillingPage } from './components/billing/UsageBillingPage';
 import { ErrorBoundary } from './components/shared/ErrorBoundary';
 import './App.css';
@@ -124,16 +125,7 @@ function AppContent() {
           <Route path="quote-requests" element={<QuoteRequestsManager />} />
           <Route path="audit-log" element={<AuditLogManager />} />
           <Route path="cache" element={<CacheManager />} />
-          <Route
-            path="domains"
-            element={
-              <AdminPlaceholder
-                title="Domains"
-                ticket="TMAIL-200"
-                description="CRUD over /api/admin/domains with the synthetic byok.tasmail row marked undeletable."
-              />
-            }
-          />
+          <Route path="domains" element={<DomainsManager />} />
           <Route
             path="payment-providers"
             element={
