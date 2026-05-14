@@ -1,0 +1,81 @@
+/* TMAIL-197 — admin shell layout. Sidebar left, content right; mobile collapses to stacked. */
+.admin-shell {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  min-height: 100vh;
+  background: var(--color-bg, #f8fafc);
+}
+
+.admin-shell__sidebar {
+  background: var(--color-bg-elevated, #ffffff);
+  border-right: 1px solid var(--color-border, #e5e7eb);
+  padding: 16px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.admin-shell__brand {
+  padding: 8px 12px 16px;
+  font-size: 16px;
+  border-bottom: 1px solid var(--color-border, #e5e7eb);
+  margin-bottom: 12px;
+}
+
+.admin-shell__back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--color-text-secondary, #64748b);
+  text-decoration: none;
+  margin-bottom: 8px;
+}
+.admin-shell__back:hover { color: var(--color-text, #0f172a); }
+
+.admin-shell__nav { display: flex; flex-direction: column; gap: 2px; }
+
+.admin-shell__nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  color: var(--color-text, #0f172a);
+  text-decoration: none;
+  font-size: 14px;
+  transition: background-color 100ms ease;
+}
+.admin-shell__nav-item:hover { background: var(--color-bg-hover, #f1f5f9); }
+.admin-shell__nav-item--active {
+  background: var(--color-primary-bg, rgba(37, 99, 235, 0.1));
+  color: var(--color-primary, #2563eb);
+  font-weight: 600;
+}
+
+.admin-shell__content {
+  padding: 32px 40px;
+  overflow-y: auto;
+}
+
+.admin-placeholder {
+  max-width: 720px;
+  background: var(--color-bg-elevated, #ffffff);
+  border: 1px dashed var(--color-border, #e5e7eb);
+  border-radius: 8px;
+  padding: 24px 28px;
+}
+.admin-placeholder h1 { margin: 0 0 8px; font-size: 22px; }
+.admin-placeholder__desc { color: var(--color-text-secondary, #64748b); margin: 0 0 16px; }
+.admin-placeholder__ticket {
+  color: var(--color-text-secondary, #64748b);
+  font-size: 13px;
+  margin: 0;
+}
+
+@media (max-width: 720px) {
+  .admin-shell { grid-template-columns: 1fr; }
+  .admin-shell__sidebar { border-right: 0; border-bottom: 1px solid var(--color-border, #e5e7eb); }
+  .admin-shell__content { padding: 20px 16px; }
+}

@@ -119,21 +119,54 @@ pub async fn authenticate(
 
     let expires_at = Utc::now() + Duration::seconds(config.refresh_token_expiry_secs as i64);
 
-    Session::create(
-        pool,
-        mailbox.id,
-        &refresh_hash,
-        expires_at,
-        ip_address,
-        user_agent,
-    )
-    .await?;
+    // Fix: TMAIL-157 / TMAIL-197 — Session::create acquires its own pool
+    // connection, so the RLS session vars set elsewhere don't apply. Pin the
+    // app.mailbox_id + app.is_admin config to the same connection that runs
+    // the INSERT, otherwise the sessions-table policy 500s with
+    // "new row violates row-level security policy for table sessions".
+    insert_session_with_rls_context(pool, &mailbox, &refresh_hash, expires_at, ip_address, user_agent).await?;
 
     Ok(TokenPair {
         access_token,
         refresh_token,
         expires_in: config.access_token_expiry_secs,
     })
+}
+
+/// Fix: TMAIL-157 — connection-pinned session insert. RLS policy on the
+/// `sessions` table requires `app.mailbox_id` to match the row being
+/// inserted; SET configs only stick to a single connection so we have to
+/// hold one for the whole set+insert sequence.
+async fn insert_session_with_rls_context(
+    pool: &sqlx::PgPool,
+    mailbox: &Mailbox,
+    refresh_hash: &str,
+    expires_at: chrono::DateTime<chrono::Utc>,
+    ip_address: Option<&str>,
+    user_agent: Option<&str>,
+) -> Result<(), AppError> {
+    let mut conn = pool.acquire().await?;
+    sqlx::query("SELECT set_config('app.mailbox_id', $1, false)")
+        .bind(mailbox.id.to_string())
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query("SELECT set_config('app.is_admin', $1, false)")
+        .bind(mailbox.is_admin.to_string())
+        .execute(&mut *conn)
+        .await?;
+
+    sqlx::query(
+        "INSERT INTO sessions (id, mailbox_id, refresh_token_hash, expires_at, created_at, ip_address, user_agent) \
+         VALUES (gen_random_uuid(), $1, $2, $3, NOW(), $4, $5)",
+    )
+    .bind(mailbox.id)
+    .bind(refresh_hash)
+    .bind(expires_at)
+    .bind(ip_address)
+    .bind(user_agent)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
 }
 
 /// Added: Issue a fresh token pair for a known mailbox without verifying password.
@@ -152,28 +185,9 @@ pub async fn issue_token_pair_for_mailbox(
     let refresh_hash = hash_refresh_token(&refresh_token);
     let expires_at = Utc::now() + Duration::seconds(config.refresh_token_expiry_secs as i64);
 
-    // Set RLS session vars on a held connection so the sessions-table policy permits the insert.
-    // The session uniquely belongs to the mailbox we just authenticated, so we synthesise the
-    // claims inline instead of going through the JWT round-trip.
-    let mut conn = pool.acquire().await?;
-    sqlx::query("SELECT set_config('app.mailbox_id', $1, false)")
-        .bind(mailbox.id.to_string())
-        .execute(&mut *conn)
-        .await?;
-    sqlx::query("SELECT set_config('app.is_admin', $1, false)")
-        .bind(mailbox.is_admin.to_string())
-        .execute(&mut *conn)
-        .await?;
-
-    sqlx::query(
-        "INSERT INTO sessions (id, mailbox_id, refresh_token_hash, expires_at, created_at) \
-         VALUES (gen_random_uuid(), $1, $2, $3, NOW())",
-    )
-    .bind(mailbox.id)
-    .bind(&refresh_hash)
-    .bind(expires_at)
-    .execute(&mut *conn)
-    .await?;
+    // Changed: TMAIL-197 — share the connection-pinned insert helper with
+    // authenticate(); see insert_session_with_rls_context above.
+    insert_session_with_rls_context(pool, mailbox, &refresh_hash, expires_at, None, None).await?;
 
     Ok(TokenPair {
         access_token,
@@ -208,7 +222,8 @@ pub async fn refresh_tokens(
 
     let expires_at = Utc::now() + Duration::seconds(config.refresh_token_expiry_secs as i64);
 
-    Session::create(pool, mailbox.id, &new_hash, expires_at, None, None).await?;
+    // Fix: TMAIL-157 — same connection-pinned insert as authenticate().
+    insert_session_with_rls_context(pool, &mailbox, &new_hash, expires_at, None, None).await?;
 
     Ok(TokenPair {
         access_token,

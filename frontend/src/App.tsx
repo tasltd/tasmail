@@ -11,6 +11,10 @@ import { LandingPage } from './components/landing/LandingPage';
 import { PricingPage } from './components/landing/PricingPage';
 import { FeatureFlagsManager } from './components/admin/FeatureFlagsManager';
 import { QuoteRequestsManager } from './components/admin/QuoteRequestsManager';
+// Added: TMAIL-197 — admin shell + role guard + placeholders for the
+// six follow-up admin pages (TMAIL-198..203).
+import { AdminShell, AdminPlaceholder } from './components/admin/AdminShell';
+import { RequireAdmin } from './components/admin/RequireAdmin';
 import { UsageBillingPage } from './components/billing/UsageBillingPage';
 import { ErrorBoundary } from './components/shared/ErrorBoundary';
 import './App.css';
@@ -99,24 +103,84 @@ function AppContent() {
             </RequireAuth>
           }
         />
-        {/* TMAIL-166: admin dashboard for runtime feature toggles. Auth required; role gating TBD. */}
+        {/* TMAIL-197: every /admin/* page mounts inside AdminShell behind the
+            RequireAdmin gate. Existing FeatureFlagsManager and QuoteRequestsManager
+            move under here; placeholders cover TMAIL-198..203 until each manager
+            ships. */}
         <Route
-          path="/admin/feature-flags"
+          path="/admin"
           element={
             <RequireAuth>
-              <FeatureFlagsManager />
+              <RequireAdmin>
+                <AdminShell />
+              </RequireAdmin>
             </RequireAuth>
           }
-        />
-        {/* TMAIL-185: admin dashboard for the enterprise quote-request inbox. */}
-        <Route
-          path="/admin/quote-requests"
-          element={
-            <RequireAuth>
-              <QuoteRequestsManager />
-            </RequireAuth>
-          }
-        />
+        >
+          <Route index element={<Navigate to="feature-flags" replace />} />
+          <Route path="feature-flags" element={<FeatureFlagsManager />} />
+          <Route path="quote-requests" element={<QuoteRequestsManager />} />
+          <Route
+            path="audit-log"
+            element={
+              <AdminPlaceholder
+                title="Audit log"
+                ticket="TMAIL-198"
+                description="Paginated viewer for the audit_log table — actor, action, resource, IP, user-agent, with action-prefix filters (auth.*, billing.*, admin.*)."
+              />
+            }
+          />
+          <Route
+            path="cache"
+            element={
+              <AdminPlaceholder
+                title="Cache"
+                ticket="TMAIL-199"
+                description="Status panel and flush button consuming /api/admin/cache/{status,stats,flush}."
+              />
+            }
+          />
+          <Route
+            path="domains"
+            element={
+              <AdminPlaceholder
+                title="Domains"
+                ticket="TMAIL-200"
+                description="CRUD over /api/admin/domains with the synthetic byok.tasmail row marked undeletable."
+              />
+            }
+          />
+          <Route
+            path="payment-providers"
+            element={
+              <AdminPlaceholder
+                title="Payment providers"
+                ticket="TMAIL-201"
+                description="CRUD over /api/admin/payment-providers (PAYSTACK / MASTERCARD / CYBERSOURCE / BANK_TRANSFER) with encrypted-field handling."
+              />
+            }
+          />
+          <Route
+            path="users"
+            element={
+              <AdminPlaceholder
+                title="Users"
+                ticket="TMAIL-202"
+                description="List/create/delete mailboxes plus the multipart bulk-import endpoint, with is_admin toggle and reset-password helper."
+              />
+            }
+          />
+          <Route
+            path="warmup"
+            element={
+              <AdminPlaceholder
+                title="IP warm-up"
+                ticket="TMAIL-203"
+                description="Visualise the 8-week IP warm-up schedule and current send-volume vs target from /api/admin/warmup/{status,schedule}, with a Start button."
+              />
+            }
+          />
+        </Route>
         {/* TMAIL-179: in-app usage & billing dashboard for the BYOK plan. */}
         <Route
           path="/billing"
