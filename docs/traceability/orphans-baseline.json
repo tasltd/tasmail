@@ -1,8 +1,7 @@
 {
   "generated_by": "scripts/trace-check.py --update",
-  "orphan_count": 46,
+  "orphan_count": 45,
   "by_feature_count": {
-    "admin/audit-log": 1,
     "admin/cache": 3,
     "admin/domains": 3,
     "admin/payment-providers": 3,
@@ -28,13 +27,6 @@
     "ws": 1
   },
   "orphans": [
-    {
-      "method": "GET",
-      "path": "/api/admin/audit-log",
-      "handler": "admin::audit::list_audit_logs",
-      "auth": false,
-      "feature": "admin/audit-log"
-    },
     {
       "method": "POST",
       "path": "/api/admin/cache/flush",

@@ -15,6 +15,7 @@ import { QuoteRequestsManager } from './components/admin/QuoteRequestsManager';
 // six follow-up admin pages (TMAIL-198..203).
 import { AdminShell, AdminPlaceholder } from './components/admin/AdminShell';
 import { RequireAdmin } from './components/admin/RequireAdmin';
+import { AuditLogManager } from './components/admin/AuditLogManager';
 import { UsageBillingPage } from './components/billing/UsageBillingPage';
 import { ErrorBoundary } from './components/shared/ErrorBoundary';
 import './App.css';
@@ -120,16 +121,7 @@ function AppContent() {
           <Route index element={<Navigate to="feature-flags" replace />} />
           <Route path="feature-flags" element={<FeatureFlagsManager />} />
           <Route path="quote-requests" element={<QuoteRequestsManager />} />
-          <Route
-            path="audit-log"
-            element={
-              <AdminPlaceholder
-                title="Audit log"
-                ticket="TMAIL-198"
-                description="Paginated viewer for the audit_log table — actor, action, resource, IP, user-agent, with action-prefix filters (auth.*, billing.*, admin.*)."
-              />
-            }
-          />
+          <Route path="audit-log" element={<AuditLogManager />} />
           <Route
             path="cache"
             element={

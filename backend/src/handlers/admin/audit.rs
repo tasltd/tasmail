@@ -8,6 +8,7 @@ use uuid::Uuid;
 use crate::error::AppError;
 use crate::models::audit_log::AuditLog;
 use crate::services::auth_service::Claims;
+use crate::services::db_session;
 use crate::state::AppState;
 
 #[derive(Debug, Deserialize)]
@@ -28,8 +29,14 @@ pub async fn list_audit_logs(
     }
 
     let limit = query.limit.unwrap_or(50).min(500);
-    let logs = AuditLog::query(
-        &state.db,
+
+    // Fix: TMAIL-198 — audit_log RLS only returns rows when app.is_admin =
+    // 'true' on the connection running the SELECT. AuditLog::query was
+    // taking the bare pool, so the freshly-acquired connection had no RLS
+    // context and the table looked empty. Pin the admin context first.
+    let mut conn = db_session::acquire_with_rls(&state, &claims).await?;
+    let logs = AuditLog::query_with_conn(
+        &mut conn,
         query.mailbox_id,
         query.action.as_deref(),
         limit,

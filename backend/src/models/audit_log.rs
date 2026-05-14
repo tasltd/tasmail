@@ -16,7 +16,16 @@ pub struct AuditLog {
 }
 
 impl AuditLog {
-    /// Record an audit log entry
+    /// Record an audit log entry.
+    ///
+    /// Fix: TMAIL-198 — pin app.is_admin = true on the recording connection
+    /// so the audit_log_admin RLS policy permits the insert. Without this
+    /// every record() call silently failed (the table's RLS policies require
+    /// either matching mailbox_id or admin context, and most callers run
+    /// with neither set on the freshly-acquired pool connection). Treating
+    /// audit recording as a system-internal write — every successful auth
+    /// or admin action should be logged regardless of the current request's
+    /// session vars.
     pub async fn record(
         pool: &PgPool,
         mailbox_id: Option<Uuid>,
@@ -27,6 +36,10 @@ impl AuditLog {
         ip_address: Option<&str>,
         user_agent: Option<&str>,
     ) -> Result<(), sqlx::Error> {
+        let mut conn = pool.acquire().await?;
+        sqlx::query("SELECT set_config('app.is_admin', 'true', false)")
+            .execute(&mut *conn)
+            .await?;
         sqlx::query(
             "INSERT INTO audit_log (mailbox_id, action, resource_type, resource_id, details, ip_address, user_agent) VALUES ($1, $2, $3, $4, $5, $6, $7)"
         )
@@ -37,18 +50,23 @@ impl AuditLog {
         .bind(details)
         .bind(ip_address)
         .bind(user_agent)
-        .execute(pool)
+        .execute(&mut *conn)
         .await?;
         Ok(())
     }
 
-    /// Query audit log with optional filters
-    pub async fn query(
-        pool: &PgPool,
+    /// Build the SQL + bind params for a filtered query. Shared by query()
+    /// and query_with_conn() so the connection-pinned admin viewer (TMAIL-198)
+    /// reuses the exact same predicate logic as the historical pool variant.
+    ///
+    /// Action filter semantics: an action ending in `.` is treated as a
+    /// prefix match (e.g. `auth.` matches `auth.login`, `auth.signup`).
+    /// Exact strings (e.g. `auth.login`) match only that action.
+    fn build_filtered_query(
         mailbox_id: Option<Uuid>,
         action: Option<&str>,
         limit: i64,
-    ) -> Result<Vec<AuditLog>, sqlx::Error> {
+    ) -> (String, Vec<String>) {
         let mut query = String::from("SELECT * FROM audit_log WHERE 1=1");
         let mut params: Vec<String> = Vec::new();
 
@@ -57,20 +75,53 @@ impl AuditLog {
             query.push_str(&format!(" AND mailbox_id = ${}", params.len()));
         }
         if let Some(act) = action {
-            params.push(act.to_string());
-            query.push_str(&format!(" AND action = ${}", params.len()));
+            if act.ends_with('.') {
+                // Prefix match — `auth.` → `auth.%`
+                params.push(format!("{}%", act));
+                query.push_str(&format!(" AND action LIKE ${}", params.len()));
+            } else {
+                params.push(act.to_string());
+                query.push_str(&format!(" AND action = ${}", params.len()));
+            }
         }
 
         query.push_str(" ORDER BY created_at DESC");
         query.push_str(&format!(" LIMIT {}", limit));
+        (query, params)
+    }
 
-        // Use dynamic query builder for variable params
+    /// Query audit log with optional filters (uses bare pool — kept for the
+    /// non-RLS-sensitive call sites).
+    pub async fn query(
+        pool: &PgPool,
+        mailbox_id: Option<Uuid>,
+        action: Option<&str>,
+        limit: i64,
+    ) -> Result<Vec<AuditLog>, sqlx::Error> {
+        let (query, params) = Self::build_filtered_query(mailbox_id, action, limit);
         let mut q = sqlx::query_as::<_, AuditLog>(&query);
         for param in &params {
             q = q.bind(param);
         }
-
         q.fetch_all(pool).await
+    }
+
+    /// Same as query() but runs against a caller-supplied connection so
+    /// previously-set RLS session vars (app.is_admin) carry through. Used
+    /// by the admin viewer (TMAIL-198) where the audit_log table is empty
+    /// without app.is_admin = 'true'.
+    pub async fn query_with_conn(
+        conn: &mut sqlx::PgConnection,
+        mailbox_id: Option<Uuid>,
+        action: Option<&str>,
+        limit: i64,
+    ) -> Result<Vec<AuditLog>, sqlx::Error> {
+        let (query, params) = Self::build_filtered_query(mailbox_id, action, limit);
+        let mut q = sqlx::query_as::<_, AuditLog>(&query);
+        for param in &params {
+            q = q.bind(param);
+        }
+        q.fetch_all(conn).await
     }
 
     /// Build the query string for testing/debugging purposes
