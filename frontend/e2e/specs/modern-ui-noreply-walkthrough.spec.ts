@@ -125,8 +125,28 @@ test.describe('Modern UI walk-through as noreply (TMAIL-228)', () => {
     await page.locator('input[placeholder="Subject"]').fill('Modern UI walk-through');
     await page.locator('textarea[placeholder*="Compose"]').fill('Hello from the alt-UI');
     await takeScreenshot(page, 'modern-walkthrough/06-compose-filled');
-    // Close without sending — sending would actually email noreply.
-    await page.locator('button', { hasText: 'Discard' }).click();
+    // TMAIL-238: click Save Draft (now wired) instead of Discard. Verify the
+    // backend POST hit /api/drafts and produced a row in the Drafts folder.
+    const draftsBefore = await fetch(`${baseURL}/api/folders/Drafts/messages?page=0&page_size=10`, { headers: auth });
+    const draftsBeforeJson = draftsBefore.ok ? await draftsBefore.json() : { messages: [] };
+    const beforeCount = (draftsBeforeJson.messages ?? []).length;
+    await page.locator('button', { hasText: /Save Draft|Save/ }).first().click();
+    // Modal closes on success.
+    await expect(page.locator('text=New Message')).toBeHidden({ timeout: 8_000 });
+    // Confirm a new draft row exists.
+    let draftConfirmed = false;
+    for (let attempt = 0; attempt < 5 && !draftConfirmed; attempt++) {
+      await page.waitForTimeout(1200);
+      const after = await fetch(`${baseURL}/api/folders/Drafts/messages?page=0&page_size=10`, { headers: auth });
+      if (after.ok) {
+        const afterJson = await after.json();
+        if ((afterJson.messages ?? []).length > beforeCount) {
+          draftConfirmed = true;
+        }
+      }
+    }
+    expect(draftConfirmed, 'draft was created on the live backend').toBe(true);
+    await takeScreenshot(page, 'modern-walkthrough/06b-draft-saved');
 
     // ── 8. admin route ──────────────────────────────────────────────
     // Gear icon next to the inbox header opens admin via internal Link.
@@ -137,13 +157,29 @@ test.describe('Modern UI walk-through as noreply (TMAIL-228)', () => {
       await takeScreenshot(page, 'modern-walkthrough/07-admin-route');
     }
 
-    // ── 9. calendar route — sidebar entry ───────────────────────────
-    const calendarLink = page.locator('a, button').filter({ hasText: /^Calendar$/ }).first();
-    if (await calendarLink.isVisible().catch(() => false)) {
-      await calendarLink.click();
-      await page.waitForTimeout(1500);
-      await takeScreenshot(page, 'modern-walkthrough/08-calendar-route');
+    // ── 9. calendar route — sidebar entry, then create a real event ─
+    // TMAIL-237: the sidebar Calendar link routes to /calendar inside the
+    // hash router. Pull-down the New Event modal, fill it, save, and verify
+    // the event reaches /api/calendar/events on the backend.
+    await page.goto('/modern/index.html#/calendar');
+    await page.waitForLoadState('domcontentloaded');
+    await expect(page.locator('h2', { hasText: 'Calendar' })).toBeVisible({ timeout: 8_000 });
+    await takeScreenshot(page, 'modern-walkthrough/08-calendar-route');
+    const eventsBefore = await fetch(`${baseURL}/api/calendar/events`, { headers: auth });
+    const eventsBeforeCount = eventsBefore.ok ? (await eventsBefore.json() as unknown[]).length : 0;
+    await page.locator('button', { hasText: 'New Event' }).first().click();
+    await page.locator('input[placeholder="Event title"]').fill('Walk-through smoke event');
+    await page.locator('button', { hasText: 'Save Event' }).click();
+    let eventCreated = false;
+    for (let attempt = 0; attempt < 5 && !eventCreated; attempt++) {
+      await page.waitForTimeout(1200);
+      const after = await fetch(`${baseURL}/api/calendar/events`, { headers: auth });
+      if (after.ok && (await after.json() as unknown[]).length > eventsBeforeCount) {
+        eventCreated = true;
+      }
     }
+    expect(eventCreated, 'calendar event was created on the live backend').toBe(true);
+    await takeScreenshot(page, 'modern-walkthrough/08b-calendar-event-created');
 
     // ── 10. back to classic via the ← Classic link ──────────────────
     // Need to be back on the email view (Navbar shows the Classic link there).

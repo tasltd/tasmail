@@ -48,3 +48,44 @@ describe('apiClient token management', () => {
     expect(clientModule.apiClient.getToken()).toBeNull();
   });
 });
+
+describe('apiClient empty-body handling', () => {
+  let clientModule: typeof import('./client');
+  beforeEach(async () => {
+    vi.resetModules();
+    clientModule = await import('./client');
+  });
+
+  it('returns undefined for 204 No Content', async () => {
+    const original = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response(null, { status: 204 }),
+    ) as unknown as typeof fetch;
+    const result = await clientModule.apiClient.post<void>('/anything');
+    expect(result).toBeUndefined();
+    globalThis.fetch = original;
+  });
+
+  it('returns undefined for 201 Created with empty body (drafts/save flow)', async () => {
+    const original = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response('', { status: 201 }),
+    ) as unknown as typeof fetch;
+    const result = await clientModule.apiClient.post<void>('/drafts', { foo: 'bar' });
+    expect(result).toBeUndefined();
+    globalThis.fetch = original;
+  });
+
+  it('parses JSON body when present', async () => {
+    const original = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ id: 'abc' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    ) as unknown as typeof fetch;
+    const result = await clientModule.apiClient.get<{ id: string }>('/anything');
+    expect(result).toEqual({ id: 'abc' });
+    globalThis.fetch = original;
+  });
+});

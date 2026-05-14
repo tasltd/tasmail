@@ -41,7 +41,12 @@ class ApiClient {
         if (!retryResponse.ok) {
           throw new ApiError(retryResponse.status, await retryResponse.text());
         }
-        return retryResponse.json();
+        if (retryResponse.status === 204) {
+          return undefined as T;
+        }
+        const retryText = await retryResponse.text();
+        if (!retryText) return undefined as T;
+        return JSON.parse(retryText) as T;
       }
       // Refresh failed, redirect to login
       window.location.href = '/login';
@@ -53,11 +58,18 @@ class ApiClient {
       throw new ApiError(response.status, body);
     }
 
+    // Fix: backend handlers like POST /api/drafts and POST /api/quota/sync
+    // return 201/200 with an empty body. response.json() on an empty body
+    // throws "JSON.parse: unexpected end of data". Read text first and parse
+    // only when there's something to parse.
     if (response.status === 204) {
       return undefined as T;
     }
-
-    return response.json();
+    const text = await response.text();
+    if (!text) {
+      return undefined as T;
+    }
+    return JSON.parse(text) as T;
   }
 
   private async tryRefresh(): Promise<boolean> {

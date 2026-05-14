@@ -1,6 +1,6 @@
 import { Star, Paperclip } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
-import type { Email } from '@/data/mockData';
+import type { Email } from '@/types/ui';
 
 interface EmailListProps {
   emails: Email[];

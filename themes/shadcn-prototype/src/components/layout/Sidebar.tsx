@@ -16,15 +16,15 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { mockFolders } from '@/data/mockData';
-import type { Folder } from '@/data/mockData';
+import type { Folder } from '@/types/ui';
+import { decodeAccessClaims } from '@/lib/jwt';
 
 interface SidebarProps {
   activeFolder: string;
   onFolderChange: (folderId: string) => void;
   onCompose: () => void;
   // TMAIL-217: when supplied, drives the folder list (real /api/folders).
-  // When omitted (standalone dev mode), falls back to mockFolders.
+  // When omitted (no data yet), shows an empty list — never any seed data.
   folders?: Folder[];
 }
 
@@ -42,13 +42,10 @@ export function Sidebar({ activeFolder, onFolderChange, onCompose, folders: fold
   const [collapsed, setCollapsed] = useState(false);
   const location = useLocation();
   const isCalendar = location.pathname === '/calendar';
-  // TMAIL-217 / TMAIL-228: when the parent supplies real folders, render
-  // directly from that prop (derived state). Local state was racing the
-  // /api/folders query — the Sidebar mounted with an empty array on the
-  // first render, captured that into useState, and never re-rendered when
-  // the prop later resolved. Falling back to the mock list only when the
-  // prop is absent (standalone dev run).
-  const liveFolders: Folder[] = foldersProp ?? mockFolders;
+  // TMAIL-217 / TMAIL-228 / TMAIL-239: render directly from the prop so the
+  // /api/folders query result drives the list immediately. No mock fallback;
+  // before the query resolves the list is empty, which is correct.
+  const liveFolders: Folder[] = foldersProp ?? [];
   // Local state is kept ONLY for the inline new-folder addition flow which
   // exists on top of the live list (real backend additions need a separate
   // endpoint — out of scope here).
@@ -221,15 +218,31 @@ export function Sidebar({ activeFolder, onFolderChange, onCompose, folders: fold
       </div>
 
       <div className="flex-1" />
-      <div className="p-4 border-t border-zinc-200 dark:border-zinc-800 sticky bottom-0 bg-white dark:bg-zinc-950">
-        <div className="flex items-center gap-3">
-          <Avatar>
-            <AvatarFallback className="bg-blue-600 text-white">ME</AvatarFallback>
-          </Avatar>
-          <div className="flex-1 min-w-0">
-            <div className="text-sm font-medium truncate">me@mydomain.com</div>
-            <div className="text-xs text-zinc-500">Personal Account</div>
-          </div>
+      <SidebarFooter />
+    </div>
+  );
+}
+
+// TMAIL-239: footer shows the signed-in user from the JWT instead of the
+// hardcoded "me@mydomain.com" mock identity.
+function SidebarFooter() {
+  const claims = decodeAccessClaims();
+  const username = claims?.username ?? claims?.sub ?? 'unknown';
+  const initials = username
+    .split(/[@._-]/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((s) => s[0]?.toUpperCase() ?? '')
+    .join('') || 'U';
+  return (
+    <div className="p-4 border-t border-zinc-200 dark:border-zinc-800 sticky bottom-0 bg-white dark:bg-zinc-950">
+      <div className="flex items-center gap-3">
+        <Avatar>
+          <AvatarFallback className="bg-blue-600 text-white">{initials}</AvatarFallback>
+        </Avatar>
+        <div className="flex-1 min-w-0">
+          <div className="text-sm font-medium truncate">{username}</div>
+          <div className="text-xs text-zinc-500">{claims?.is_admin ? 'Admin · TASMail' : 'TASMail'}</div>
         </div>
       </div>
     </div>

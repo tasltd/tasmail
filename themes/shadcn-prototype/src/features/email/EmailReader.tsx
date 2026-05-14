@@ -10,7 +10,7 @@ import { format } from 'date-fns';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { fetchMessage } from '@/api/messages';
-import type { Email } from '@/data/mockData';
+import type { Email } from '@/types/ui';
 
 interface EmailReaderProps {
   folder: string;

@@ -16,7 +16,7 @@ import { ComposeModal } from '@/features/email/ComposeModal';
 import { fetchFolders } from '@/api/folders';
 import { fetchMessages } from '@/api/messages';
 import type { Folder as ServerFolder, MessageEnvelope } from '@/types/mail';
-import type { Email, Folder as UiFolder } from '@/data/mockData';
+import type { Email, Folder as UiFolder } from '@/types/ui';
 
 const FOLDER_ICONS: Record<string, string> = {
   INBOX: 'Inbox',

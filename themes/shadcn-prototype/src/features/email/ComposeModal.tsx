@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { scheduledApi } from '@/api/scheduled';
+import { saveDraft } from '@/api/messages';
 
 interface ComposeModalProps {
   isOpen: boolean;
@@ -52,6 +53,25 @@ export function ComposeModal({ isOpen, onClose }: ComposeModalProps) {
       onClose();
     },
     onError: (err: Error) => setError(err.message || 'Send failed.'),
+  });
+
+  // TMAIL-238: Save Draft → POST /api/drafts. Backend appends an RFC-822
+  // message to Dovecot's Drafts folder with the \Draft flag set, so it
+  // shows up in the Drafts list without going through the SMTP queue.
+  const draftMut = useMutation({
+    mutationFn: () => saveDraft({
+      to: splitAddrs(to),
+      cc: cc.trim() ? splitAddrs(cc) : undefined,
+      subject: subject || '(no subject)',
+      text_body: body || undefined,
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['folders'] });
+      queryClient.invalidateQueries({ queryKey: ['messages', 'Drafts'] });
+      setError(null);
+      onClose();
+    },
+    onError: (err: Error) => setError(err.message || 'Save draft failed.'),
   });
 
   if (!isOpen) return null;
@@ -250,10 +270,19 @@ export function ComposeModal({ isOpen, onClose }: ComposeModalProps) {
             <Send className="size-4 mr-1 sm:mr-2" />
             {sendMut.isPending ? 'Sending…' : 'Send'}
           </Button>
-          <Button variant="outline" disabled title="Drafts not yet wired in the modern UI">
+          <Button
+            variant="outline"
+            disabled={draftMut.isPending || (!to.trim() && !subject.trim() && !body.trim())}
+            onClick={() => draftMut.mutate()}
+            title="Save as draft"
+          >
             <Save className="size-4 mr-1 sm:mr-2" />
-            <span className="hidden xs:inline sm:inline">Save Draft</span>
-            <span className="xs:hidden sm:hidden">Save</span>
+            <span className="hidden xs:inline sm:inline">
+              {draftMut.isPending ? 'Saving…' : 'Save Draft'}
+            </span>
+            <span className="xs:hidden sm:hidden">
+              {draftMut.isPending ? '…' : 'Save'}
+            </span>
           </Button>
         </div>
         <Button variant="ghost" size="sm" onClick={onClose}>
