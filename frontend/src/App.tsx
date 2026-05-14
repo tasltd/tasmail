@@ -13,13 +13,14 @@ import { FeatureFlagsManager } from './components/admin/FeatureFlagsManager';
 import { QuoteRequestsManager } from './components/admin/QuoteRequestsManager';
 // Added: TMAIL-197 — admin shell + role guard + placeholders for the
 // six follow-up admin pages (TMAIL-198..203).
-import { AdminShell, AdminPlaceholder } from './components/admin/AdminShell';
+import { AdminShell } from './components/admin/AdminShell';
 import { RequireAdmin } from './components/admin/RequireAdmin';
 import { AuditLogManager } from './components/admin/AuditLogManager';
 import { CacheManager } from './components/admin/CacheManager';
 import { DomainsManager } from './components/admin/DomainsManager';
 import { PaymentProvidersManager } from './components/admin/PaymentProvidersManager';
 import { UsersManager } from './components/admin/UsersManager';
+import { WarmupManager } from './components/admin/WarmupManager';
 import { UsageBillingPage } from './components/billing/UsageBillingPage';
 import { ErrorBoundary } from './components/shared/ErrorBoundary';
 import './App.css';
@@ -130,16 +131,7 @@ function AppContent() {
           <Route path="domains" element={<DomainsManager />} />
           <Route path="payment-providers" element={<PaymentProvidersManager />} />
           <Route path="users" element={<UsersManager />} />
-          <Route
-            path="warmup"
-            element={
-              <AdminPlaceholder
-                title="IP warm-up"
-                ticket="TMAIL-203"
-                description="Visualise the 8-week IP warm-up schedule and current send-volume vs target from /api/admin/warmup/{status,schedule}, with a Start button."
-              />
-            }
-          />
+          <Route path="warmup" element={<WarmupManager />} />
         </Route>
         {/* TMAIL-179: in-app usage & billing dashboard for the BYOK plan. */}
         <Route

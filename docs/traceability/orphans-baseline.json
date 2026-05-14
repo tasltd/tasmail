@@ -1,8 +1,7 @@
 {
   "generated_by": "scripts/trace-check.py --update",
-  "orphan_count": 33,
+  "orphan_count": 30,
   "by_feature_count": {
-    "admin/warmup": 3,
     "attachments": 2,
     "auth": 3,
     "billing": 2,
@@ -23,27 +22,6 @@
     "ws": 1
   },
   "orphans": [
-    {
-      "method": "GET",
-      "path": "/api/admin/warmup/schedule",
-      "handler": "warmup::get_warmup_schedule",
-      "auth": false,
-      "feature": "admin/warmup"
-    },
-    {
-      "method": "POST",
-      "path": "/api/admin/warmup/start",
-      "handler": "warmup::start_warmup",
-      "auth": false,
-      "feature": "admin/warmup"
-    },
-    {
-      "method": "GET",
-      "path": "/api/admin/warmup/status",
-      "handler": "warmup::get_warmup_status",
-      "auth": false,
-      "feature": "admin/warmup"
-    },
     {
       "method": "POST",
       "path": "/api/attachments",

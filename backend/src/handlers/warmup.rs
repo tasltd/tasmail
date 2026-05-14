@@ -89,8 +89,10 @@ pub async fn start_warmup(
         )));
     }
 
-    // Added: Insert warm-up tracking record (conflict = already tracking)
-    let result = sqlx::query_scalar::<_, i64>(
+    // Fix: TMAIL-203 — `RETURNING 1` types as INT4 in Postgres. Original
+    // i64 binding 500'd every call with a sqlx type-mismatch. Match the
+    // actual return type.
+    let result = sqlx::query_scalar::<_, i32>(
         "INSERT INTO ip_warmup_tracking (ip_address, current_day, emails_sent_today, total_emails_sent) \
          VALUES ($1, 1, 0, 0) \
          ON CONFLICT (ip_address) DO NOTHING \
