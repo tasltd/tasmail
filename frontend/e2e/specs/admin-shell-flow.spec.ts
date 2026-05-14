@@ -89,21 +89,16 @@ test.describe('AdminShell + RequireAdmin (TMAIL-197)', () => {
     await expect(navItems).toHaveCount(8);
     await takeScreenshot(page, 'admin-shell/02-feature-flags-active');
 
-    // Click each placeholder entry and confirm the placeholder renders.
-    const placeholders: Array<[string, string]> = [
-      ['Audit log', 'TMAIL-198'],
-      ['Cache', 'TMAIL-199'],
-      ['Domains', 'TMAIL-200'],
-      ['Payment providers', 'TMAIL-201'],
-      ['Users', 'TMAIL-202'],
-      ['IP warm-up', 'TMAIL-203'],
+    // Changed: TMAIL-198..203 replaced the placeholder routes with real
+    // manager pages. Walk each one and assert its h1 renders.
+    const realManagers: Array<string> = [
+      'Audit log', 'Cache', 'Domains', 'Payment providers', 'Users', 'IP warm-up',
     ];
-    for (const [label, ticket] of placeholders) {
+    for (const label of realManagers) {
       await page.locator('.admin-shell__nav-item', { hasText: label }).click();
-      await expect(page.locator('.admin-placeholder h1', { hasText: label })).toBeVisible({ timeout: 5_000 });
-      await expect(page.locator('.admin-placeholder')).toContainText(ticket);
+      await expect(page.locator('h1', { hasText: label })).toBeVisible({ timeout: 8_000 });
     }
-    await takeScreenshot(page, 'admin-shell/03-placeholders-walked');
+    await takeScreenshot(page, 'admin-shell/03-managers-walked');
 
     // Real manager: switch to Quote requests and verify the existing manager mounts
     // (it owns its own header; we look for the QuoteRequestsManager title).

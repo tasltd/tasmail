@@ -14,14 +14,15 @@ use crate::models::archive::{
     ArchiveSearchResult, CreateArchivePolicyRequest, UpdateArchiveConfigRequest,
     UpdateArchivePolicyRequest,
 };
-use crate::services::auth_service::Claims;
+use crate::services::auth_service::{self, Claims};
 use crate::state::AppState;
 
 /// GET /api/admin/archive/policies — List all archive policies
 pub async fn list_policies(
     State(state): State<AppState>,
-    axum::Extension(_claims): axum::Extension<Claims>,
+    axum::Extension(claims): axum::Extension<Claims>,
 ) -> Result<Json<Vec<ArchivePolicy>>, AppError> {
+    auth_service::require_admin(&claims)?; // TMAIL-210
     let policies = ArchivePolicy::find_all(&state.db).await?;
     Ok(Json(policies))
 }
@@ -29,9 +30,10 @@ pub async fn list_policies(
 /// POST /api/admin/archive/policies — Create a new archive policy
 pub async fn create_policy(
     State(state): State<AppState>,
-    axum::Extension(_claims): axum::Extension<Claims>,
+    axum::Extension(claims): axum::Extension<Claims>,
     Json(body): Json<CreateArchivePolicyRequest>,
 ) -> Result<(StatusCode, Json<ArchivePolicy>), AppError> {
+    auth_service::require_admin(&claims)?; // TMAIL-210
     // Added: Validate archive_after_days if provided
     if let Some(days) = body.archive_after_days {
         if days < 1 {
@@ -48,10 +50,11 @@ pub async fn create_policy(
 /// PUT /api/admin/archive/policies/{id} — Update an archive policy
 pub async fn update_policy(
     State(state): State<AppState>,
-    axum::Extension(_claims): axum::Extension<Claims>,
+    axum::Extension(claims): axum::Extension<Claims>,
     Path(id): Path<Uuid>,
     Json(body): Json<UpdateArchivePolicyRequest>,
 ) -> Result<Json<ArchivePolicy>, AppError> {
+    auth_service::require_admin(&claims)?; // TMAIL-210
     // Added: Validate archive_after_days if provided in update
     if let Some(days) = body.archive_after_days {
         if days < 1 {
@@ -70,9 +73,10 @@ pub async fn update_policy(
 /// DELETE /api/admin/archive/policies/{id} — Delete an archive policy
 pub async fn delete_policy(
     State(state): State<AppState>,
-    axum::Extension(_claims): axum::Extension<Claims>,
+    axum::Extension(claims): axum::Extension<Claims>,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
+    auth_service::require_admin(&claims)?; // TMAIL-210
     let deleted = ArchivePolicy::delete(&state.db, id).await?;
     if deleted {
         Ok(StatusCode::NO_CONTENT)
@@ -87,8 +91,9 @@ pub async fn delete_policy(
 /// GET /api/admin/archive/config — Get archive server configuration
 pub async fn get_config(
     State(state): State<AppState>,
-    axum::Extension(_claims): axum::Extension<Claims>,
+    axum::Extension(claims): axum::Extension<Claims>,
 ) -> Result<Json<Option<ArchiveConfig>>, AppError> {
+    auth_service::require_admin(&claims)?; // TMAIL-210
     let config = ArchiveConfig::get(&state.db).await?;
     Ok(Json(config))
 }
@@ -96,9 +101,10 @@ pub async fn get_config(
 /// PUT /api/admin/archive/config — Update archive server configuration (Piler URL, API key, etc.)
 pub async fn update_config(
     State(state): State<AppState>,
-    axum::Extension(_claims): axum::Extension<Claims>,
+    axum::Extension(claims): axum::Extension<Claims>,
     Json(body): Json<UpdateArchiveConfigRequest>,
 ) -> Result<Json<ArchiveConfig>, AppError> {
+    auth_service::require_admin(&claims)?; // TMAIL-210
     // Added: Validate retention_years if provided
     if let Some(years) = body.retention_years {
         if years < 1 {

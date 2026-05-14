@@ -10,13 +10,16 @@ use crate::error::AppError;
 use crate::models::ldap_config::{
     CreateLdapConfigRequest, LdapConfiguration, LdapSyncLog, UpdateLdapConfigRequest,
 };
+use crate::services::auth_service::{self, Claims};
 use crate::state::AppState;
 
 /// PURPOSE: List all LDAP/AD configurations
 /// EXTERNAL: GET /api/admin/ldap
 pub async fn list_ldap_configs(
     State(state): State<AppState>,
+    axum::Extension(claims): axum::Extension<Claims>,
 ) -> Result<Json<Vec<LdapConfiguration>>, AppError> {
+    auth_service::require_admin(&claims)?; // TMAIL-210
     let configs = LdapConfiguration::list(&state.db).await?;
     Ok(Json(configs))
 }
@@ -26,8 +29,10 @@ pub async fn list_ldap_configs(
 /// EXTERNAL: POST /api/admin/ldap
 pub async fn create_ldap_config(
     State(state): State<AppState>,
+    axum::Extension(claims): axum::Extension<Claims>,
     Json(request): Json<CreateLdapConfigRequest>,
 ) -> Result<(StatusCode, Json<LdapConfiguration>), AppError> {
+    auth_service::require_admin(&claims)?; // TMAIL-210
     // Added: Validate required fields are non-empty
     if request.name.trim().is_empty() {
         return Err(AppError::BadRequest(
@@ -64,9 +69,11 @@ pub async fn create_ldap_config(
 /// EXTERNAL: PUT /api/admin/ldap/:id
 pub async fn update_ldap_config(
     State(state): State<AppState>,
+    axum::Extension(claims): axum::Extension<Claims>,
     Path(id): Path<Uuid>,
     Json(request): Json<UpdateLdapConfigRequest>,
 ) -> Result<Json<LdapConfiguration>, AppError> {
+    auth_service::require_admin(&claims)?; // TMAIL-210
     // Added: Verify config exists before updating
     LdapConfiguration::get_by_id(&state.db, id)
         .await
@@ -84,8 +91,10 @@ pub async fn update_ldap_config(
 /// EXTERNAL: DELETE /api/admin/ldap/:id
 pub async fn delete_ldap_config(
     State(state): State<AppState>,
+    axum::Extension(claims): axum::Extension<Claims>,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
+    auth_service::require_admin(&claims)?; // TMAIL-210
     // Added: Verify config exists before deleting
     LdapConfiguration::get_by_id(&state.db, id)
         .await
@@ -100,8 +109,10 @@ pub async fn delete_ldap_config(
 /// EXTERNAL: POST /api/admin/ldap/:id/sync
 pub async fn trigger_sync(
     State(state): State<AppState>,
+    axum::Extension(claims): axum::Extension<Claims>,
     Path(id): Path<Uuid>,
 ) -> Result<(StatusCode, Json<LdapSyncLog>), AppError> {
+    auth_service::require_admin(&claims)?; // TMAIL-210
     // Added: Verify config exists and is active before syncing
     let config = LdapConfiguration::get_by_id(&state.db, id)
         .await
@@ -139,8 +150,10 @@ pub async fn trigger_sync(
 /// EXTERNAL: GET /api/admin/ldap/:id/logs
 pub async fn list_sync_logs(
     State(state): State<AppState>,
+    axum::Extension(claims): axum::Extension<Claims>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Vec<LdapSyncLog>>, AppError> {
+    auth_service::require_admin(&claims)?; // TMAIL-210
     // Added: Verify config exists before fetching logs
     LdapConfiguration::get_by_id(&state.db, id)
         .await

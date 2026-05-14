@@ -6,6 +6,7 @@ use axum::{extract::State, Json};
 use serde::Serialize;
 
 use crate::error::AppError;
+use crate::services::auth_service::{self, Claims};
 use crate::state::AppState;
 
 /// Added: Cache status response for monitoring
@@ -23,7 +24,10 @@ pub struct CacheStatus {
 /// GET /api/admin/cache/status — Check cache connection and config
 pub async fn get_cache_status(
     State(state): State<AppState>,
+    axum::Extension(claims): axum::Extension<Claims>,
 ) -> Result<Json<CacheStatus>, AppError> {
+    // Fix: TMAIL-210 — admin-only.
+    auth_service::require_admin(&claims)?;
     let connected = state.cache.is_connected().await;
     let config = &state.config.redis;
 
@@ -42,7 +46,10 @@ pub async fn get_cache_status(
 /// POST /api/admin/cache/flush — Flush all TASMail cache keys
 pub async fn flush_cache(
     State(state): State<AppState>,
+    axum::Extension(claims): axum::Extension<Claims>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    // Fix: TMAIL-210 — admin-only.
+    auth_service::require_admin(&claims)?;
     let flushed = state.cache.flush_all().await;
     Ok(Json(serde_json::json!({
         "flushed": flushed,
@@ -53,7 +60,10 @@ pub async fn flush_cache(
 /// GET /api/admin/cache/stats — Get Redis server stats
 pub async fn get_cache_stats(
     State(state): State<AppState>,
+    axum::Extension(claims): axum::Extension<Claims>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    // Fix: TMAIL-210 — admin-only.
+    auth_service::require_admin(&claims)?;
     match state.cache.get_stats().await {
         Some(info) => Ok(Json(serde_json::json!({
             "connected": true,

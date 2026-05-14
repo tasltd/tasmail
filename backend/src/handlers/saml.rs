@@ -7,6 +7,7 @@ use axum::{
 use uuid::Uuid;
 
 use crate::error::AppError;
+use crate::services::auth_service::{self, Claims};
 use crate::models::saml_config::{
     CreateSamlConfigRequest, SamlConfiguration, SamlSession, UpdateSamlConfigRequest,
 };
@@ -16,7 +17,9 @@ use crate::state::AppState;
 /// EXTERNAL: GET /api/admin/saml
 pub async fn list_saml_configs(
     State(state): State<AppState>,
+    axum::Extension(claims): axum::Extension<Claims>,
 ) -> Result<Json<Vec<SamlConfiguration>>, AppError> {
+    auth_service::require_admin(&claims)?; // TMAIL-210
     let configs = SamlConfiguration::list(&state.db).await?;
     Ok(Json(configs))
 }
@@ -26,8 +29,10 @@ pub async fn list_saml_configs(
 /// EXTERNAL: POST /api/admin/saml
 pub async fn create_saml_config(
     State(state): State<AppState>,
+    axum::Extension(claims): axum::Extension<Claims>,
     Json(request): Json<CreateSamlConfigRequest>,
 ) -> Result<(StatusCode, Json<SamlConfiguration>), AppError> {
+    auth_service::require_admin(&claims)?; // TMAIL-210
     // Added: Validate required fields are non-empty
     if request.name.trim().is_empty() {
         return Err(AppError::BadRequest(
@@ -57,9 +62,11 @@ pub async fn create_saml_config(
 /// EXTERNAL: PUT /api/admin/saml/:id
 pub async fn update_saml_config(
     State(state): State<AppState>,
+    axum::Extension(claims): axum::Extension<Claims>,
     Path(id): Path<Uuid>,
     Json(request): Json<UpdateSamlConfigRequest>,
 ) -> Result<Json<SamlConfiguration>, AppError> {
+    auth_service::require_admin(&claims)?; // TMAIL-210
     // Added: Verify config exists before updating
     SamlConfiguration::get_by_id(&state.db, id)
         .await
@@ -73,8 +80,10 @@ pub async fn update_saml_config(
 /// EXTERNAL: DELETE /api/admin/saml/:id
 pub async fn delete_saml_config(
     State(state): State<AppState>,
+    axum::Extension(claims): axum::Extension<Claims>,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
+    auth_service::require_admin(&claims)?; // TMAIL-210
     // Added: Verify config exists before deleting
     SamlConfiguration::get_by_id(&state.db, id)
         .await

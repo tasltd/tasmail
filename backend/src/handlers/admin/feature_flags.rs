@@ -13,16 +13,16 @@ use uuid::Uuid;
 
 use crate::error::AppError;
 use crate::models::feature_flag::FeatureFlag;
-use crate::services::auth_service::Claims;
+use crate::services::auth_service::{self, Claims};
 use crate::services::feature_flags as flag_cache;
 use crate::state::AppState;
 
 pub async fn list_flags(
     State(state): State<AppState>,
-    axum::Extension(_claims): axum::Extension<Claims>,
+    axum::Extension(claims): axum::Extension<Claims>,
 ) -> Result<Json<Vec<FeatureFlag>>, AppError> {
-    // NOTE: Admin gate — TASMail's role system is still in flux. For now any
-    // authenticated user can read flags; tighten when claims.role == "ROOT" lands.
+    // Fix: TMAIL-210 — gate admin endpoints on the is_admin claim.
+    auth_service::require_admin(&claims)?;
     let flags = FeatureFlag::list_all(&state.db).await?;
     Ok(Json(flags))
 }
@@ -41,6 +41,8 @@ pub async fn update_flag(
     Path(key): Path<String>,
     Json(body): Json<UpdateFlagRequest>,
 ) -> Result<Json<FeatureFlag>, AppError> {
+    // Fix: TMAIL-210 — admin-only.
+    auth_service::require_admin(&claims)?;
     // Validate the flag exists before touching it (gives a 404 instead of a silent UPDATE 0 ROWS).
     if FeatureFlag::find(&state.db, &key).await?.is_none() {
         return Err(AppError::NotFound(format!("feature flag '{}' not found", key)));

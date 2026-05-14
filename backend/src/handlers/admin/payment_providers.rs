@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use crate::error::AppError;
 use crate::models::payment_provider_config::{PaymentProviderConfig, PlaintextProviderConfig};
-use crate::services::auth_service::Claims;
+use crate::services::auth_service::{self, Claims};
 use crate::state::AppState;
 
 /// PURPOSE: Public-facing summary — masks all sensitive ciphertext fields.
@@ -69,10 +69,10 @@ impl From<PaymentProviderConfig> for ProviderSummary {
 /// PURPOSE: GET /api/admin/payment-providers — list all configs with sensitive fields masked
 pub async fn list_providers(
     State(state): State<AppState>,
-    axum::Extension(_claims): axum::Extension<Claims>,
+    axum::Extension(claims): axum::Extension<Claims>,
 ) -> Result<Json<Vec<ProviderSummary>>, AppError> {
-    // NOTE: TASMail does not yet have a roles system — any authenticated user can call this.
-    //       When roles ship, gate with `claims.role == "ROOT"` matching PayPro's AdminPaymentProviderController.
+    // Fix: TMAIL-210 — admin-only.
+    auth_service::require_admin(&claims)?;
     let rows = PaymentProviderConfig::list_all(&state.db).await?;
     Ok(Json(rows.into_iter().map(ProviderSummary::from).collect()))
 }
@@ -107,9 +107,11 @@ pub struct UpsertProviderRequest {
 /// Sensitive fields are encrypted before storage; the response is masked.
 pub async fn create_provider(
     State(state): State<AppState>,
-    axum::Extension(_claims): axum::Extension<Claims>,
+    axum::Extension(claims): axum::Extension<Claims>,
     Json(body): Json<UpsertProviderRequest>,
 ) -> Result<(StatusCode, Json<ProviderSummary>), AppError> {
+    // Fix: TMAIL-210 — admin-only.
+    auth_service::require_admin(&claims)?;
     let allowed = ["PAYSTACK", "MASTERCARD", "CYBERSOURCE", "BANK_TRANSFER"];
     if !allowed.contains(&body.provider.as_str()) {
         return Err(AppError::BadRequest(format!(
@@ -154,9 +156,11 @@ pub async fn create_provider(
 /// PURPOSE: DELETE /api/admin/payment-providers/{id} — soft-delete (archived = true)
 pub async fn archive_provider(
     State(state): State<AppState>,
-    axum::Extension(_claims): axum::Extension<Claims>,
+    axum::Extension(claims): axum::Extension<Claims>,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
+    // Fix: TMAIL-210 — admin-only.
+    auth_service::require_admin(&claims)?;
     let result = sqlx::query("UPDATE payment_provider_config SET archived = true, enabled = false WHERE id = $1")
         .bind(id)
         .execute(&state.db)

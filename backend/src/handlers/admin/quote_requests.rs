@@ -18,7 +18,7 @@ use uuid::Uuid;
 
 use crate::error::AppError;
 use crate::models::audit_log::AuditLog;
-use crate::services::auth_service::Claims;
+use crate::services::auth_service::{self, Claims};
 use crate::state::AppState;
 
 const VALID_STATUSES: &[&str] = &["new", "contacted", "quoted", "won", "lost"];
@@ -64,9 +64,11 @@ pub struct ListResponse {
 /// GET /api/admin/quote-requests — paginated, optional status filter
 pub async fn list_quote_requests(
     State(state): State<AppState>,
-    axum::Extension(_claims): axum::Extension<Claims>,
+    axum::Extension(claims): axum::Extension<Claims>,
     Query(q): Query<ListQuery>,
 ) -> Result<Json<ListResponse>, AppError> {
+    // Fix: TMAIL-210 — admin-only.
+    auth_service::require_admin(&claims)?;
     // Clamp the pagination so a hostile client can't ask for 1M rows.
     let limit = q.limit.clamp(1, 200);
     let offset = q.offset.max(0);
@@ -132,9 +134,11 @@ pub async fn list_quote_requests(
 
 pub async fn get_quote_request(
     State(state): State<AppState>,
-    axum::Extension(_claims): axum::Extension<Claims>,
+    axum::Extension(claims): axum::Extension<Claims>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<QuoteRequestSummary>, AppError> {
+    // Fix: TMAIL-210 — admin-only.
+    auth_service::require_admin(&claims)?;
     let row = sqlx::query_as::<_, QuoteRequestSummary>(
         "SELECT id, contact_name, contact_email, company, estimated_users, message,
                 status, internal_notes, assigned_to, created_at, updated_at,
@@ -171,6 +175,8 @@ pub async fn update_quote_request(
     Path(id): Path<Uuid>,
     Json(body): Json<UpdateQuoteRequest>,
 ) -> Result<Json<QuoteRequestSummary>, AppError> {
+    // Fix: TMAIL-210 — admin-only.
+    auth_service::require_admin(&claims)?;
     if body.status.is_none() && body.internal_notes.is_none() && body.assigned_to.is_none() {
         return Err(AppError::BadRequest("Specify at least one of: status, internal_notes, assigned_to".into()));
     }
@@ -253,8 +259,10 @@ pub struct StatusCount {
 /// GET /api/admin/quote-requests/stats — counts per status, for the dashboard header
 pub async fn quote_request_stats(
     State(state): State<AppState>,
-    axum::Extension(_claims): axum::Extension<Claims>,
+    axum::Extension(claims): axum::Extension<Claims>,
 ) -> Result<Json<Vec<StatusCount>>, AppError> {
+    // Fix: TMAIL-210 — admin-only.
+    auth_service::require_admin(&claims)?;
     let rows = sqlx::query_as::<_, StatusCount>(
         "SELECT status, COUNT(*)::bigint AS count
          FROM enterprise_quote_requests

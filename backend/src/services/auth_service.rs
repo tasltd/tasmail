@@ -22,6 +22,18 @@ pub struct Claims {
     pub iat: usize,
 }
 
+/// Added: TMAIL-210 — shared admin-role gate. Returns Forbidden when the
+/// JWT claims don't carry is_admin = true. Every admin/* handler should
+/// invoke this as the first thing it does, mirroring the
+/// claims.is_admin check that admin/audit.rs and admin/users.rs already
+/// have.
+pub fn require_admin(claims: &Claims) -> Result<(), AppError> {
+    if !claims.is_admin {
+        return Err(AppError::Forbidden("Admin access required".to_string()));
+    }
+    Ok(())
+}
+
 #[derive(Debug, Serialize)]
 pub struct TokenPair {
     pub access_token: String,

@@ -12,7 +12,7 @@ use crate::error::AppError;
 use crate::models::ollama_config::{
     OllamaConfig, OllamaModelCache, OllamaStatus, PullModelRequest, UpdateOllamaConfigRequest,
 };
-use crate::services::auth_service::Claims;
+use crate::services::auth_service::{self, Claims};
 use crate::services::ollama_client;
 use crate::state::AppState;
 
@@ -20,8 +20,9 @@ use crate::state::AppState;
 /// GET /api/admin/ollama/config
 pub async fn get_config(
     State(state): State<AppState>,
-    axum::Extension(_claims): axum::Extension<Claims>,
+    axum::Extension(claims): axum::Extension<Claims>,
 ) -> Result<Json<OllamaConfig>, AppError> {
+    auth_service::require_admin(&claims)?; // TMAIL-210
     let config = OllamaConfig::get(&state.db).await?;
     Ok(Json(config))
 }
@@ -30,9 +31,10 @@ pub async fn get_config(
 /// PUT /api/admin/ollama/config
 pub async fn update_config(
     State(state): State<AppState>,
-    axum::Extension(_claims): axum::Extension<Claims>,
+    axum::Extension(claims): axum::Extension<Claims>,
     Json(body): Json<UpdateOllamaConfigRequest>,
 ) -> Result<Json<OllamaConfig>, AppError> {
+    auth_service::require_admin(&claims)?; // TMAIL-210
     // Added: Validate base_url is not empty if provided
     if let Some(ref url) = body.base_url {
         if url.trim().is_empty() {
@@ -57,8 +59,9 @@ pub async fn update_config(
 /// GET /api/admin/ollama/status
 pub async fn get_status(
     State(state): State<AppState>,
-    axum::Extension(_claims): axum::Extension<Claims>,
+    axum::Extension(claims): axum::Extension<Claims>,
 ) -> Result<Json<OllamaStatus>, AppError> {
+    auth_service::require_admin(&claims)?; // TMAIL-210
     let config = OllamaConfig::get(&state.db).await?;
 
     // Added: Ping the Ollama server for health and version
@@ -84,9 +87,10 @@ pub async fn get_status(
 /// POST /api/admin/ollama/models/pull
 pub async fn pull_model(
     State(state): State<AppState>,
-    axum::Extension(_claims): axum::Extension<Claims>,
+    axum::Extension(claims): axum::Extension<Claims>,
     Json(body): Json<PullModelRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    auth_service::require_admin(&claims)?; // TMAIL-210
     if body.model.trim().is_empty() {
         return Err(AppError::BadRequest("Model name is required".to_string()));
     }
@@ -121,9 +125,10 @@ pub async fn pull_model(
 /// DELETE /api/admin/ollama/models/{name}
 pub async fn delete_model(
     State(state): State<AppState>,
-    axum::Extension(_claims): axum::Extension<Claims>,
+    axum::Extension(claims): axum::Extension<Claims>,
     Path(name): Path<String>,
 ) -> Result<StatusCode, AppError> {
+    auth_service::require_admin(&claims)?; // TMAIL-210
     if name.trim().is_empty() {
         return Err(AppError::BadRequest("Model name is required".to_string()));
     }
@@ -144,8 +149,9 @@ pub async fn delete_model(
 /// GET /api/admin/ollama/models
 pub async fn list_cached_models(
     State(state): State<AppState>,
-    axum::Extension(_claims): axum::Extension<Claims>,
+    axum::Extension(claims): axum::Extension<Claims>,
 ) -> Result<Json<Vec<OllamaModelCache>>, AppError> {
+    auth_service::require_admin(&claims)?; // TMAIL-210
     let models = OllamaModelCache::list(&state.db).await?;
     Ok(Json(models))
 }

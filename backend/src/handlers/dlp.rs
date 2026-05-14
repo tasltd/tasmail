@@ -12,15 +12,16 @@ use crate::models::dlp_rule::{
     CreateDlpRuleRequest, DlpRule, DlpScanMatch, DlpScanRequest, DlpViolation,
     UpdateDlpRuleRequest, ViolationListParams,
 };
-use crate::services::auth_service::Claims;
+use crate::services::auth_service::{self, Claims};
 use crate::services::dlp_scanner;
 use crate::state::AppState;
 
 /// GET /api/admin/dlp/rules — List all DLP rules
 pub async fn list_rules(
     State(state): State<AppState>,
-    axum::Extension(_claims): axum::Extension<Claims>,
+    axum::Extension(claims): axum::Extension<Claims>,
 ) -> Result<Json<Vec<DlpRule>>, AppError> {
+    auth_service::require_admin(&claims)?; // TMAIL-210
     let rules = DlpRule::list_all(&state.db).await?;
     Ok(Json(rules))
 }
@@ -28,9 +29,10 @@ pub async fn list_rules(
 /// POST /api/admin/dlp/rules — Create a new DLP rule
 pub async fn create_rule(
     State(state): State<AppState>,
-    axum::Extension(_claims): axum::Extension<Claims>,
+    axum::Extension(claims): axum::Extension<Claims>,
     Json(body): Json<CreateDlpRuleRequest>,
 ) -> Result<(StatusCode, Json<DlpRule>), AppError> {
+    auth_service::require_admin(&claims)?; // TMAIL-210
     // Added: Validate pattern_type value
     if let Some(ref pattern_type) = body.pattern_type {
         let valid_types = ["regex", "keyword", "dictionary"];
@@ -61,10 +63,11 @@ pub async fn create_rule(
 /// PUT /api/admin/dlp/rules/:id — Update an existing DLP rule
 pub async fn update_rule(
     State(state): State<AppState>,
-    axum::Extension(_claims): axum::Extension<Claims>,
+    axum::Extension(claims): axum::Extension<Claims>,
     Path(id): Path<Uuid>,
     Json(body): Json<UpdateDlpRuleRequest>,
 ) -> Result<Json<DlpRule>, AppError> {
+    auth_service::require_admin(&claims)?; // TMAIL-210
     // Added: Validate regex if pattern is being updated
     if let Some(ref pattern) = body.pattern {
         let is_regex = body.pattern_type.as_deref().unwrap_or("regex") == "regex";
@@ -87,9 +90,10 @@ pub async fn update_rule(
 /// DELETE /api/admin/dlp/rules/:id — Delete a DLP rule and its violations
 pub async fn delete_rule(
     State(state): State<AppState>,
-    axum::Extension(_claims): axum::Extension<Claims>,
+    axum::Extension(claims): axum::Extension<Claims>,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
+    auth_service::require_admin(&claims)?; // TMAIL-210
     let deleted = DlpRule::delete(&state.db, id).await?;
     if deleted {
         Ok(StatusCode::NO_CONTENT)
@@ -101,9 +105,10 @@ pub async fn delete_rule(
 /// GET /api/admin/dlp/violations — List DLP violations with pagination
 pub async fn list_violations(
     State(state): State<AppState>,
-    axum::Extension(_claims): axum::Extension<Claims>,
+    axum::Extension(claims): axum::Extension<Claims>,
     Query(params): Query<ViolationListParams>,
 ) -> Result<Json<Vec<DlpViolation>>, AppError> {
+    auth_service::require_admin(&claims)?; // TMAIL-210
     let limit = params.limit.unwrap_or(50).min(200);
     let offset = params.offset.unwrap_or(0);
     let violations = DlpViolation::list(&state.db, limit, offset).await?;
@@ -113,9 +118,10 @@ pub async fn list_violations(
 /// POST /api/admin/dlp/scan — Test scan text against all active DLP rules (dry-run)
 pub async fn test_scan(
     State(state): State<AppState>,
-    axum::Extension(_claims): axum::Extension<Claims>,
+    axum::Extension(claims): axum::Extension<Claims>,
     Json(body): Json<DlpScanRequest>,
 ) -> Result<Json<Vec<DlpScanMatch>>, AppError> {
+    auth_service::require_admin(&claims)?; // TMAIL-210
     let rules = DlpRule::list_active(&state.db).await?;
     let matches = dlp_scanner::scan_content(
         &rules,

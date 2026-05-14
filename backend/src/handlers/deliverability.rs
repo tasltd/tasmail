@@ -5,16 +5,18 @@ use axum::{extract::Query, Json};
 
 use crate::error::AppError;
 use crate::models::deliverability::{DeliverabilityCheckParams, DeliverabilityReport};
-use crate::services::auth_service::Claims;
+use crate::services::auth_service::{self, Claims};
 use crate::services::deliverability_service;
 
 /// GET /api/admin/deliverability/check — Run deliverability checks for a domain
 /// CONSTRAINTS: Admin-only endpoint; domain param required
 /// NOTE: Runs DNS, blacklist, TLS, and connectivity checks; returns scored report
 pub async fn check_deliverability(
-    axum::Extension(_claims): axum::Extension<Claims>,
+    axum::Extension(claims): axum::Extension<Claims>,
     Query(params): Query<DeliverabilityCheckParams>,
 ) -> Result<Json<DeliverabilityReport>, AppError> {
+    // Fix: TMAIL-210 — admin-only.
+    auth_service::require_admin(&claims)?;
     // Added: Validate domain parameter is provided
     let domain = params
         .domain

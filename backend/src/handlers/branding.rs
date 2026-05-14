@@ -4,6 +4,7 @@ use axum::{extract::State, Json};
 
 use crate::error::AppError;
 use crate::models::branding::{Branding, UpdateBrandingRequest};
+use crate::services::auth_service::{self, Claims};
 use crate::state::AppState;
 
 /// GET /api/branding — Get current branding configuration (PUBLIC, no auth required)
@@ -31,8 +32,11 @@ pub async fn get_branding(
 /// Changed: Invalidates Redis cache after update so next GET fetches fresh data
 pub async fn update_branding(
     State(state): State<AppState>,
+    axum::Extension(claims): axum::Extension<Claims>,
     Json(request): Json<UpdateBrandingRequest>,
 ) -> Result<Json<Branding>, AppError> {
+    // Fix: TMAIL-210 — admin-only.
+    auth_service::require_admin(&claims)?;
     let branding = Branding::update(&state.db, &request).await?;
 
     // Added: Invalidate cache so subsequent requests get the updated branding
@@ -46,7 +50,10 @@ pub async fn update_branding(
 /// Changed: Invalidates Redis cache after reset
 pub async fn reset_branding(
     State(state): State<AppState>,
+    axum::Extension(claims): axum::Extension<Claims>,
 ) -> Result<Json<Branding>, AppError> {
+    // Fix: TMAIL-210 — admin-only.
+    auth_service::require_admin(&claims)?;
     let branding = Branding::reset_to_defaults(&state.db).await?;
 
     // Added: Invalidate cache after reset

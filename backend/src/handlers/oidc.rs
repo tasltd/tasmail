@@ -11,13 +11,16 @@ use crate::models::oidc_provider::{
     CreateOidcProviderRequest, OidcCallbackRequest, OidcLoginProvider, OidcProvider,
     UpdateOidcProviderRequest,
 };
+use crate::services::auth_service::{self, Claims};
 use crate::state::AppState;
 
 /// PURPOSE: List all OIDC providers (admin view with full config)
 /// EXTERNAL: GET /api/admin/oidc
 pub async fn list_oidc_providers(
     State(state): State<AppState>,
+    axum::Extension(claims): axum::Extension<Claims>,
 ) -> Result<Json<Vec<OidcProvider>>, AppError> {
+    auth_service::require_admin(&claims)?; // TMAIL-210
     let providers = OidcProvider::list(&state.db).await?;
     Ok(Json(providers))
 }
@@ -27,8 +30,10 @@ pub async fn list_oidc_providers(
 /// EXTERNAL: POST /api/admin/oidc
 pub async fn create_oidc_provider(
     State(state): State<AppState>,
+    axum::Extension(claims): axum::Extension<Claims>,
     Json(request): Json<CreateOidcProviderRequest>,
 ) -> Result<(StatusCode, Json<OidcProvider>), AppError> {
+    auth_service::require_admin(&claims)?; // TMAIL-210
     // Added: Validate required fields are non-empty
     if request.name.trim().is_empty() {
         return Err(AppError::BadRequest(
@@ -69,9 +74,11 @@ pub async fn create_oidc_provider(
 /// EXTERNAL: PUT /api/admin/oidc/:id
 pub async fn update_oidc_provider(
     State(state): State<AppState>,
+    axum::Extension(claims): axum::Extension<Claims>,
     Path(id): Path<Uuid>,
     Json(request): Json<UpdateOidcProviderRequest>,
 ) -> Result<Json<OidcProvider>, AppError> {
+    auth_service::require_admin(&claims)?; // TMAIL-210
     // Added: Verify provider exists before updating
     OidcProvider::get_by_id(&state.db, id)
         .await
@@ -89,8 +96,10 @@ pub async fn update_oidc_provider(
 /// EXTERNAL: DELETE /api/admin/oidc/:id
 pub async fn delete_oidc_provider(
     State(state): State<AppState>,
+    axum::Extension(claims): axum::Extension<Claims>,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
+    auth_service::require_admin(&claims)?; // TMAIL-210
     // Added: Verify provider exists before deleting
     OidcProvider::get_by_id(&state.db, id)
         .await

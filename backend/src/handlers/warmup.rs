@@ -11,7 +11,7 @@ use serde::Serialize;
 
 use crate::error::AppError;
 use crate::models::warmup::{StartWarmupRequest, WarmupSchedule, WarmupStatus};
-use crate::services::auth_service::Claims;
+use crate::services::auth_service::{self, Claims};
 use crate::state::AppState;
 
 /// Added: Response wrapper for the full warm-up schedule (TMAIL-17)
@@ -25,8 +25,10 @@ pub struct WarmupScheduleResponse {
 /// PURPOSE: Shows current day, daily limit, emails sent, and remaining capacity
 pub async fn get_warmup_status(
     State(state): State<AppState>,
-    axum::Extension(_claims): axum::Extension<Claims>,
+    axum::Extension(claims): axum::Extension<Claims>,
 ) -> Result<Json<Vec<WarmupStatus>>, AppError> {
+    // Fix: TMAIL-210 — admin-only.
+    auth_service::require_admin(&claims)?;
     // Added: Query all tracked IPs from the database
     let rows = sqlx::query_as::<_, WarmupTrackingRow>(
         "SELECT ip_address, current_day, emails_sent_today, total_emails_sent, \
@@ -55,8 +57,10 @@ pub async fn get_warmup_status(
 /// GET /api/admin/warmup/schedule — Get the full 8-week warm-up schedule
 /// PURPOSE: Returns the standard warm-up progression for planning purposes
 pub async fn get_warmup_schedule(
-    axum::Extension(_claims): axum::Extension<Claims>,
+    axum::Extension(claims): axum::Extension<Claims>,
 ) -> Result<Json<WarmupScheduleResponse>, AppError> {
+    // Fix: TMAIL-210 — admin-only.
+    auth_service::require_admin(&claims)?;
     let schedule = WarmupSchedule::generate();
 
     Ok(Json(WarmupScheduleResponse {
@@ -70,9 +74,11 @@ pub async fn get_warmup_schedule(
 /// PURPOSE: Initializes warm-up state at day 1 for the given IP address
 pub async fn start_warmup(
     State(state): State<AppState>,
-    axum::Extension(_claims): axum::Extension<Claims>,
+    axum::Extension(claims): axum::Extension<Claims>,
     Json(body): Json<StartWarmupRequest>,
 ) -> Result<(StatusCode, Json<WarmupStatus>), AppError> {
+    // Fix: TMAIL-210 — admin-only.
+    auth_service::require_admin(&claims)?;
     // Added: Validate IP address is not empty
     let ip = body.ip_address.trim();
     if ip.is_empty() {

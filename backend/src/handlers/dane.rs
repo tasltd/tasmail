@@ -12,15 +12,16 @@ use crate::models::dane::{
     CreateDanePolicyRequest, DaneLookupRequest, DanePolicy, DaneResult, DaneVerification,
     TlsaRecord, VerificationListParams,
 };
-use crate::services::auth_service::Claims;
+use crate::services::auth_service::{self, Claims};
 use crate::services::dane_service;
 use crate::state::AppState;
 
 /// GET /api/admin/dane — List all DANE policies
 pub async fn list_policies(
     State(state): State<AppState>,
-    axum::Extension(_claims): axum::Extension<Claims>,
+    axum::Extension(claims): axum::Extension<Claims>,
 ) -> Result<Json<Vec<DanePolicy>>, AppError> {
+    auth_service::require_admin(&claims)?; // TMAIL-210
     let policies = DanePolicy::list_all(&state.db).await?;
     Ok(Json(policies))
 }
@@ -28,9 +29,10 @@ pub async fn list_policies(
 /// POST /api/admin/dane — Create or update a DANE policy for a domain
 pub async fn create_policy(
     State(state): State<AppState>,
-    axum::Extension(_claims): axum::Extension<Claims>,
+    axum::Extension(claims): axum::Extension<Claims>,
     Json(body): Json<CreateDanePolicyRequest>,
 ) -> Result<(StatusCode, Json<DanePolicy>), AppError> {
+    auth_service::require_admin(&claims)?; // TMAIL-210
     // Added: Validate domain is not empty
     if body.domain.trim().is_empty() {
         return Err(AppError::BadRequest("Domain must not be empty".to_string()));
@@ -43,9 +45,10 @@ pub async fn create_policy(
 /// DELETE /api/admin/dane/{id} — Delete a DANE policy
 pub async fn delete_policy(
     State(state): State<AppState>,
-    axum::Extension(_claims): axum::Extension<Claims>,
+    axum::Extension(claims): axum::Extension<Claims>,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
+    auth_service::require_admin(&claims)?; // TMAIL-210
     let deleted = DanePolicy::delete(&state.db, id).await?;
     if deleted {
         Ok(StatusCode::NO_CONTENT)
@@ -57,9 +60,10 @@ pub async fn delete_policy(
 /// POST /api/admin/dane/lookup — Lookup TLSA records for a domain (dry-run parse)
 pub async fn lookup_tlsa(
     State(_state): State<AppState>,
-    axum::Extension(_claims): axum::Extension<Claims>,
+    axum::Extension(claims): axum::Extension<Claims>,
     Json(body): Json<DaneLookupRequest>,
 ) -> Result<Json<DaneResult>, AppError> {
+    auth_service::require_admin(&claims)?; // TMAIL-210
     // Added: Validate domain
     if body.domain.trim().is_empty() {
         return Err(AppError::BadRequest("Domain must not be empty".to_string()));
