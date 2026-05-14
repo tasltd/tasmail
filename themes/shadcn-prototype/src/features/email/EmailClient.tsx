@@ -44,7 +44,7 @@ export function EmailClient() {
 
   const messagesQuery = useQuery({
     queryKey: ['messages', activeFolder],
-    queryFn: () => fetchMessages(activeFolder, 50, 0),
+    queryFn: () => fetchMessages(activeFolder, 0, 50),
     enabled: !!activeFolder,
   });
 

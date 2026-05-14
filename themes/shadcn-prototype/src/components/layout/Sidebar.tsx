@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Link, useLocation } from 'react-router';
 import {
   Inbox,
@@ -42,13 +42,18 @@ export function Sidebar({ activeFolder, onFolderChange, onCompose, folders: fold
   const [collapsed, setCollapsed] = useState(false);
   const location = useLocation();
   const isCalendar = location.pathname === '/calendar';
-  // TMAIL-217: prefer the prop-supplied real folders; fall back to mocks
-  // when the prototype is run standalone (e.g. dev with no backend).
-  const [folders, setFolders] = useState<Folder[]>(foldersProp ?? mockFolders);
-  // Re-sync when the upstream prop changes (e.g. /api/folders refetch).
-  useEffect(() => {
-    if (foldersProp) setFolders(foldersProp);
-  }, [foldersProp]);
+  // TMAIL-217 / TMAIL-228: when the parent supplies real folders, render
+  // directly from that prop (derived state). Local state was racing the
+  // /api/folders query — the Sidebar mounted with an empty array on the
+  // first render, captured that into useState, and never re-rendered when
+  // the prop later resolved. Falling back to the mock list only when the
+  // prop is absent (standalone dev run).
+  const liveFolders: Folder[] = foldersProp ?? mockFolders;
+  // Local state is kept ONLY for the inline new-folder addition flow which
+  // exists on top of the live list (real backend additions need a separate
+  // endpoint — out of scope here).
+  const [extraLocalFolders, setExtraLocalFolders] = useState<Folder[]>([]);
+  const folders: Folder[] = [...liveFolders, ...extraLocalFolders];
   const [isAddingFolder, setIsAddingFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
 
@@ -59,16 +64,20 @@ export function Sidebar({ activeFolder, onFolderChange, onCompose, folders: fold
         name: newFolderName,
         icon: 'Briefcase',
         count: 0,
-        isCustom: true
+        isCustom: true,
       };
-      setFolders([...folders, newFolder]);
+      // TMAIL-228: only the local-only "extra" list mutates here. Real
+      // folders come from /api/folders via the parent prop and are
+      // immutable from the sidebar — adding/deleting a real folder needs
+      // a separate backend call (out of scope here).
+      setExtraLocalFolders((prev) => [...prev, newFolder]);
       setNewFolderName('');
       setIsAddingFolder(false);
     }
   };
 
   const handleDeleteFolder = (folderId: string) => {
-    setFolders(folders.filter(f => f.id !== folderId));
+    setExtraLocalFolders((prev) => prev.filter((f) => f.id !== folderId));
     if (activeFolder === folderId) {
       onFolderChange('inbox');
     }
@@ -86,7 +95,7 @@ export function Sidebar({ activeFolder, onFolderChange, onCompose, folders: fold
           <ChevronRight className="size-4" />
         </Button>
         {folders.slice(0, 5).map((folder) => {
-          const Icon = iconMap[folder.icon];
+          const Icon = iconMap[folder.icon] ?? Briefcase;
           return (
             <Button
               key={folder.id}
@@ -138,7 +147,11 @@ export function Sidebar({ activeFolder, onFolderChange, onCompose, folders: fold
 
       <div className="px-2">
         {folders.map((folder) => {
-          const Icon = iconMap[folder.icon];
+          // TMAIL-228: defensive — fall back to Briefcase if the folder.icon
+          // string isn't in iconMap. Prevents the whole list from crashing
+          // (React would error-boundary the parent fragment) when a real
+          // backend folder name doesn't map cleanly.
+          const Icon = iconMap[folder.icon] ?? Briefcase;
           return (
             <div key={folder.id} className="group relative">
               <Button
