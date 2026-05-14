@@ -1,72 +1,129 @@
-import { useState } from 'react';
+// TMAIL-217: wire to real /api/folders + /api/folders/{folder}/messages.
+//
+// EmailList + Sidebar still take their original mock-ish shapes; this
+// component is the adapter that maps the real backend types to those
+// shapes. EmailReader (TMAIL-218) and ComposeModal (TMAIL-219) own their
+// own data fetches.
+import { useState, useMemo } from 'react';
 import { Link } from 'react-router';
-import { Settings, Menu, X, ArrowLeft } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { Settings, Menu, ArrowLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { EmailList } from '@/features/email/EmailList';
 import { EmailReader } from '@/features/email/EmailReader';
 import { ComposeModal } from '@/features/email/ComposeModal';
-import { mockEmails } from '@/data/mockData';
+import { fetchFolders } from '@/api/folders';
+import { fetchMessages } from '@/api/messages';
+import type { Folder as ServerFolder, MessageEnvelope } from '@/types/mail';
+import type { Email, Folder as UiFolder } from '@/data/mockData';
+
+const FOLDER_ICONS: Record<string, string> = {
+  INBOX: 'Inbox',
+  Inbox: 'Inbox',
+  Sent: 'Send',
+  'Sent Items': 'Send',
+  Drafts: 'FileText',
+  Junk: 'AlertOctagon',
+  'Junk Mail': 'AlertOctagon',
+  Spam: 'AlertOctagon',
+  Trash: 'Trash2',
+  'Deleted Items': 'Trash2',
+};
 
 export function EmailClient() {
-  const [activeFolder, setActiveFolder] = useState('inbox');
-  const [selectedEmailId, setSelectedEmailId] = useState<string | null>(null);
+  const [activeFolder, setActiveFolder] = useState('INBOX');
+  const [selectedUid, setSelectedUid] = useState<number | null>(null);
   const [isComposing, setIsComposing] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  const filteredEmails = mockEmails.filter(email => email.folder === activeFolder);
-  const selectedEmail = mockEmails.find(email => email.id === selectedEmailId) || null;
+  const foldersQuery = useQuery<ServerFolder[]>({
+    queryKey: ['folders'],
+    queryFn: () => fetchFolders(),
+  });
 
-  // Mobile view states: 'sidebar' | 'list' | 'reader'
-  const mobileView = selectedEmailId ? 'reader' : 'list';
+  const messagesQuery = useQuery({
+    queryKey: ['messages', activeFolder],
+    queryFn: () => fetchMessages(activeFolder, 50, 0),
+    enabled: !!activeFolder,
+  });
+
+  // Adapt /api/folders shape → Sidebar's Folder shape.
+  const sidebarFolders: UiFolder[] = useMemo(() => {
+    const live = foldersQuery.data ?? [];
+    return live.map((f) => ({
+      id: f.name,
+      name: f.name,
+      icon: FOLDER_ICONS[f.name] ?? 'Briefcase',
+      count: f.unseen ?? 0,
+    }));
+  }, [foldersQuery.data]);
+
+  // Adapt /api/folders/{folder}/messages → EmailList's Email shape.
+  // The shadcn EmailList renders preview/body/attachments — we don't have
+  // those in the envelope list, so leave placeholders; the reader (TMAIL-218)
+  // hydrates the full body on click.
+  const emailListItems: Email[] = useMemo(() => {
+    const envelopes: MessageEnvelope[] = messagesQuery.data?.messages ?? [];
+    return envelopes.map((m) => ({
+      id: String(m.uid),
+      from: m.from || '(unknown sender)',
+      fromEmail: m.from || '',
+      to: '',
+      subject: m.subject || '(no subject)',
+      preview: '',
+      body: '',
+      timestamp: m.date ? new Date(m.date) : new Date(),
+      read: m.flags?.some((f: string) => f.includes('Seen')) ?? true,
+      starred: m.flags?.some((f: string) => f.includes('Flagged')) ?? false,
+      folder: activeFolder,
+      attachments: undefined,
+    }));
+  }, [messagesQuery.data, activeFolder]);
+
+  const selectedEmail = emailListItems.find((e) => e.id === String(selectedUid)) ?? null;
+  const mobileView = selectedUid != null ? 'reader' : 'list';
 
   return (
     <div className="flex h-full relative">
-
-      {/* Mobile sidebar overlay */}
       {sidebarOpen && (
-        <div
-          className="fixed inset-0 bg-black/40 z-30 md:hidden"
-          onClick={() => setSidebarOpen(false)}
-        />
+        <div className="fixed inset-0 bg-black/40 z-30 md:hidden" onClick={() => setSidebarOpen(false)} />
       )}
 
-      {/* Sidebar — hidden on mobile unless sidebarOpen */}
-      <div className={`
-        fixed inset-y-0 left-0 z-40 transition-transform duration-300
-        md:static md:translate-x-0 md:z-auto
-        ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
-      `}>
+      <div
+        className={`
+          fixed inset-y-0 left-0 z-40 transition-transform duration-300
+          md:static md:translate-x-0 md:z-auto
+          ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
+        `}
+      >
         <Sidebar
           activeFolder={activeFolder}
+          folders={sidebarFolders}
           onFolderChange={(folderId) => {
             setActiveFolder(folderId);
-            setSelectedEmailId(null);
+            setSelectedUid(null);
             setSidebarOpen(false);
           }}
-          onCompose={() => { setIsComposing(true); setSidebarOpen(false); }}
+          onCompose={() => {
+            setIsComposing(true);
+            setSidebarOpen(false);
+          }}
         />
       </div>
 
-      {/* Main content */}
       <div className="flex-1 flex overflow-hidden">
-
-        {/* Email List Panel — full width on mobile when no email selected */}
-        <div className={`
-          border-r border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950
-          flex flex-col
-          w-full md:w-80 lg:w-96
-          ${mobileView === 'reader' ? 'hidden md:flex' : 'flex'}
-        `}>
+        <div
+          className={`
+            border-r border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950
+            flex flex-col
+            w-full md:w-80 lg:w-96
+            ${mobileView === 'reader' ? 'hidden md:flex' : 'flex'}
+          `}
+        >
           <div className="h-14 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between px-4 shrink-0">
             <div className="flex items-center gap-2">
-              {/* Mobile hamburger */}
-              <Button
-                variant="ghost"
-                size="icon"
-                className="md:hidden"
-                onClick={() => setSidebarOpen(true)}
-              >
+              <Button variant="ghost" size="icon" className="md:hidden" onClick={() => setSidebarOpen(true)}>
                 <Menu className="size-5" />
               </Button>
               <h2 className="font-semibold capitalize">{activeFolder}</h2>
@@ -78,28 +135,31 @@ export function EmailClient() {
             </Link>
           </div>
           <div className="flex-1 overflow-y-auto">
-            <EmailList
-              emails={filteredEmails}
-              selectedEmailId={selectedEmailId}
-              onSelectEmail={setSelectedEmailId}
-            />
+            {messagesQuery.isLoading ? (
+              <div className="p-6 text-zinc-500 text-sm">Loading messages…</div>
+            ) : messagesQuery.isError ? (
+              <div className="p-6 text-red-600 text-sm">
+                Couldn't load messages. {String(messagesQuery.error)}
+              </div>
+            ) : (
+              <EmailList
+                emails={emailListItems}
+                selectedEmailId={selectedUid != null ? String(selectedUid) : null}
+                onSelectEmail={(id) => setSelectedUid(parseInt(id, 10))}
+              />
+            )}
           </div>
         </div>
 
-        {/* Email Reader Panel — full width on mobile when email selected */}
-        <div className={`
-          flex-1 bg-white dark:bg-zinc-950 flex flex-col overflow-hidden
-          ${mobileView === 'reader' ? 'flex' : 'hidden md:flex'}
-        `}>
-          {/* Mobile back button */}
-          {selectedEmailId && (
+        <div
+          className={`
+            flex-1 bg-white dark:bg-zinc-950 flex flex-col overflow-hidden
+            ${mobileView === 'reader' ? 'flex' : 'hidden md:flex'}
+          `}
+        >
+          {selectedUid != null && (
             <div className="md:hidden h-11 border-b border-zinc-200 dark:border-zinc-800 flex items-center px-3">
-              <Button
-                variant="ghost"
-                size="sm"
-                className="gap-1 text-blue-600"
-                onClick={() => setSelectedEmailId(null)}
-              >
+              <Button variant="ghost" size="sm" className="gap-1 text-blue-600" onClick={() => setSelectedUid(null)}>
                 <ArrowLeft className="size-4" />
                 Back
               </Button>
@@ -107,17 +167,16 @@ export function EmailClient() {
           )}
           <div className="flex-1 overflow-hidden">
             <EmailReader
-              email={selectedEmail}
+              folder={activeFolder}
+              uid={selectedUid}
+              listItem={selectedEmail}
               onCompose={() => setIsComposing(true)}
             />
           </div>
         </div>
       </div>
 
-      <ComposeModal
-        isOpen={isComposing}
-        onClose={() => setIsComposing(false)}
-      />
+      <ComposeModal isOpen={isComposing} onClose={() => setIsComposing(false)} />
     </div>
   );
 }

@@ -14,7 +14,9 @@ export function Navbar({ darkMode, onToggleDarkMode }: NavbarProps) {
       <div className="flex items-center justify-between sm:contents">
         <div className="flex items-center gap-2 shrink-0">
           <Mail className="size-5 sm:size-6 text-blue-600 dark:text-blue-400" />
-          <span className="font-semibold text-base sm:text-lg">Rust Mail</span>
+          <span className="font-semibold text-base sm:text-lg">TASMail</span>
+          <span className="text-xs text-zinc-500 hidden sm:inline">· Modern UI</span>
+          <a href="/app" className="text-xs text-blue-600 hover:underline ml-2 hidden sm:inline" title="Go back to the classic dashboard">← Classic</a>
         </div>
 
         <div className="flex items-center gap-1 shrink-0 sm:ml-auto">

@@ -5,32 +5,51 @@ of [shadcn/ui](https://ui.shadcn.com), Radix primitives and Tailwind. Lives
 here as an alternative theme/UI direction so the work isn't lost — the
 production SPA continues to live in `frontend/`.
 
-## What it is
+## Status: live alt-theme at /modern/
+
+The prototype is now wired to the production backend and shipped as an
+alternative theme. From the classic SPA, click the **Wand** icon in the
+TopBar to hop over; or type `/modern/index.html` in the URL bar. The
+auth gate reads the JWT this SPA already wrote to `localStorage`, so
+no second login. Header shows a `← Classic` link to come back.
+
+What works end-to-end (TMAIL-211 epic):
+- **EmailClient** — folder list + message list from `/api/folders` and
+  `/api/folders/{folder}/messages` via TanStack Query.
+- **EmailReader** — full message body from `/api/folders/{folder}/messages/{uid}`,
+  HTML sanitised through DOMPurify before render.
+- **ComposeModal** — sends through `scheduledApi.scheduleSend`
+  (`/api/messages/schedule` with `delay_seconds: 0`). Same code path the
+  production composer uses.
+- **AdminDashboard** + **CalendarView** still read from `src/data/mockData.ts`
+  — the next iteration can wire them to `/api/admin/*` and `/api/calendar/*`.
+
+## What's in the source tree
 
 - A standalone Vite app rooted at `themes/shadcn-prototype/` with its own
   `package.json`, `vite.config.ts` and `node_modules`.
 - 50+ shadcn/ui primitives under `src/components/ui/` (accordion, dialog,
-  command, sidebar, sheet, etc.) — drop-in replacements for the inline-styled
-  components the production SPA currently uses.
-- Three feature areas wired up against mock data:
-  - `src/features/email/` — EmailClient, EmailList, EmailReader, ComposeModal
-  - `src/features/calendar/` — CalendarView
-  - `src/features/admin/` — AdminDashboard
-- Routing via React Router 7 (`src/app/routes.ts`).
+  command, sidebar, sheet, etc.).
+- Three feature areas:
+  - `src/features/email/` — EmailClient, EmailList, EmailReader, ComposeModal (LIVE)
+  - `src/features/calendar/` — CalendarView (mock data)
+  - `src/features/admin/` — AdminDashboard (mock data)
+- Routing via React Router 7's `createHashRouter` (`src/app/routes.ts`) so
+  internal nav stays inside `/modern/index.html#/...` and doesn't fall
+  through Vite's SPA fallback to the classic frontend.
+- Auth + apiClient layer copied from `frontend/src/api/` into
+  `themes/shadcn-prototype/src/api/`. Acceptable duplication for now;
+  promote to a shared package if a third UI ever needs it.
 - Tailwind theme tokens + Inter font (`src/styles/`).
 
-## What it is **not** (yet)
+## Building + deploying
 
-- It's **not wired to the TASMail backend.** Every screen reads from
-  `src/data/mockData.ts`. To make this a real alternative theme:
-  1. Swap the mock imports for the real clients in `frontend/src/api/`
-     (which is the cleanest way to share the existing apiClient + auth
-     plumbing — the alt-UI doesn't need to re-implement the network layer).
-  2. Replace mock state hooks with TanStack Query calls.
-  3. Wire login + onboarding + BYOK provider settings through the same
-     endpoints documented in the root `CLAUDE.md`.
-- It does **not yet** ship via the live deployment at `mail.techatscale.io`.
-  The production tunnel serves `frontend/` only.
+`scripts/build-alt-ui.sh` (also wired as `npm run build:alt-ui` from
+`frontend/`) installs deps, runs `vite build`, wipes
+`frontend/public/modern/`, and copies the fresh bundle in. Vite's static
+file handler then serves it at `/modern/`.
+
+Re-run after any change to `themes/shadcn-prototype/src/`.
 
 ## Running locally
 

@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { Search, Menu, LogOut, Moon, Sun, WifiOff, SlidersHorizontal, Sparkles, BrainCircuit } from 'lucide-react';
+import { Search, Menu, LogOut, Moon, Sun, WifiOff, SlidersHorizontal, Sparkles, BrainCircuit, Wand2 } from 'lucide-react';
 import { useUiStore } from '../../stores/uiStore';
 import { useMailStore } from '../../stores/mailStore';
 import { useOnlineStatus } from '../../hooks/useOnlineStatus';
@@ -103,6 +103,17 @@ export function TopBar({ onLogout }: TopBarProps) {
         <button className="btn btn--icon" onClick={toggleTheme} title="Toggle theme">
           {theme === 'light' ? <Moon size={18} /> : <Sun size={18} />}
         </button>
+        {/* TMAIL-223: hop to the alt-UI (built bundle in frontend/public/modern/).
+            Full-page nav (anchor) so React Router doesn't intercept. The alt-UI's
+            AuthGate reads the JWT this SPA already wrote to localStorage. */}
+        <a
+          className="btn btn--icon"
+          href="/modern/index.html"
+          title="Try the modern UI"
+          aria-label="Try the modern UI"
+        >
+          <Wand2 size={18} />
+        </a>
         <button className="btn btn--icon" onClick={onLogout} title="Logout">
           <LogOut size={18} />
         </button>

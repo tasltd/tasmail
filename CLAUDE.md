@@ -121,8 +121,12 @@ Source-of-truth for the TASMail mark + palette. `BRAND.md` documents the `t@s` e
 ### Repo-root `scripts/`
 Currently just `notebooklm-login-firefox.mjs` (NotebookLM auth helper). Operational scripts live under `deploy/scripts/` and `backend/`, not here — keep this folder for ad-hoc Node utilities only.
 
-### Alt-UI prototype (`themes/shadcn-prototype/`)
-Standalone Vite + React app on top of shadcn/ui + Radix + Tailwind. Self-contained (own `package.json`, own `node_modules`), reads from `src/data/mockData.ts` only — **not wired to the backend** and not part of CI or the live deployment. Lives here as an alternative theme/UI direction salvaged from a stale feature branch. The production SPA continues to be `frontend/`. See `themes/shadcn-prototype/README.md` for what's there and the wiring work needed to promote it into a real alternative theme.
+### Alt-UI theme (`themes/shadcn-prototype/`)
+Standalone Vite + React app on top of shadcn/ui + Radix + Tailwind, **wired to the production backend** as an alternative theme served at `/modern/`. Logged-in users hop over via the wand-icon button in the classic SPA's TopBar (or by typing `/modern/index.html`); the alt-UI's AuthGate reads the same JWT from localStorage so no second login. The header shows a `← Classic` link to come back.
+
+Build pipeline: `npm run build:alt-ui` (in `frontend/`, calls `scripts/build-alt-ui.sh`) installs deps, runs `vite build`, and copies the bundle into `frontend/public/modern/`. Vite serves it as static files; in production the same path goes through Apache → SSH tunnel → Vite. Re-run after any change to `themes/shadcn-prototype/src/`.
+
+Currently wired: EmailClient + EmailList + EmailReader + ComposeModal (folders, messages, send via scheduledApi). Not yet wired: CalendarView, AdminDashboard (still on `src/data/mockData.ts`). Routing uses `createHashRouter` so internal nav stays inside `/modern/index.html#/...` and doesn't get caught by Vite's SPA fallback. See `themes/shadcn-prototype/README.md` for the full status.
 
 ## Configuration
 

@@ -14,7 +14,8 @@
     "e2e:headed": "playwright test --project=firefox --headed",
     "e2e:report": "playwright show-report",
     "trace-check": "python3 ../scripts/trace-check.py",
-    "trace-check:update": "python3 ../scripts/trace-check.py --update"
+    "trace-check:update": "python3 ../scripts/trace-check.py --update",
+    "build:alt-ui": "bash ../scripts/build-alt-ui.sh"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.97.0",

@@ -1,19 +1,18 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router';
-import { 
-  Inbox, 
-  Send, 
-  FileText, 
-  AlertOctagon, 
-  Trash2, 
-  Briefcase, 
-  User, 
+import {
+  Inbox,
+  Send,
+  FileText,
+  AlertOctagon,
+  Trash2,
+  Briefcase,
+  User,
   ChevronLeft,
   ChevronRight,
   Plus,
-  Edit2,
   X,
-  CalendarDays
+  CalendarDays,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -24,6 +23,9 @@ interface SidebarProps {
   activeFolder: string;
   onFolderChange: (folderId: string) => void;
   onCompose: () => void;
+  // TMAIL-217: when supplied, drives the folder list (real /api/folders).
+  // When omitted (standalone dev mode), falls back to mockFolders.
+  folders?: Folder[];
 }
 
 const iconMap: Record<string, any> = {
@@ -36,11 +38,17 @@ const iconMap: Record<string, any> = {
   User
 };
 
-export function Sidebar({ activeFolder, onFolderChange, onCompose }: SidebarProps) {
+export function Sidebar({ activeFolder, onFolderChange, onCompose, folders: foldersProp }: SidebarProps) {
   const [collapsed, setCollapsed] = useState(false);
   const location = useLocation();
   const isCalendar = location.pathname === '/calendar';
-  const [folders, setFolders] = useState<Folder[]>(mockFolders);
+  // TMAIL-217: prefer the prop-supplied real folders; fall back to mocks
+  // when the prototype is run standalone (e.g. dev with no backend).
+  const [folders, setFolders] = useState<Folder[]>(foldersProp ?? mockFolders);
+  // Re-sync when the upstream prop changes (e.g. /api/folders refetch).
+  useEffect(() => {
+    if (foldersProp) setFolders(foldersProp);
+  }, [foldersProp]);
   const [isAddingFolder, setIsAddingFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
 

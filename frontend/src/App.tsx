@@ -142,11 +142,25 @@ function AppContent() {
             </RequireAuth>
           }
         />
+        {/* TMAIL-224: anything starting with /modern is the alt-UI bundle —
+            full-page navigate so React Router gets out of the way and Vite
+            serves the static index.html from frontend/public/modern/. */}
+        <Route path="/modern/*" element={<ModernUiBounce />} />
         {/* Catch-all: send unknown URLs back to the landing page */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>
   );
+}
+
+// TMAIL-224 — full-page navigation out of the React tree to the alt-UI
+// static bundle. Used both for users who paste /modern/ in the URL bar and
+// for users who land here after an internal redirect.
+function ModernUiBounce() {
+  useEffect(() => {
+    window.location.replace('/modern/index.html');
+  }, []);
+  return <div className="app-loading">Opening modern UI…</div>;
 }
 
 export default function App() {

@@ -1,16 +1,32 @@
+// TMAIL-218: hydrate the full message body from /api/folders/{folder}/messages/{uid}
+// when a row is selected. Fall back to the envelope summary while the body is
+// loading. HTML body is sanitized with DOMPurify (same contract the production
+// SPA uses) before insertion via the React-escape hatch — required because the
+// IMAP source HTML is the actual rendering target.
+import { useQuery } from '@tanstack/react-query';
+import DOMPurify from 'dompurify';
 import { Reply, ReplyAll, Forward, Trash2, Archive, Star, Download } from 'lucide-react';
 import { format } from 'date-fns';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { fetchMessage } from '@/api/messages';
 import type { Email } from '@/data/mockData';
 
 interface EmailReaderProps {
-  email: Email | null;
+  folder: string;
+  uid: number | null;
+  listItem: Email | null;
   onCompose: () => void;
 }
 
-export function EmailReader({ email, onCompose }: EmailReaderProps) {
-  if (!email) {
+export function EmailReader({ folder, uid, listItem, onCompose }: EmailReaderProps) {
+  const messageQuery = useQuery({
+    queryKey: ['message', folder, uid],
+    queryFn: () => fetchMessage(folder, uid!),
+    enabled: uid != null,
+  });
+
+  if (uid == null) {
     return (
       <div className="flex items-center justify-center h-full text-zinc-500">
         Select an email to read
@@ -18,55 +34,57 @@ export function EmailReader({ email, onCompose }: EmailReaderProps) {
     );
   }
 
-  const initials = email.from
+  const m = messageQuery.data;
+  const subject = m?.subject ?? listItem?.subject ?? '(loading…)';
+  const from = m?.from ?? listItem?.from ?? '(unknown)';
+  const fromEmail = m?.from ?? listItem?.fromEmail ?? '';
+  const to = m?.to ?? '';
+  const dateRaw = m?.date ?? listItem?.timestamp ?? new Date();
+  const timestamp = typeof dateRaw === 'string' ? new Date(dateRaw) : dateRaw;
+  const isStarred = m?.flags?.some((f: string) => f.includes('Flagged')) ?? listItem?.starred ?? false;
+  const htmlBody = m?.html_body ?? '';
+  const textBody = m?.text_body ?? '';
+  const attachments = m?.attachments ?? [];
+
+  const initials = from
     .split(' ')
-    .map(n => n[0])
+    .map((n: string) => n[0])
     .join('')
     .toUpperCase()
     .slice(0, 2);
 
+  // Sanitize once so the JSX below stays readable.
+  const safeHtml = htmlBody ? DOMPurify.sanitize(htmlBody) : '';
+
   return (
     <div className="flex flex-col h-full">
-      {/* Email Header */}
       <div className="border-b border-zinc-200 dark:border-zinc-800 p-4">
         <div className="flex items-start justify-between mb-4">
-          <h2 className="text-2xl font-semibold flex-1">{email.subject}</h2>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => {
-              // Toggle star logic
-            }}
-          >
+          <h2 className="text-2xl font-semibold flex-1">{subject}</h2>
+          <Button variant="ghost" size="icon">
             <Star
-              className={`size-5 ${
-                email.starred
-                  ? 'fill-yellow-400 text-yellow-400'
-                  : 'text-zinc-400 hover:text-yellow-400'
-              }`}
+              className={`size-5 ${isStarred ? 'fill-yellow-400 text-yellow-400' : 'text-zinc-400 hover:text-yellow-400'}`}
             />
           </Button>
         </div>
 
         <div className="flex items-center gap-3 mb-4">
           <Avatar>
-            <AvatarFallback className="bg-gradient-to-br from-blue-500 to-purple-600 text-white">
-              {initials}
-            </AvatarFallback>
+            <AvatarFallback className="bg-gradient-to-br from-blue-500 to-purple-600 text-white">{initials}</AvatarFallback>
           </Avatar>
           <div className="flex-1 min-w-0">
-            <div className="font-medium truncate">{email.from}</div>
+            <div className="font-medium truncate">{from}</div>
             <div className="text-sm text-zinc-500 truncate">
-              {email.fromEmail} → {email.to}
+              {fromEmail}
+              {to ? ` → ${to}` : ''}
             </div>
           </div>
           <div className="text-xs sm:text-sm text-zinc-500 shrink-0 ml-2">
-            <span className="hidden sm:inline">{format(email.timestamp, 'MMM d, yyyy • h:mm a')}</span>
-            <span className="sm:hidden">{format(email.timestamp, 'MMM d')}</span>
+            <span className="hidden sm:inline">{format(timestamp, 'MMM d, yyyy • h:mm a')}</span>
+            <span className="sm:hidden">{format(timestamp, 'MMM d')}</span>
           </div>
         </div>
 
-        {/* Action Buttons */}
         <div className="flex items-center gap-1 sm:gap-2 flex-wrap">
           <Button variant="outline" size="sm" onClick={onCompose}>
             <Reply className="size-4 sm:mr-2" />
@@ -92,40 +110,54 @@ export function EmailReader({ email, onCompose }: EmailReaderProps) {
         </div>
       </div>
 
-      {/* Email Body */}
       <div className="flex-1 overflow-y-auto p-6">
-        <div
-          className="prose dark:prose-invert max-w-none"
-          dangerouslySetInnerHTML={{ __html: email.body }}
-        />
-
-        {/* Attachments */}
-        {email.attachments && email.attachments.length > 0 && (
-          <div className="mt-8 space-y-2">
-            <h3 className="text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-3">
-              Attachments ({email.attachments.length})
-            </h3>
-            {email.attachments.map((attachment, index) => (
-              <div
-                key={index}
-                className="flex items-center justify-between p-3 border border-zinc-200 dark:border-zinc-800 rounded-lg bg-zinc-50 dark:bg-zinc-900"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="size-10 rounded bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">
-                    <Download className="size-5 text-blue-600 dark:text-blue-400" />
-                  </div>
-                  <div>
-                    <div className="font-medium text-sm">{attachment.name}</div>
-                    <div className="text-xs text-zinc-500">{attachment.size}</div>
-                  </div>
-                </div>
-                <Button variant="outline" size="sm">
-                  <Download className="size-4 mr-2" />
-                  Download
-                </Button>
-              </div>
-            ))}
+        {messageQuery.isLoading && (
+          <div className="text-zinc-500 text-sm">Loading message…</div>
+        )}
+        {messageQuery.isError && (
+          <div className="text-red-600 text-sm">
+            Couldn't load message: {String(messageQuery.error)}
           </div>
+        )}
+        {!messageQuery.isLoading && !messageQuery.isError && (
+          <>
+            {safeHtml ? (
+              // eslint-disable-next-line react/no-danger -- DOMPurify-sanitized above
+              <div className="prose dark:prose-invert max-w-none" dangerouslySetInnerHTML={{ __html: safeHtml }} />
+            ) : (
+              <pre className="whitespace-pre-wrap font-sans text-sm">{textBody || '(empty body)'}</pre>
+            )}
+
+            {attachments.length > 0 && (
+              <div className="mt-8 space-y-2">
+                <h3 className="text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-3">
+                  Attachments ({attachments.length})
+                </h3>
+                {attachments.map((attachment, index) => (
+                  <div
+                    key={index}
+                    className="flex items-center justify-between p-3 border border-zinc-200 dark:border-zinc-800 rounded-lg bg-zinc-50 dark:bg-zinc-900"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="size-10 rounded bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">
+                        <Download className="size-5 text-blue-600 dark:text-blue-400" />
+                      </div>
+                      <div>
+                        <div className="font-medium text-sm">{attachment.filename ?? '(unnamed)'}</div>
+                        <div className="text-xs text-zinc-500">
+                          {attachment.size != null ? `${Math.round((attachment.size as number) / 1024)} KB` : ''}
+                        </div>
+                      </div>
+                    </div>
+                    <Button variant="outline" size="sm">
+                      <Download className="size-4 mr-2" />
+                      Download
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>
