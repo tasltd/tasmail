@@ -8,8 +8,27 @@ use uuid::Uuid;
 
 use crate::error::AppError;
 use crate::services::auth_service::Claims;
+use crate::services::db_session;
 use crate::services::sms_service;
 use crate::state::AppState;
+
+/// TMAIL-209 — when set, the enroll endpoint returns the freshly-generated
+/// OTP in the response body and skips the actual SMS-provider call. The
+/// frontend never reads the field; it's there so the E2E suite (and any
+/// dev that doesn't have Hubtel/AfricasTalking credentials configured)
+/// can verify the round-trip end to end. NEVER set in production.
+fn sms_test_mode() -> bool {
+    std::env::var("TASMAIL_SMS_TEST_MODE").map(|v| v == "true").unwrap_or(false)
+}
+
+#[derive(Debug, Serialize)]
+pub struct EnrollResponse {
+    /// Always present so callers can branch on it.
+    pub sent: bool,
+    /// Only populated when TASMAIL_SMS_TEST_MODE=true.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub test_code: Option<String>,
+}
 
 #[derive(Debug, Deserialize)]
 pub struct EnrollSmsRequest {
@@ -41,7 +60,7 @@ pub async fn enroll(
     State(state): State<AppState>,
     axum::Extension(claims): axum::Extension<Claims>,
     Json(body): Json<EnrollSmsRequest>,
-) -> Result<StatusCode, AppError> {
+) -> Result<Json<EnrollResponse>, AppError> {
     let mailbox_id = parse_mailbox_id(&claims)?;
 
     // Validate phone number format (Ghana: +233...)
@@ -66,21 +85,36 @@ pub async fn enroll(
     let code = sms_service::generate_otp();
     let expires_at = chrono::Utc::now() + chrono::Duration::minutes(5);
 
-    // Invalidate old codes
-    sqlx::query("UPDATE sms_otp_codes SET used = true WHERE mailbox_id = $1 AND used = false")
+    // Fix: TMAIL-209 — sms_otp_codes RLS requires `mailbox_id = app.mailbox_id`
+    // on the connection running the INSERT. Without a pinned connection the
+    // row is silently rejected and verify can never find a match. Same shape
+    // as the TMAIL-198 audit-log fix and the TMAIL-197 sessions fix.
+    {
+        let mut conn = db_session::acquire_with_rls(&state, &claims).await?;
+        sqlx::query("UPDATE sms_otp_codes SET used = true WHERE mailbox_id = $1 AND used = false")
+            .bind(mailbox_id)
+            .execute(&mut *conn)
+            .await?;
+        sqlx::query(
+            "INSERT INTO sms_otp_codes (mailbox_id, code, phone_number, expires_at) VALUES ($1, $2, $3, $4)"
+        )
         .bind(mailbox_id)
-        .execute(&state.db)
+        .bind(&code)
+        .bind(&body.phone_number)
+        .bind(expires_at)
+        .execute(&mut *conn)
         .await?;
+    }
 
-    sqlx::query(
-        "INSERT INTO sms_otp_codes (mailbox_id, code, phone_number, expires_at) VALUES ($1, $2, $3, $4)"
-    )
-    .bind(mailbox_id)
-    .bind(&code)
-    .bind(&body.phone_number)
-    .bind(expires_at)
-    .execute(&state.db)
-    .await?;
+    // Test mode: skip the SMS-provider call, return the code in the response
+    // so the frontend / E2E can drive the verify step without real Hubtel
+    // credentials. See the EnrollResponse doc-comment.
+    if sms_test_mode() {
+        return Ok(Json(EnrollResponse {
+            sent: true,
+            test_code: Some(code),
+        }));
+    }
 
     // Send OTP via SMS
     let sms_config = sms_service::SmsConfig::default();
@@ -88,7 +122,7 @@ pub async fn enroll(
         .await
         .map_err(|e| AppError::Internal(e))?;
 
-    Ok(StatusCode::OK)
+    Ok(Json(EnrollResponse { sent: true, test_code: None }))
 }
 
 /// POST /api/sms-otp/verify — Verify SMS OTP to complete enrollment
@@ -99,13 +133,17 @@ pub async fn verify(
 ) -> Result<StatusCode, AppError> {
     let mailbox_id = parse_mailbox_id(&claims)?;
 
+    // Fix: TMAIL-209 — sms_otp_codes RLS hides rows when app.mailbox_id is
+    // not set on the connection running the SELECT.
+    let mut conn = db_session::acquire_with_rls(&state, &claims).await?;
+
     // Find valid (unused, not expired) OTP code
     let row: Option<(Uuid,)> = sqlx::query_as(
         "SELECT id FROM sms_otp_codes WHERE mailbox_id = $1 AND code = $2 AND used = false AND expires_at > NOW()"
     )
     .bind(mailbox_id)
     .bind(&body.code)
-    .fetch_optional(&state.db)
+    .fetch_optional(&mut *conn)
     .await?;
 
     let otp_id = row
@@ -115,16 +153,18 @@ pub async fn verify(
     // Mark code as used
     sqlx::query("UPDATE sms_otp_codes SET used = true WHERE id = $1")
         .bind(otp_id)
-        .execute(&state.db)
+        .execute(&mut *conn)
         .await?;
 
     // Enable SMS OTP
     sqlx::query("UPDATE mailboxes SET sms_otp_enabled = true WHERE id = $1")
         .bind(mailbox_id)
-        .execute(&state.db)
+        .execute(&mut *conn)
         .await?;
 
-    Ok(StatusCode::OK)
+    // Fix: TMAIL-209 — return 204 instead of 200 with empty body. apiClient
+    // tries to JSON-parse any non-204 response and fails on empty bodies.
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// DELETE /api/sms-otp — Disable SMS OTP
@@ -179,7 +219,7 @@ fn mask_phone(p: &str) -> String {
 pub async fn resend(
     State(state): State<AppState>,
     axum::Extension(claims): axum::Extension<Claims>,
-) -> Result<StatusCode, AppError> {
+) -> Result<Json<EnrollResponse>, AppError> {
     let mailbox_id = parse_mailbox_id(&claims)?;
 
     // Get phone number and provider
@@ -200,28 +240,34 @@ pub async fn resend(
     let code = sms_service::generate_otp();
     let expires_at = chrono::Utc::now() + chrono::Duration::minutes(5);
 
-    // Invalidate old codes
-    sqlx::query("UPDATE sms_otp_codes SET used = true WHERE mailbox_id = $1 AND used = false")
+    // Fix: TMAIL-209 — same RLS-pinned connection as enroll() above.
+    {
+        let mut conn = db_session::acquire_with_rls(&state, &claims).await?;
+        sqlx::query("UPDATE sms_otp_codes SET used = true WHERE mailbox_id = $1 AND used = false")
+            .bind(mailbox_id)
+            .execute(&mut *conn)
+            .await?;
+        sqlx::query(
+            "INSERT INTO sms_otp_codes (mailbox_id, code, phone_number, expires_at) VALUES ($1, $2, $3, $4)"
+        )
         .bind(mailbox_id)
-        .execute(&state.db)
+        .bind(&code)
+        .bind(&phone)
+        .bind(expires_at)
+        .execute(&mut *conn)
         .await?;
+    }
 
-    sqlx::query(
-        "INSERT INTO sms_otp_codes (mailbox_id, code, phone_number, expires_at) VALUES ($1, $2, $3, $4)"
-    )
-    .bind(mailbox_id)
-    .bind(&code)
-    .bind(&phone)
-    .bind(expires_at)
-    .execute(&state.db)
-    .await?;
+    if sms_test_mode() {
+        return Ok(Json(EnrollResponse { sent: true, test_code: Some(code) }));
+    }
 
     let sms_config = sms_service::SmsConfig::default();
     sms_service::send_otp(&sms_config, &provider, &phone, &code)
         .await
         .map_err(|e| AppError::Internal(e))?;
 
-    Ok(StatusCode::OK)
+    Ok(Json(EnrollResponse { sent: true, test_code: None }))
 }
 
 #[cfg(test)]

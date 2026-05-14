@@ -1,7 +1,4 @@
-// TMAIL-205 / TMAIL-209: this client is wired correctly against the backend
-// SMS OTP routes but is not yet consumed by any UI. The full integration into
-// TwoFactorManager is tracked in TMAIL-209 — keep this file as-is so the
-// 209 work can land without rebuilding the client surface from scratch.
+// TMAIL-209: SMS OTP integration in TwoFactorManager.
 import { apiClient } from './client';
 
 export interface SmsOtpStatus {
@@ -15,16 +12,23 @@ export interface EnrollSmsRequest {
   provider?: 'hubtel' | 'africastalking';
 }
 
+export interface SmsEnrollResponse {
+  sent: boolean;
+  /** Only populated when the backend is started with TASMAIL_SMS_TEST_MODE=true.
+   *  In production this field is omitted; the user reads the OTP off their phone. */
+  test_code?: string;
+}
+
 export const smsOtpApi = {
   enroll: (data: EnrollSmsRequest) =>
-    apiClient.post('/sms-otp/enroll', data),
+    apiClient.post<SmsEnrollResponse>('/sms-otp/enroll', data),
 
   verify: (code: string) =>
-    apiClient.post('/sms-otp/verify', { code }),
+    apiClient.post<void>('/sms-otp/verify', { code }),
 
-  disable: () => apiClient.delete('/sms-otp'),
+  disable: () => apiClient.delete<void>('/sms-otp'),
 
   getStatus: () => apiClient.get<SmsOtpStatus>('/sms-otp/status'),
 
-  resend: () => apiClient.post('/sms-otp/resend', {}),
+  resend: () => apiClient.post<SmsEnrollResponse>('/sms-otp/resend', {}),
 };

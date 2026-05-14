@@ -1,8 +1,10 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Shield, ShieldCheck, ShieldOff, Copy, Check } from 'lucide-react';
+import { Shield, ShieldCheck, ShieldOff, Copy, Check, Phone } from 'lucide-react';
 import { twoFactorApi } from '../../api/two-factor';
 import type { TwoFactorStatus, EnrollResponse } from '../../api/two-factor';
+// TMAIL-209: SMS OTP as an alternate / supplementary 2FA factor.
+import { smsOtpApi, type SmsOtpStatus } from '../../api/sms-otp';
 
 export function TwoFactorManager() {
   const queryClient = useQueryClient();
@@ -174,6 +176,160 @@ export function TwoFactorManager() {
           </button>
         </div>
       )}
+
+      {/* TMAIL-209: SMS OTP as a supplementary 2FA factor — independent of TOTP. */}
+      <SmsOtpSection />
     </div>
+  );
+}
+
+// TMAIL-209 — SMS OTP enroll/verify/disable.
+function SmsOtpSection() {
+  const queryClient = useQueryClient();
+  const [phone, setPhone] = useState('');
+  const [provider, setProvider] = useState<'hubtel' | 'africastalking'>('hubtel');
+  const [pendingCode, setPendingCode] = useState('');
+  const [enrolledHint, setEnrolledHint] = useState<string | null>(null);
+  const [error, setError] = useState('');
+
+  const status = useQuery<SmsOtpStatus>({
+    queryKey: ['sms-otp-status'],
+    queryFn: () => smsOtpApi.getStatus(),
+  });
+
+  const enrollMut = useMutation({
+    mutationFn: () => smsOtpApi.enroll({ phone_number: phone.trim(), provider }),
+    onSuccess: (resp) => {
+      setError('');
+      // In TASMAIL_SMS_TEST_MODE the backend returns the OTP; pre-fill the
+      // verify field so demo / E2E flows don't have to round-trip a phone.
+      setEnrolledHint(resp.test_code ? `Test mode: code is ${resp.test_code}` : 'Enter the 6-digit code we just sent.');
+      if (resp.test_code) setPendingCode(resp.test_code);
+    },
+    onError: (err: Error) => setError(err.message || 'Could not send SMS code.'),
+  });
+
+  const verifyMut = useMutation({
+    mutationFn: (code: string) => smsOtpApi.verify(code),
+    onSuccess: () => {
+      setPendingCode('');
+      setEnrolledHint(null);
+      setPhone('');
+      setError('');
+      queryClient.invalidateQueries({ queryKey: ['sms-otp-status'] });
+    },
+    onError: (err: Error) => setError(err.message || 'Code did not verify.'),
+  });
+
+  const resendMut = useMutation({
+    mutationFn: () => smsOtpApi.resend(),
+    onSuccess: (resp) => {
+      setError('');
+      setEnrolledHint(resp.test_code ? `Test mode: code is ${resp.test_code}` : 'New code sent.');
+      if (resp.test_code) setPendingCode(resp.test_code);
+    },
+    onError: (err: Error) => setError(err.message || 'Could not resend code.'),
+  });
+
+  const disableMut = useMutation({
+    mutationFn: () => smsOtpApi.disable(),
+    onSuccess: () => {
+      setError('');
+      queryClient.invalidateQueries({ queryKey: ['sms-otp-status'] });
+    },
+    onError: (err: Error) => setError(err.message || 'Could not disable SMS OTP.'),
+  });
+
+  return (
+    <section style={{ marginTop: '32px', borderTop: '1px solid var(--color-border, #e5e7eb)', paddingTop: '24px' }}>
+      <h2 style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
+        <Phone size={20} /> SMS one-time codes
+      </h2>
+
+      {error && (
+        <div role="alert" style={{ padding: '8px 12px', background: 'var(--color-error-bg, #ffeaea)', color: 'var(--color-error, #dc3545)', borderRadius: '4px', marginBottom: '12px' }}>
+          {error}
+        </div>
+      )}
+
+      {status.data?.enabled ? (
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '12px', background: 'var(--color-success-bg, #e8f5e9)', borderRadius: '8px', marginBottom: '16px' }}>
+            <ShieldCheck size={20} color="var(--color-success, #28a745)" />
+            <div>
+              <strong>SMS codes enabled</strong>
+              <div style={{ fontSize: '13px', color: 'var(--color-text-secondary)' }}>
+                Sending to <code>{status.data.phone_number ?? '(unknown)'}</code> via {status.data.provider ?? 'hubtel'}
+              </div>
+            </div>
+          </div>
+          <button
+            className="btn btn--danger"
+            onClick={() => { if (confirm('Turn off SMS OTP for this account?')) disableMut.mutate(); }}
+            disabled={disableMut.isPending}
+          >
+            <ShieldOff size={16} /> Disable SMS OTP
+          </button>
+        </div>
+      ) : enrolledHint ? (
+        <div>
+          <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginBottom: '8px' }}>{enrolledHint}</p>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+            <input
+              type="text"
+              value={pendingCode}
+              onChange={(e) => setPendingCode(e.target.value)}
+              placeholder="000000"
+              maxLength={6}
+              style={{ width: '160px', padding: '8px 12px', fontSize: '16px', letterSpacing: '4px', textAlign: 'center' }}
+            />
+            <button
+              className="btn btn--primary"
+              onClick={() => verifyMut.mutate(pendingCode)}
+              disabled={pendingCode.length !== 6 || verifyMut.isPending}
+            >
+              {verifyMut.isPending ? 'Verifying…' : 'Verify & enable'}
+            </button>
+            <button
+              className="btn btn--ghost"
+              onClick={() => resendMut.mutate()}
+              disabled={resendMut.isPending}
+            >
+              Resend code
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div>
+          <p style={{ marginBottom: '12px', color: 'var(--color-text-secondary)' }}>
+            Receive a 6-digit code by SMS at sign-in. Works alongside (or instead of) a TOTP app — enabling both gives you a fallback if you lose your phone.
+          </p>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+            <input
+              type="tel"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              placeholder="+233 24 123 4567"
+              style={{ width: '220px', padding: '8px 12px', fontSize: '14px' }}
+            />
+            <select
+              value={provider}
+              onChange={(e) => setProvider(e.target.value as 'hubtel' | 'africastalking')}
+              style={{ padding: '8px 10px', borderRadius: 6 }}
+            >
+              <option value="hubtel">Hubtel</option>
+              <option value="africastalking">Africa's Talking</option>
+            </select>
+            <button
+              className="btn btn--primary"
+              onClick={() => enrollMut.mutate()}
+              disabled={enrollMut.isPending || phone.trim().length < 10}
+            >
+              <Phone size={16} /> {enrollMut.isPending ? 'Sending…' : 'Send code'}
+            </button>
+          </div>
+        </div>
+      )}
+    </section>
   );
 }
