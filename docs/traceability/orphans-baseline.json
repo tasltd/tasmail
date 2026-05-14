@@ -1,8 +1,7 @@
 {
   "generated_by": "scripts/trace-check.py --update",
-  "orphan_count": 45,
+  "orphan_count": 42,
   "by_feature_count": {
-    "admin/cache": 3,
     "admin/domains": 3,
     "admin/payment-providers": 3,
     "admin/users": 3,
@@ -27,27 +26,6 @@
     "ws": 1
   },
   "orphans": [
-    {
-      "method": "POST",
-      "path": "/api/admin/cache/flush",
-      "handler": "cache::flush_cache",
-      "auth": false,
-      "feature": "admin/cache"
-    },
-    {
-      "method": "GET",
-      "path": "/api/admin/cache/stats",
-      "handler": "cache::get_cache_stats",
-      "auth": false,
-      "feature": "admin/cache"
-    },
-    {
-      "method": "GET",
-      "path": "/api/admin/cache/status",
-      "handler": "cache::get_cache_status",
-      "auth": false,
-      "feature": "admin/cache"
-    },
     {
       "method": "GET",
       "path": "/api/admin/domains",

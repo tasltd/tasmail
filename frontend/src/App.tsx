@@ -16,6 +16,7 @@ import { QuoteRequestsManager } from './components/admin/QuoteRequestsManager';
 import { AdminShell, AdminPlaceholder } from './components/admin/AdminShell';
 import { RequireAdmin } from './components/admin/RequireAdmin';
 import { AuditLogManager } from './components/admin/AuditLogManager';
+import { CacheManager } from './components/admin/CacheManager';
 import { UsageBillingPage } from './components/billing/UsageBillingPage';
 import { ErrorBoundary } from './components/shared/ErrorBoundary';
 import './App.css';
@@ -122,16 +123,7 @@ function AppContent() {
           <Route path="feature-flags" element={<FeatureFlagsManager />} />
           <Route path="quote-requests" element={<QuoteRequestsManager />} />
           <Route path="audit-log" element={<AuditLogManager />} />
-          <Route
-            path="cache"
-            element={
-              <AdminPlaceholder
-                title="Cache"
-                ticket="TMAIL-199"
-                description="Status panel and flush button consuming /api/admin/cache/{status,stats,flush}."
-              />
-            }
-          />
+          <Route path="cache" element={<CacheManager />} />
           <Route
             path="domains"
             element={
