@@ -1,8 +1,7 @@
 {
   "generated_by": "scripts/trace-check.py --update",
-  "orphan_count": 36,
+  "orphan_count": 33,
   "by_feature_count": {
-    "admin/users": 3,
     "admin/warmup": 3,
     "attachments": 2,
     "auth": 3,
@@ -24,27 +23,6 @@
     "ws": 1
   },
   "orphans": [
-    {
-      "method": "GET",
-      "path": "/api/admin/users",
-      "handler": "admin::users::list_users",
-      "auth": false,
-      "feature": "admin/users"
-    },
-    {
-      "method": "POST",
-      "path": "/api/admin/users",
-      "handler": "admin::users::create_user",
-      "auth": false,
-      "feature": "admin/users"
-    },
-    {
-      "method": "DELETE",
-      "path": "/api/admin/users/{id}",
-      "handler": "admin::users::delete_user",
-      "auth": false,
-      "feature": "admin/users"
-    },
     {
       "method": "GET",
       "path": "/api/admin/warmup/schedule",

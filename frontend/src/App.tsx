@@ -19,6 +19,7 @@ import { AuditLogManager } from './components/admin/AuditLogManager';
 import { CacheManager } from './components/admin/CacheManager';
 import { DomainsManager } from './components/admin/DomainsManager';
 import { PaymentProvidersManager } from './components/admin/PaymentProvidersManager';
+import { UsersManager } from './components/admin/UsersManager';
 import { UsageBillingPage } from './components/billing/UsageBillingPage';
 import { ErrorBoundary } from './components/shared/ErrorBoundary';
 import './App.css';
@@ -128,16 +129,7 @@ function AppContent() {
           <Route path="cache" element={<CacheManager />} />
           <Route path="domains" element={<DomainsManager />} />
           <Route path="payment-providers" element={<PaymentProvidersManager />} />
-          <Route
-            path="users"
-            element={
-              <AdminPlaceholder
-                title="Users"
-                ticket="TMAIL-202"
-                description="List/create/delete mailboxes plus the multipart bulk-import endpoint, with is_admin toggle and reset-password helper."
-              />
-            }
-          />
+          <Route path="users" element={<UsersManager />} />
           <Route
             path="warmup"
             element={
