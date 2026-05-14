@@ -18,6 +18,7 @@ import { RequireAdmin } from './components/admin/RequireAdmin';
 import { AuditLogManager } from './components/admin/AuditLogManager';
 import { CacheManager } from './components/admin/CacheManager';
 import { DomainsManager } from './components/admin/DomainsManager';
+import { PaymentProvidersManager } from './components/admin/PaymentProvidersManager';
 import { UsageBillingPage } from './components/billing/UsageBillingPage';
 import { ErrorBoundary } from './components/shared/ErrorBoundary';
 import './App.css';
@@ -126,16 +127,7 @@ function AppContent() {
           <Route path="audit-log" element={<AuditLogManager />} />
           <Route path="cache" element={<CacheManager />} />
           <Route path="domains" element={<DomainsManager />} />
-          <Route
-            path="payment-providers"
-            element={
-              <AdminPlaceholder
-                title="Payment providers"
-                ticket="TMAIL-201"
-                description="CRUD over /api/admin/payment-providers (PAYSTACK / MASTERCARD / CYBERSOURCE / BANK_TRANSFER) with encrypted-field handling."
-              />
-            }
-          />
+          <Route path="payment-providers" element={<PaymentProvidersManager />} />
           <Route
             path="users"
             element={

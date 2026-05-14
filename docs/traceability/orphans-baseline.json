@@ -1,8 +1,7 @@
 {
   "generated_by": "scripts/trace-check.py --update",
-  "orphan_count": 39,
+  "orphan_count": 36,
   "by_feature_count": {
-    "admin/payment-providers": 3,
     "admin/users": 3,
     "admin/warmup": 3,
     "attachments": 2,
@@ -25,27 +24,6 @@
     "ws": 1
   },
   "orphans": [
-    {
-      "method": "GET",
-      "path": "/api/admin/payment-providers",
-      "handler": "admin::payment_providers::list_providers",
-      "auth": false,
-      "feature": "admin/payment-providers"
-    },
-    {
-      "method": "POST",
-      "path": "/api/admin/payment-providers",
-      "handler": "admin::payment_providers::create_provider",
-      "auth": false,
-      "feature": "admin/payment-providers"
-    },
-    {
-      "method": "DELETE",
-      "path": "/api/admin/payment-providers/{id}",
-      "handler": "admin::payment_providers::archive_provider",
-      "auth": false,
-      "feature": "admin/payment-providers"
-    },
     {
       "method": "GET",
       "path": "/api/admin/users",
