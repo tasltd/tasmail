@@ -121,6 +121,9 @@ Source-of-truth for the TASMail mark + palette. `BRAND.md` documents the `t@s` e
 ### Repo-root `scripts/`
 Currently just `notebooklm-login-firefox.mjs` (NotebookLM auth helper). Operational scripts live under `deploy/scripts/` and `backend/`, not here — keep this folder for ad-hoc Node utilities only.
 
+### Alt-UI prototype (`themes/shadcn-prototype/`)
+Standalone Vite + React app on top of shadcn/ui + Radix + Tailwind. Self-contained (own `package.json`, own `node_modules`), reads from `src/data/mockData.ts` only — **not wired to the backend** and not part of CI or the live deployment. Lives here as an alternative theme/UI direction salvaged from a stale feature branch. The production SPA continues to be `frontend/`. See `themes/shadcn-prototype/README.md` for what's there and the wiring work needed to promote it into a real alternative theme.
+
 ## Configuration
 
 Backend reads `config.toml` if present, otherwise falls back to environment variables:
