@@ -15,6 +15,12 @@ use crate::config::RedisConfig;
 const PREFIX_BRANDING: &str = "tasmail:branding";
 const PREFIX_QUOTA: &str = "tasmail:quota";
 const PREFIX_RATE_LIMIT: &str = "tasmail:rl";
+// Added (TMAIL-102): Per-user AI inference rate limit — 10 requests / 60s.
+// Separate namespace from the global rate limit so that ordinary API traffic
+// can't starve the AI quota and vice-versa.
+const PREFIX_AI_RATE_LIMIT: &str = "tasmail:rl:ai";
+const AI_RATE_LIMIT_WINDOW_SECS: i64 = 60;
+const AI_RATE_LIMIT_MAX_REQUESTS: u64 = 10;
 const PREFIX_SESSION: &str = "tasmail:session";
 const PREFIX_BLACKLIST: &str = "tasmail:jwt_blacklist";
 // Added (TMAIL-162): per-user IMAP/SMTP config caches.
@@ -233,6 +239,56 @@ impl CacheService {
         count <= max
     }
 
+    /// Added (TMAIL-102): Per-user AI inference rate limit (max 10 requests / 60s).
+    /// PURPOSE: Keep local Ollama (and other AI providers) from being DoS'd by a
+    /// single tenant or an SPA bug. Separate from the global IP rate limit so
+    /// ordinary mail traffic doesn't burn the AI quota.
+    /// EXTERNAL: Uses Redis INCR + EXPIRE atomically — fail-open if Redis is down.
+    /// CONSTRAINTS: 10 req / 60s window, per `user_id`.
+    pub async fn check_ai_rate_limit(&self, user_id: &str) -> bool {
+        let guard = self.conn.read().await;
+        let Some(conn) = guard.as_ref() else {
+            // NOTE: Fail open when Redis is down — AI calls are still expensive
+            // upstream, but availability beats strictness for a soft quota.
+            return true;
+        };
+        let mut conn = conn.clone();
+
+        let key = format!("{}:{}", PREFIX_AI_RATE_LIMIT, user_id);
+
+        let count: u64 = match redis::pipe()
+            .atomic()
+            .incr(&key, 1u64)
+            .expire(&key, AI_RATE_LIMIT_WINDOW_SECS)
+            .query_async::<Vec<u64>>(&mut conn)
+            .await
+        {
+            Ok(results) if !results.is_empty() => results[0],
+            _ => return true, // NOTE: Fail open on Redis error
+        };
+
+        count <= AI_RATE_LIMIT_MAX_REQUESTS
+    }
+
+    /// Added (TMAIL-102): Remaining AI requests in the current 60s window.
+    /// Returns `None` only when Redis is unreachable so the caller can decide
+    /// whether to surface "unknown" or fall back to the configured max.
+    pub async fn get_ai_rate_limit_remaining(&self, user_id: &str) -> Option<u64> {
+        let guard = self.conn.read().await;
+        let conn = guard.as_ref()?;
+        let mut conn = conn.clone();
+
+        let key = format!("{}:{}", PREFIX_AI_RATE_LIMIT, user_id);
+        let count: Option<u64> = conn.get(&key).await.ok();
+        Some(AI_RATE_LIMIT_MAX_REQUESTS.saturating_sub(count.unwrap_or(0)))
+    }
+
+    /// Added (TMAIL-102): Constant accessor for the AI rate-limit ceiling, exposed
+    /// so handlers can include "max 10/min" in 429 messages without hard-coding.
+    pub fn ai_rate_limit_max() -> u64 {
+        AI_RATE_LIMIT_MAX_REQUESTS
+    }
+
     /// Added: Get remaining rate limit requests for a client
     pub async fn get_rate_limit_remaining(&self, client_ip: &str) -> Option<u64> {
         let guard = self.conn.read().await;
@@ -355,9 +411,35 @@ mod tests {
             // Rate limit allows when disabled (fail open)
             assert!(cache.check_rate_limit("127.0.0.1").await);
 
+            // TMAIL-102: AI rate limit also fails open when Redis is unavailable —
+            // otherwise a Redis outage would 429 every AI request.
+            assert!(cache.check_ai_rate_limit("user-uuid").await);
+            // get_ai_rate_limit_remaining returns None when Redis is down so the
+            // caller can decide what to surface.
+            assert!(cache.get_ai_rate_limit_remaining("user-uuid").await.is_none());
+
             // Blacklist check returns false when disabled
             assert!(!cache.is_token_blacklisted("some-hash").await);
         });
+    }
+
+    // Added (TMAIL-102): Lock the AI rate-limit ceiling at 10 — matches the
+    // TMAIL-102 spec ("max 10 AI requests per user per minute"). If this number
+    // changes, the issue acceptance criteria must be revisited.
+    #[test]
+    fn test_ai_rate_limit_ceiling_matches_spec() {
+        assert_eq!(CacheService::ai_rate_limit_max(), 10);
+        assert_eq!(AI_RATE_LIMIT_WINDOW_SECS, 60);
+    }
+
+    // Added (TMAIL-102): The AI rate-limit namespace must be disjoint from the
+    // global IP rate-limit namespace; otherwise an SPA burst on /api/folders
+    // could exhaust the AI quota and vice-versa.
+    #[test]
+    fn test_ai_rate_limit_namespace_is_separate() {
+        assert!(PREFIX_AI_RATE_LIMIT.starts_with("tasmail:"));
+        assert_ne!(PREFIX_AI_RATE_LIMIT, PREFIX_RATE_LIMIT);
+        assert!(PREFIX_AI_RATE_LIMIT.starts_with(PREFIX_RATE_LIMIT));
     }
 
     #[test]

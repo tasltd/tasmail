@@ -134,6 +134,9 @@ pub async fn test_ai_config(
     Path(id): Path<uuid::Uuid>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let user_id = parse_user_id(&claims)?;
+    // Added (TMAIL-102): Connection-test still calls the provider, so it counts
+    // against the 10/min/user AI budget like any other inference call.
+    enforce_ai_rate_limit(&state, user_id).await?;
     let encryption_key = derive_encryption_key(&state.config.jwt.secret);
 
     let config = AiConfiguration::find_by_id(&state.db, id, user_id)
@@ -178,6 +181,11 @@ pub async fn summarize_email(
     Json(body): Json<SummarizeRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let user_id = parse_user_id(&claims)?;
+    // Added (TMAIL-102): Enforce the per-user 10/min AI rate limit BEFORE the
+    // cache lookup. A cache hit is cheap so it's tempting to skip the gate, but
+    // tying the gate to "did we call the provider" leaks the cache topology to
+    // clients and makes the limit non-deterministic from their POV.
+    enforce_ai_rate_limit(&state, user_id).await?;
     let encryption_key = derive_encryption_key(&state.config.jwt.secret);
 
     // Added: Find the user's active AI config
@@ -280,6 +288,8 @@ pub async fn smart_reply(
     Json(body): Json<crate::models::ai_config::SmartReplyRequest>,
 ) -> Result<Json<crate::models::ai_config::SmartReplyResponse>, AppError> {
     let user_id = parse_user_id(&claims)?;
+    // Added (TMAIL-102): Per-user 10/min AI rate limit applies to smart-reply too.
+    enforce_ai_rate_limit(&state, user_id).await?;
     let encryption_key = derive_encryption_key(&state.config.jwt.secret);
 
     // Added: Find the user's active AI config
@@ -352,6 +362,9 @@ pub async fn thread_summary(
     Json(body): Json<ThreadSummaryRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let user_id = parse_user_id(&claims)?;
+    // Added (TMAIL-102): Per-user 10/min AI rate limit — applied BEFORE the
+    // cache so the budget is independent of cache hit/miss (see summarize_email).
+    enforce_ai_rate_limit(&state, user_id).await?;
     let encryption_key = derive_encryption_key(&state.config.jwt.secret);
 
     if body.uids.is_empty() {
@@ -489,6 +502,8 @@ pub async fn compose_email(
     Json(body): Json<crate::models::ai_config::ComposeEmailRequest>,
 ) -> Result<Json<crate::models::ai_config::ComposeEmailResponse>, AppError> {
     let user_id = parse_user_id(&claims)?;
+    // Added (TMAIL-102): Per-user 10/min AI rate limit.
+    enforce_ai_rate_limit(&state, user_id).await?;
     let encryption_key = derive_encryption_key(&state.config.jwt.secret);
 
     if body.prompt.trim().is_empty() {
@@ -536,6 +551,25 @@ fn parse_user_id(claims: &Claims) -> Result<uuid::Uuid, AppError> {
         .sub
         .parse()
         .map_err(|_| AppError::Internal(anyhow::anyhow!("Invalid user ID in JWT claims")))
+}
+
+// Added (TMAIL-102): Per-user AI inference rate limit gate. The spec calls for
+// "max 10 AI requests per user per minute" — applied uniformly across every AI
+// inference endpoint (summarize / smart-reply / thread-summary / compose / test)
+// so a single user can't starve local Ollama or burn provider quota. Redis-down
+// fails open (see CacheService::check_ai_rate_limit) for availability.
+async fn enforce_ai_rate_limit(
+    state: &AppState,
+    user_id: uuid::Uuid,
+) -> Result<(), AppError> {
+    let user_key = user_id.to_string();
+    if !state.cache.check_ai_rate_limit(&user_key).await {
+        return Err(AppError::TooManyRequests(format!(
+            "AI rate limit exceeded ({} requests / minute). Please wait a moment and retry.",
+            crate::services::cache_service::CacheService::ai_rate_limit_max()
+        )));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -648,5 +682,35 @@ mod tests {
         });
         let result = serde_json::from_value::<crate::models::ai_config::ComposeEmailRequest>(json);
         assert!(result.is_err());
+    }
+
+    // Added (TMAIL-102): The user-visible 429 message must name the limit so the
+    // SPA can render an accurate retry hint without hard-coding "10" itself.
+    #[test]
+    fn test_ai_rate_limit_error_message_includes_ceiling() {
+        let max = crate::services::cache_service::CacheService::ai_rate_limit_max();
+        let err = AppError::TooManyRequests(format!(
+            "AI rate limit exceeded ({} requests / minute). Please wait a moment and retry.",
+            max
+        ));
+        assert!(matches!(err, AppError::TooManyRequests(_)));
+        let msg = err.to_string();
+        assert!(
+            msg.contains(&max.to_string()),
+            "429 message should include the per-minute ceiling, got: {msg}"
+        );
+        assert!(msg.to_lowercase().contains("rate limit"));
+    }
+
+    // Added (TMAIL-102): Guard against accidentally swapping the global IP rate
+    // limit ceiling (currently 100) into the AI ceiling. The TMAIL-102 spec
+    // explicitly calls for 10/minute for AI; this test pins that contract.
+    #[test]
+    fn test_ai_rate_limit_ceiling_is_ten() {
+        assert_eq!(
+            crate::services::cache_service::CacheService::ai_rate_limit_max(),
+            10,
+            "TMAIL-102 spec: AI rate limit must be 10 requests/user/minute"
+        );
     }
 }

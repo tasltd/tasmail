@@ -34,6 +34,11 @@ pub enum AppError {
     // Added: Used when a feature is wired but not yet provisioned (e.g., payment provider missing config row).
     #[error("Service unavailable: {0}")]
     ServiceUnavailable(String),
+
+    // Added (TMAIL-102): Per-user/per-route quota was exceeded (e.g., AI inference rate limit).
+    // Maps to HTTP 429 so SPAs can surface a retry-friendly message.
+    #[error("Too many requests: {0}")]
+    TooManyRequests(String),
 }
 
 impl IntoResponse for AppError {
@@ -70,6 +75,11 @@ impl IntoResponse for AppError {
                 tracing::warn!("Service unavailable: {}", msg);
                 (StatusCode::SERVICE_UNAVAILABLE, msg.clone())
             }
+            // Added (TMAIL-102): AI rate-limit (10/min/user) and other per-user quotas
+            AppError::TooManyRequests(msg) => {
+                tracing::warn!("Rate limit exceeded: {}", msg);
+                (StatusCode::TOO_MANY_REQUESTS, msg.clone())
+            }
         };
 
         let body = json!({ "error": message });
@@ -104,6 +114,15 @@ mod tests {
             (AppError::Conflict("".to_string()), StatusCode::CONFLICT),
             (AppError::Imap("".to_string()), StatusCode::BAD_GATEWAY),
             (AppError::Smtp("".to_string()), StatusCode::BAD_GATEWAY),
+            // Added (TMAIL-102): AI rate-limit maps to 429
+            (
+                AppError::TooManyRequests("".to_string()),
+                StatusCode::TOO_MANY_REQUESTS,
+            ),
+            (
+                AppError::ServiceUnavailable("".to_string()),
+                StatusCode::SERVICE_UNAVAILABLE,
+            ),
         ];
 
         for (error, expected_status) in cases {
