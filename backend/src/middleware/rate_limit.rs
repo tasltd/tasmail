@@ -10,6 +10,11 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::Mutex;
+// Added: TMAIL-37 — needed to read RateLimiter from request extensions instead
+// of relying on Extension extractor, which fixes the FromFn trait-bound issue
+// when the extractor list grows past axum's tuple impls.
+#[allow(unused_imports)]
+use axum::Extension;
 
 /// In-memory rate limiter using a sliding window counter per IP
 #[derive(Clone)]
@@ -71,14 +76,31 @@ impl RateLimiter {
     }
 }
 
-/// Axum middleware function for rate limiting
+/// Axum middleware function for rate limiting.
+/// Changed: Reads both ConnectInfo and the RateLimiter directly from request
+/// extensions so the extractor tuple stays at 2 entries (request + next) — this
+/// avoids axum's FromFn extractor-tuple ceiling and lets the middleware run on
+/// any subrouter regardless of which other extensions are present. In tests
+/// driven via `oneshot`, ConnectInfo is absent and we fall back to a shared
+/// "unknown" key. Production wires ConnectInfo through
+/// `into_make_service_with_connect_info` in main.rs. (TMAIL-37)
 pub async fn rate_limit_middleware(
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    axum::Extension(limiter): axum::Extension<RateLimiter>,
     request: Request<Body>,
     next: Next,
 ) -> Result<Response, StatusCode> {
-    let key = addr.ip().to_string();
+    let limiter = request
+        .extensions()
+        .get::<RateLimiter>()
+        .cloned()
+        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let key = request
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|ConnectInfo(addr)| addr.ip().to_string())
+        // NOTE: Without ConnectInfo we fall back to a single shared bucket. This
+        // is only hit in tests; production always populates ConnectInfo.
+        .unwrap_or_else(|| "unknown".to_string());
 
     if !limiter.check(&key).await {
         tracing::warn!("Rate limit exceeded for {}", key);

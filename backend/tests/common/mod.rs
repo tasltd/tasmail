@@ -18,6 +18,8 @@ use tasmail::config::{
 use tasmail::router::create_router;
 use tasmail::services::auth_service::Claims;
 use tasmail::services::cache_service::CacheService;
+// Added: TMAIL-37 — test AppState now requires EncryptionService (DB-stored secrets)
+use tasmail::services::encryption::EncryptionService;
 use tasmail::state::AppState;
 
 // NOTE: JWT secret used across all integration tests — must match test_config()
@@ -50,6 +52,9 @@ impl TestApp {
             metrics_handle: None,
             // Added: Disabled cache for integration tests (no Redis dependency)
             cache: CacheService::disabled(),
+            // Added: TMAIL-37 — encryption service uses the test JWT secret so
+            // any code path that touches DB-stored credentials stays in-memory.
+            encryption: EncryptionService::from_jwt_secret(TEST_JWT_SECRET),
         };
 
         let router = create_router(state);
@@ -133,6 +138,11 @@ pub fn test_config() -> Config {
             host: "127.0.0.1".to_string(),
             port: 587,
             tls: true,
+            // Added: TMAIL-37 — notification sender fields became required after the
+            // noreply notification path landed (see commit history for SmtpConfig).
+            notification_from: None,
+            notification_username: None,
+            notification_password: None,
         },
         jwt: JwtConfig {
             secret: TEST_JWT_SECRET.to_string(),

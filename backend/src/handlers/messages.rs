@@ -116,6 +116,28 @@ pub async fn send_message(
     axum::Extension(claims): axum::Extension<Claims>,
     Json(body): Json<SendRequest>,
 ) -> Result<StatusCode, AppError> {
+    // Added: TMAIL-37 — validate all user-controlled headers and body before SMTP.
+    // Lettre rejects most malformed headers on its own, but defense-in-depth blocks
+    // CRLF injection and oversized payloads at the API boundary so we never even
+    // reach the SMTP transport with hostile input.
+    validation::validate_subject(&body.subject)?;
+    if body.to.is_empty() {
+        return Err(AppError::BadRequest("At least one To recipient is required".into()));
+    }
+    validation::validate_recipient_list("To", &body.to)?;
+    if let Some(ref cc) = body.cc {
+        validation::validate_recipient_list("Cc", cc)?;
+    }
+    if let Some(ref bcc) = body.bcc {
+        validation::validate_recipient_list("Bcc", bcc)?;
+    }
+    if let Some(ref text) = body.text_body {
+        validation::validate_body_size(text)?;
+    }
+    if let Some(ref html) = body.html_body {
+        validation::validate_body_size(html)?;
+    }
+
     let mailbox_id: uuid::Uuid = claims
         .sub
         .parse()
@@ -279,8 +301,22 @@ pub async fn save_draft(
     axum::Extension(claims): axum::Extension<Claims>,
     Json(body): Json<SaveDraftRequest>,
 ) -> Result<StatusCode, AppError> {
-    // Added: Validate draft subject length (TMAIL-37)
+    // Added: TMAIL-37 — full header-injection guard. The raw RFC 2822 message
+    // below is built with format!() against user-controlled to/cc/subject, so
+    // any CR/LF/NUL in those fields would let an attacker splice in arbitrary
+    // headers (Bcc, From spoofing, MIME boundary manipulation). Validate ALL
+    // inputs before we touch the format! macro.
     validation::validate_subject(&body.subject)?;
+    validation::validate_recipient_list("To", &body.to)?;
+    if let Some(ref cc) = body.cc {
+        validation::validate_recipient_list("Cc", cc)?;
+    }
+    if let Some(ref text) = body.text_body {
+        validation::validate_body_size(text)?;
+    }
+    if let Some(ref html) = body.html_body {
+        validation::validate_body_size(html)?;
+    }
 
     let mailbox_id: uuid::Uuid = claims
         .sub

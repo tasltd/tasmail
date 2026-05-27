@@ -12,6 +12,63 @@ pub const MAX_DISPLAY_NAME_LEN: usize = 200;
 pub const MAX_SUBJECT_LEN: usize = 998; // RFC 2822 max header line
 pub const MAX_SEARCH_QUERY_LEN: usize = 500;
 pub const MAX_FOLDER_NAME_LEN: usize = 200;
+// Added: Maximum number of recipients per send to prevent abuse / spam relay (TMAIL-37)
+pub const MAX_RECIPIENTS_PER_MESSAGE: usize = 100;
+// Added: Maximum body size for sent messages — defense-in-depth against payload abuse
+pub const MAX_MESSAGE_BODY_LEN: usize = 10 * 1024 * 1024; // 10 MiB
+
+/// Added: Reject any string containing CR (\r), LF (\n) or NUL (\0).
+/// PURPOSE: Defense-in-depth against header injection in SMTP/IMAP protocol payloads.
+/// Used by recipient, subject, and any value that gets serialised into RFC 2822 headers.
+fn contains_protocol_break(s: &str) -> bool {
+    s.contains('\r') || s.contains('\n') || s.contains('\0')
+}
+
+/// Added: Validate an email address used as a recipient (To/Cc/Bcc) or From.
+/// PURPOSE: Blocks email header injection (CRLF) and oversized values before we
+/// hand the address to `lettre::Mailbox::parse` or interpolate it into a raw
+/// RFC 2822 message (e.g. `save_draft`). See TMAIL-37.
+pub fn validate_email_address(addr: &str) -> Result<(), AppError> {
+    let trimmed = addr.trim();
+    if trimmed.is_empty() {
+        return Err(AppError::BadRequest("Email address cannot be empty".to_string()));
+    }
+    if trimmed.len() > MAX_USERNAME_LEN {
+        return Err(AppError::BadRequest(format!(
+            "Email address exceeds maximum length of {} characters",
+            MAX_USERNAME_LEN
+        )));
+    }
+    if contains_protocol_break(trimmed) {
+        return Err(AppError::BadRequest(
+            "Email address contains invalid characters".to_string(),
+        ));
+    }
+    // NOTE: Minimal structural check; full RFC 5322 parsing is left to lettre.
+    if !trimmed.contains('@') || trimmed.starts_with('@') || trimmed.ends_with('@') {
+        return Err(AppError::BadRequest(
+            "Email address is not a valid address".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+/// Added: Validate a list of recipient addresses (To/Cc/Bcc).
+/// PURPOSE: Caps the number of recipients per outbound message and runs
+/// `validate_email_address` on each entry to prevent header injection /
+/// spam relay abuse. See TMAIL-37.
+pub fn validate_recipient_list(label: &str, addrs: &[String]) -> Result<(), AppError> {
+    if addrs.len() > MAX_RECIPIENTS_PER_MESSAGE {
+        return Err(AppError::BadRequest(format!(
+            "{} list exceeds maximum of {} recipients",
+            label, MAX_RECIPIENTS_PER_MESSAGE
+        )));
+    }
+    for addr in addrs {
+        validate_email_address(addr)?;
+    }
+    Ok(())
+}
 
 /// Added: Validate email username format and length
 pub fn validate_username(username: &str) -> Result<(), AppError> {
@@ -100,12 +157,34 @@ pub fn validate_folder_name(folder: &str) -> Result<(), AppError> {
     Ok(())
 }
 
-/// Added: Validate subject line length
+/// Added: Validate subject line length and reject CR/LF/NUL.
+/// Changed: Now also blocks header injection — without this, a subject like
+/// "Hi\r\nBcc: attacker@evil.com" could splice a Bcc into the outbound
+/// RFC 2822 message (especially in `save_draft` which builds the message
+/// via raw `format!`). See TMAIL-37.
 pub fn validate_subject(subject: &str) -> Result<(), AppError> {
     if subject.len() > MAX_SUBJECT_LEN {
         return Err(AppError::BadRequest(format!(
             "Subject exceeds maximum length of {} characters",
             MAX_SUBJECT_LEN
+        )));
+    }
+    if contains_protocol_break(subject) {
+        return Err(AppError::BadRequest(
+            "Subject contains invalid characters".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+/// Added: Validate message body size to cap outbound payloads (defense-in-depth).
+/// PURPOSE: Rejects bodies larger than `MAX_MESSAGE_BODY_LEN`. Attachments go
+/// through a different path with its own cap (`StorageConfig::max_file_size`).
+pub fn validate_body_size(body: &str) -> Result<(), AppError> {
+    if body.len() > MAX_MESSAGE_BODY_LEN {
+        return Err(AppError::BadRequest(format!(
+            "Message body exceeds maximum size of {} bytes",
+            MAX_MESSAGE_BODY_LEN
         )));
     }
     Ok(())
@@ -261,5 +340,102 @@ mod tests {
     fn test_validate_subject_too_long() {
         let long_subj = "a".repeat(999);
         assert!(validate_subject(&long_subj).is_err());
+    }
+
+    // Added: TMAIL-37 — subject must reject CRLF/NUL to prevent header injection
+    #[test]
+    fn test_validate_subject_rejects_crlf_injection() {
+        assert!(validate_subject("Hi\r\nBcc: attacker@evil.com").is_err());
+        assert!(validate_subject("Hi\nFrom: spoof@evil.com").is_err());
+        assert!(validate_subject("Hi\rSomething").is_err());
+        assert!(validate_subject("Hi\0Null").is_err());
+    }
+
+    // -- Email address validation tests (TMAIL-37) --
+
+    #[test]
+    fn test_validate_email_address_valid() {
+        assert!(validate_email_address("user@example.com").is_ok());
+        assert!(validate_email_address("a.b+tag@sub.example.co").is_ok());
+    }
+
+    #[test]
+    fn test_validate_email_address_rejects_empty() {
+        assert!(validate_email_address("").is_err());
+        assert!(validate_email_address("   ").is_err());
+    }
+
+    #[test]
+    fn test_validate_email_address_rejects_crlf_injection() {
+        // The classic header-injection payload — must be rejected before reaching SMTP
+        assert!(validate_email_address("user@example.com\r\nBcc: x@evil.com").is_err());
+        assert!(validate_email_address("user@example.com\nFrom: spoof@evil.com").is_err());
+        assert!(validate_email_address("user@example.com\0").is_err());
+    }
+
+    #[test]
+    fn test_validate_email_address_rejects_malformed() {
+        assert!(validate_email_address("not-an-email").is_err());
+        assert!(validate_email_address("@example.com").is_err());
+        assert!(validate_email_address("user@").is_err());
+    }
+
+    #[test]
+    fn test_validate_email_address_rejects_oversized() {
+        let huge = format!("{}@example.com", "a".repeat(MAX_USERNAME_LEN));
+        assert!(validate_email_address(&huge).is_err());
+    }
+
+    // -- Recipient list validation tests (TMAIL-37) --
+
+    #[test]
+    fn test_validate_recipient_list_valid() {
+        let list = vec!["a@x.com".to_string(), "b@y.com".to_string()];
+        assert!(validate_recipient_list("To", &list).is_ok());
+    }
+
+    #[test]
+    fn test_validate_recipient_list_empty_is_ok() {
+        // NOTE: emptiness is enforced at the API level (To required), but the
+        // helper itself should accept an empty list — Cc/Bcc are often empty.
+        let list: Vec<String> = vec![];
+        assert!(validate_recipient_list("Cc", &list).is_ok());
+    }
+
+    #[test]
+    fn test_validate_recipient_list_rejects_too_many() {
+        let list: Vec<String> = (0..MAX_RECIPIENTS_PER_MESSAGE + 1)
+            .map(|i| format!("u{}@example.com", i))
+            .collect();
+        assert!(validate_recipient_list("To", &list).is_err());
+    }
+
+    #[test]
+    fn test_validate_recipient_list_rejects_injected_entry() {
+        let list = vec![
+            "ok@example.com".to_string(),
+            "bad@example.com\r\nBcc: evil@x.com".to_string(),
+        ];
+        assert!(validate_recipient_list("To", &list).is_err());
+    }
+
+    // -- Body size validation tests (TMAIL-37) --
+
+    #[test]
+    fn test_validate_body_size_small_ok() {
+        assert!(validate_body_size("hello").is_ok());
+        assert!(validate_body_size("").is_ok());
+    }
+
+    #[test]
+    fn test_validate_body_size_at_limit_ok() {
+        let body = "a".repeat(MAX_MESSAGE_BODY_LEN);
+        assert!(validate_body_size(&body).is_ok());
+    }
+
+    #[test]
+    fn test_validate_body_size_too_large_rejected() {
+        let body = "a".repeat(MAX_MESSAGE_BODY_LEN + 1);
+        assert!(validate_body_size(&body).is_err());
     }
 }

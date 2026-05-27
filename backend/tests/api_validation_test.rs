@@ -149,21 +149,25 @@ async fn api_version_header_on_error_response() {
 
 #[tokio::test]
 async fn send_message_with_empty_body_returns_error() {
-    // NOTE: Valid auth token but empty body — should fail JSON deserialization (422)
+    // NOTE: Valid auth token but empty body. Three legitimate outcomes depending
+    // on which layer rejects first:
+    //   * 415 — Json extractor rejects missing Content-Type (current behavior,
+    //     auth middleware passes without DB)
+    //   * 422 — Json extractor sees Content-Type but no body
+    //   * 500 — auth middleware queries DB to set RLS context and DB is offline
+    // Any of these proves routing reached the protected handler chain.
     let app = common::TestApp::new().await;
     let token = common::create_test_token(None, false);
 
-    // Added: Auth middleware will try to set RLS context via DB (fails), so we get 500
-    // But this still proves the token was accepted and routing worked
     let (status, _body) = app
         .request(Method::POST, "/api/messages/send", None, Some(&token))
         .await;
 
-    // NOTE: Auth middleware calls set_rls_context which queries DB — fails with 500
-    // If DB were connected, we'd get 422 for missing body
     assert!(
-        status == StatusCode::INTERNAL_SERVER_ERROR || status == StatusCode::UNPROCESSABLE_ENTITY,
-        "Expected 500 (DB) or 422 (validation), got {}",
+        status == StatusCode::INTERNAL_SERVER_ERROR
+            || status == StatusCode::UNPROCESSABLE_ENTITY
+            || status == StatusCode::UNSUPPORTED_MEDIA_TYPE,
+        "Expected 500, 422 or 415, got {}",
         status
     );
 }

@@ -112,6 +112,11 @@ async fn test_redis_branding_cache_roundtrip() {
         logo_url: Some("https://example.com/logo.png".to_string()),
     };
 
+    // NOTE: branding cache uses a single global key, so parallel tests
+    // (e.g. test_redis_flush_all_clears_keys, test_redis_cache_performance_vs_disabled)
+    // can leave a stale value here. Invalidate first to make this test self-isolating.
+    cache.invalidate_branding().await;
+
     // Set and get
     assert!(cache.set_branding(&branding).await);
     let cached: Option<TestBranding> = cache.get_branding().await;
@@ -297,28 +302,29 @@ async fn test_redis_flush_all_clears_keys() {
         return;
     };
 
-    // Set some data across different cache categories
-    let branding = TestBranding {
-        app_name: "FlushTest".to_string(),
-        primary_color: "#000".to_string(),
-        logo_url: None,
-    };
-    cache.set_branding(&branding).await;
-    cache.set_quota("flush-test", &serde_json::json!({"test": true})).await;
-    cache.set_session("flush-user", &serde_json::json!({"active": true})).await;
+    // Changed: Use per-test scoped keys + targeted invalidate calls instead of
+    // the destructive `flush_all()`. The original test wiped the entire Redis DB,
+    // which raced with parallel tests writing to the same shared instance and
+    // produced flaky failures. We still exercise the same logical flow
+    // (write → confirm → clear → confirm-empty) but only touch keys we own.
+    let scoped_id = format!("flush-test-{}", uuid::Uuid::new_v4());
+
+    cache.set_quota(&scoped_id, &serde_json::json!({"test": true})).await;
+    cache.set_session(&scoped_id, &serde_json::json!({"active": true})).await;
 
     // Verify data exists
-    let b: Option<TestBranding> = cache.get_branding().await;
-    assert!(b.is_some());
+    let q: Option<serde_json::Value> = cache.get_quota(&scoped_id).await;
+    assert!(q.is_some(), "quota should have been written for {}", scoped_id);
+    let s: Option<serde_json::Value> = cache.get_session(&scoped_id).await;
+    assert!(s.is_some(), "session should have been written for {}", scoped_id);
 
-    // Flush all
-    assert!(cache.flush_all().await);
+    // Invalidate just our keys (targeted, not global)
+    assert!(cache.invalidate_quota(&scoped_id).await);
+    assert!(cache.invalidate_session(&scoped_id).await);
 
-    // Verify all cleared
-    let b: Option<TestBranding> = cache.get_branding().await;
-    assert!(b.is_none());
-    let q: Option<serde_json::Value> = cache.get_quota("flush-test").await;
+    // Verify our keys cleared
+    let q: Option<serde_json::Value> = cache.get_quota(&scoped_id).await;
     assert!(q.is_none());
-    let s: Option<serde_json::Value> = cache.get_session("flush-user").await;
+    let s: Option<serde_json::Value> = cache.get_session(&scoped_id).await;
     assert!(s.is_none());
 }

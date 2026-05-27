@@ -3,6 +3,7 @@ use axum::{
     routing::{delete, get, post, put},
     Router,
 };
+use std::sync::Arc;
 use tower_http::compression::CompressionLayer;
 // Changed: Replaced `Any` origin with explicit allowed origins for CORS hardening (TMAIL-37)
 use tower_http::cors::{AllowOrigin, CorsLayer};
@@ -13,6 +14,9 @@ use crate::handlers;
 use crate::middleware::auth::auth_middleware;
 // Added: Prometheus request instrumentation middleware import (TMAIL-41)
 use crate::middleware::metrics::metrics_middleware;
+// Added: Per-IP rate-limiter applied to anonymous auth endpoints (TMAIL-37).
+// Uses an in-memory sliding-window counter; tunable via env vars below.
+use crate::middleware::rate_limit::{rate_limit_middleware, RateLimiter};
 // Added: Security headers middleware import (TMAIL-37)
 use crate::middleware::security_headers::security_headers_middleware;
 use crate::state::AppState;
@@ -43,14 +47,36 @@ pub fn create_router(state: AppState) -> Router {
         ])
         .allow_credentials(true);
 
-    // Public routes (no auth required)
-    // NOTE: WebSocket route is public — auth is handled via token query param during handshake
-    let public_routes = Router::new()
-        .route("/api/health", get(handlers::health::health_check))
+    // Added: TMAIL-37 — strict per-IP rate limit on anonymous auth endpoints.
+    // Defaults: 10 requests / 60s / IP. Override via env (AUTH_RATE_LIMIT_MAX /
+    // AUTH_RATE_LIMIT_WINDOW). Memory-safe: the cleanup task purges expired
+    // entries every 60s so the HashMap can't grow without bound.
+    let auth_rl_max: u32 = std::env::var("AUTH_RATE_LIMIT_MAX")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(10);
+    let auth_rl_window: u64 = std::env::var("AUTH_RATE_LIMIT_WINDOW")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(60);
+    let auth_rate_limiter = RateLimiter::new(auth_rl_max, auth_rl_window);
+    Arc::new(auth_rate_limiter.clone()).start_cleanup();
+
+    // Auth routes — rate-limited per IP so brute-force login and signup flooding
+    // are blocked before they reach the password-hashing path (which is intentionally
+    // CPU-expensive and would otherwise be a DoS vector).
+    let auth_routes = Router::new()
         .route("/api/auth/login", post(handlers::auth::login))
         // Added: BYOK signup endpoint — public, returns JWT pair on success.
         .route("/api/auth/signup", post(handlers::auth::signup))
         .route("/api/auth/refresh", post(handlers::auth::refresh))
+        .layer(axum_middleware::from_fn(rate_limit_middleware))
+        .layer(axum::Extension(auth_rate_limiter));
+
+    // Public routes (no auth required)
+    // NOTE: WebSocket route is public — auth is handled via token query param during handshake
+    let public_routes = Router::new()
+        .route("/api/health", get(handlers::health::health_check))
         .route("/ws", get(handlers::websocket::ws_handler))
         // Added: Public branding endpoint — frontend needs it before login (TMAIL-111)
         .route("/api/branding", get(handlers::branding::get_branding))
@@ -967,6 +993,7 @@ pub fn create_router(state: AppState) -> Router {
     // client's Accept-Encoding header. Brotli wins for text payloads (JSON, HTML);
     // gzip stays the safe fallback for older clients.
     Router::new()
+        .merge(auth_routes)
         .merge(public_routes)
         .merge(protected_routes)
         .layer(
