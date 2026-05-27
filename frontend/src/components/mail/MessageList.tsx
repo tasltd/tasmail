@@ -201,7 +201,11 @@ export function MessageList() {
       </div>
       <div className="message-list__items">
         {threaded
-          ? threads.map((thread, i) => <ThreadRow key={i} thread={thread} />)
+          ? threads.map((thread) => (
+              // Fix (TMAIL-263): key by first message uid (stable) instead of array
+              // index so new mail arriving doesn't force every ThreadRow to remount.
+              <ThreadRow key={thread.messages[0]?.uid ?? thread.subject} thread={thread} />
+            ))
           : data.messages.map((msg) => <MessageRow key={msg.uid} message={msg} />)
         }
       </div>

@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { X } from 'lucide-react';
 import { useSearch, useAdvancedSearch } from '../../hooks/useMailbox';
 import { useMailStore } from '../../stores/mailStore';
@@ -100,6 +101,13 @@ export function SearchResults() {
 
   const activeFilters = getActiveFilterLabels(advancedSearch);
 
+  // Fix (TMAIL-263): compute highlight keywords once per render instead of
+  // once per row inside .map — was an O(rows) re-tokenise on every render.
+  const highlightTerms = useMemo(
+    () => buildHighlightKeywords(searchQuery, advancedSearch),
+    [searchQuery, advancedSearch],
+  );
+
   const clearSearch = () => {
     setSearchQuery('');
     setAdvancedSearch(null);
@@ -157,7 +165,7 @@ export function SearchResults() {
             <SearchRow
               key={msg.uid}
               message={msg}
-              keywords={buildHighlightKeywords(searchQuery, advancedSearch)}
+              keywords={highlightTerms}
             />
           ))}
         </div>
