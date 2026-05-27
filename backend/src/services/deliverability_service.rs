@@ -5,7 +5,11 @@
 use std::net::{IpAddr, ToSocketAddrs};
 use std::process::Command;
 
-use crate::models::deliverability::{CheckResult, DeliverabilityReport};
+use rand::Rng;
+
+use crate::models::deliverability::{
+    CheckResult, DeliverabilityReport, ExternalToolsResponse, MailTesterHandle, PostmasterTools,
+};
 
 /// Added: Known DNS blacklist zones for spam checking
 const BLACKLIST_ZONES: &[(&str, &str)] = &[
@@ -346,6 +350,97 @@ fn resolve_domain_ip(domain: &str) -> Option<IpAddr> {
         .map(|addr| addr.ip())
 }
 
+// === TMAIL-39 — external deliverability tools (mail-tester + Google Postmaster) ===
+// The DNS/blacklist scanner above answers "is my config plausible?" but the spec for
+// TMAIL-39 also calls out mail-tester.com (free 0–10 spam score) and Google Postmaster
+// Tools (Gmail-side reputation), both of which require sending real mail and visiting
+// an external dashboard. We can't drive those services from the backend without an
+// active SMTP session and (for Postmaster) a Google account; the design here exposes
+// the minimal information the admin UI needs to drive both flows manually:
+//
+//   - mail-tester: generate a fresh single-use handle so the UI can show both the
+//     test address (to send to) and the matching report URL (to open afterwards).
+//   - Google Postmaster: deep-link straight into the managedomains page with the
+//     domain query parameter pre-filled, so the user lands on the correct entry.
+//
+// Keeping this on the backend (rather than the SPA) lets the same logic feed any
+// future CLI / mobile-app caller and keeps the token-generation server-side.
+
+/// Added: TMAIL-39 — token alphabet for mail-tester handles. Lowercase + digits, no
+/// ambiguous characters (no 0/o, 1/l) so the address copies cleanly into a To: field.
+const MAIL_TESTER_TOKEN_ALPHABET: &[u8] = b"abcdefghijkmnpqrstuvwxyz23456789";
+const MAIL_TESTER_TOKEN_LEN: usize = 12;
+
+/// Added: TMAIL-39 — mint a fresh mail-tester.com test address.
+/// CONSTRAINTS: address local part is `test-tasmail-<token>` so we can spot our own
+/// traffic; matching report URL points at https://www.mail-tester.com/<handle>.
+/// The user has ~45 minutes to view the report before the handle expires (mail-tester
+/// rotates inboxes — the same handle returns a stale report after that window).
+pub fn build_mail_tester_handle() -> MailTesterHandle {
+    let mut rng = rand::rng();
+    let token: String = (0..MAIL_TESTER_TOKEN_LEN)
+        .map(|_| {
+            let idx = rng.random_range(0..MAIL_TESTER_TOKEN_ALPHABET.len());
+            MAIL_TESTER_TOKEN_ALPHABET[idx] as char
+        })
+        .collect();
+    let handle = format!("test-tasmail-{}", token);
+    let test_address = format!("{}@mail-tester.com", handle);
+    let report_url = format!("https://www.mail-tester.com/{}", handle);
+    MailTesterHandle {
+        test_address,
+        report_url,
+        expires_in_minutes: 45,
+        instructions: "Compose a normal email from the TASMail account whose deliverability you want to score and send it to the address below. Within 45 minutes, open the report URL to view your mail-tester.com spam score (target: 8/10 or higher). The handle is single-use — running this again mints a fresh address.".to_string(),
+    }
+}
+
+/// Added: TMAIL-39 — build the Google Postmaster Tools deep-link for a domain.
+/// CONSTRAINTS: domain is URL-encoded so internationalised or punctuated values do not
+/// break the query string; an empty domain yields the bare managedomains URL rather
+/// than a broken `?domain=` query.
+pub fn build_postmaster_tools(domain: &str) -> PostmasterTools {
+    let trimmed = domain.trim();
+    let dashboard_url = if trimmed.is_empty() {
+        "https://postmaster.google.com/managedomains".to_string()
+    } else {
+        format!(
+            "https://postmaster.google.com/managedomains?domain={}",
+            url_encode(trimmed),
+        )
+    };
+    PostmasterTools {
+        dashboard_url,
+        instructions: "Sign in with the Google account that owns this domain, click \"Add Domain\", and complete the DNS TXT verification step. Reputation, spam-rate, and authentication metrics start populating after about 24 hours of sending volume to Gmail recipients. Aim for \"High\" domain reputation and a spam rate under 0.10%.".to_string(),
+    }
+}
+
+/// Added: TMAIL-39 — combine mail-tester, Postmaster Tools, and the manual provider
+/// checklist (Gmail/Outlook/Yahoo/ProtonMail) into the single payload the UI needs.
+pub fn build_external_tools(domain: &str) -> ExternalToolsResponse {
+    ExternalToolsResponse {
+        mail_tester: build_mail_tester_handle(),
+        google_postmaster: build_postmaster_tools(domain),
+        providers: ExternalToolsResponse::default_providers(),
+    }
+}
+
+/// Added: TMAIL-39 — minimal RFC 3986 percent-encoder for the Postmaster query string.
+/// We avoid pulling in a full URL crate (none currently in this service's dep graph)
+/// and only need to escape non-unreserved bytes for a single `domain=` value.
+fn url_encode(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for b in input.bytes() {
+        let ok = matches!(b, b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~');
+        if ok {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{:02X}", b));
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -456,5 +551,92 @@ mod tests {
         // Added: Blacklist check on unresolvable domain returns error
         let result = check_blacklists("this-domain-does-not-exist-xyz123.invalid");
         assert_eq!(result.status, crate::models::deliverability::CheckStatus::Error);
+    }
+
+    #[test]
+    fn test_mail_tester_handle_format() {
+        // Added: TMAIL-39 — mail-tester handle MUST follow `test-tasmail-<token>` so we
+        // can spot our own traffic in any mail-tester dashboard and so the public URL
+        // resolves to the same handle as the SMTP envelope.
+        let handle = build_mail_tester_handle();
+        assert!(
+            handle.test_address.starts_with("test-tasmail-"),
+            "expected prefix, got {}",
+            handle.test_address
+        );
+        assert!(
+            handle.test_address.ends_with("@mail-tester.com"),
+            "expected mail-tester.com domain, got {}",
+            handle.test_address
+        );
+        // URL must reference the same handle (everything before the @) so the user
+        // visits the report that matches the email they sent.
+        let local_part = handle.test_address.split('@').next().unwrap();
+        assert!(
+            handle.report_url.ends_with(local_part),
+            "report URL {} should end with handle {}",
+            handle.report_url,
+            local_part
+        );
+        assert_eq!(handle.expires_in_minutes, 45);
+        assert!(!handle.instructions.is_empty());
+    }
+
+    #[test]
+    fn test_mail_tester_handle_is_unique() {
+        // Added: TMAIL-39 — every call must mint a fresh token so a user re-running
+        // the test gets a clean report rather than stale results from an earlier send.
+        let a = build_mail_tester_handle();
+        let b = build_mail_tester_handle();
+        assert_ne!(a.test_address, b.test_address, "tokens collided across calls");
+    }
+
+    #[test]
+    fn test_postmaster_url_includes_domain() {
+        // Added: TMAIL-39 — the Postmaster Tools URL pre-fills the domain so the user
+        // lands on the right managedomains entry without typing.
+        let pmt = build_postmaster_tools("mail.example.com");
+        assert!(pmt.dashboard_url.contains("postmaster.google.com"));
+        assert!(
+            pmt.dashboard_url.contains("mail.example.com"),
+            "expected domain in URL, got {}",
+            pmt.dashboard_url
+        );
+        assert!(!pmt.instructions.is_empty());
+    }
+
+    #[test]
+    fn test_postmaster_url_handles_missing_domain() {
+        // Added: TMAIL-39 — if the caller omits a domain, the URL must still resolve
+        // to the Postmaster managedomains landing page rather than a broken query.
+        let pmt = build_postmaster_tools("");
+        assert!(pmt.dashboard_url.starts_with("https://postmaster.google.com"));
+        assert!(!pmt.dashboard_url.contains("domain="));
+    }
+
+    #[test]
+    fn test_postmaster_url_encodes_domain() {
+        // Added: TMAIL-39 — domains with unusual characters must be URL-encoded so the
+        // dashboard parses them correctly (defensive: the constraint set is small but
+        // we don't want a future internationalised TLD to break the link).
+        let pmt = build_postmaster_tools("mail.üñiçødé.test");
+        // Encoded form contains percent-escapes, not raw non-ASCII bytes.
+        assert!(
+            pmt.dashboard_url
+                .chars()
+                .all(|c| c.is_ascii() && !c.is_whitespace()),
+            "URL should be pure ASCII after encoding: {}",
+            pmt.dashboard_url
+        );
+    }
+
+    #[test]
+    fn test_build_external_tools_combines_all_sections() {
+        // Added: TMAIL-39 — the assembled response wires together all three sub-sections
+        // (mail-tester, Postmaster, provider checklist) with the spec's four providers.
+        let resp = build_external_tools("mail.example.com");
+        assert!(resp.mail_tester.test_address.contains("@mail-tester.com"));
+        assert!(resp.google_postmaster.dashboard_url.contains("mail.example.com"));
+        assert_eq!(resp.providers.len(), 4);
     }
 }

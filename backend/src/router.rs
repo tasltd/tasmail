@@ -937,6 +937,13 @@ pub fn create_router(state: AppState) -> Router {
             "/api/admin/deliverability/check",
             get(handlers::deliverability::check_deliverability),
         )
+        // Added: TMAIL-39 — external tools panel (mail-tester.com + Google Postmaster
+        // Tools + manual provider checklist) so admins can drive the inbox-placement
+        // half of the deliverability test that the DNS scanner can't measure.
+        .route(
+            "/api/admin/deliverability/external-tools",
+            get(handlers::deliverability::external_deliverability_tools),
+        )
         // Added: Mobile-optimized endpoints for lower bandwidth and smaller payloads (TMAIL-52)
         .route("/api/mobile/inbox", get(handlers::mobile::mobile_inbox))
         .route(

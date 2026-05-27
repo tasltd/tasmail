@@ -12,9 +12,19 @@ import {
   AlertOctagon,
   Play,
   RefreshCw,
+  Copy,
+  ExternalLink,
+  Mail,
 } from 'lucide-react';
-import { runDeliverabilityCheck } from '../../api/deliverability';
-import type { CheckResult, CheckStatus } from '../../api/deliverability';
+import {
+  runDeliverabilityCheck,
+  getExternalDeliverabilityTools,
+} from '../../api/deliverability';
+import type {
+  CheckResult,
+  CheckStatus,
+  ExternalToolsResponse,
+} from '../../api/deliverability';
 import { useMailStore } from '../../stores/mailStore';
 
 // Added: Color mapping for check status indicators
@@ -47,6 +57,223 @@ function getScoreColor(score: number): string {
   return '#ef4444';
 }
 
+// Added: TMAIL-39 — External tools sub-panel. Kept in this file because it shares the
+// component's domain state and only exists in service of the deliverability flow, but
+// rendered separately so the score section above stays unchanged.
+function ExternalToolsPanel({
+  data,
+  isLoading,
+  isError,
+  onGenerate,
+  domain,
+}: {
+  data: ExternalToolsResponse | undefined;
+  isLoading: boolean;
+  isError: boolean;
+  onGenerate: () => void;
+  domain: string;
+}) {
+  // Added: copy-to-clipboard with a transient "Copied!" badge so the user gets feedback
+  // when the mail-tester address lands on the clipboard.
+  const [copied, setCopied] = useState(false);
+  const copyAddress = async (addr: string) => {
+    try {
+      await navigator.clipboard.writeText(addr);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Clipboard API blocked (e.g. insecure context). The address is still visible
+      // and selectable in the read-only input, so silently no-op rather than alert.
+    }
+  };
+
+  return (
+    <div
+      style={{
+        marginTop: '32px',
+        padding: '20px',
+        background: 'var(--color-bg-elevated, #f9fafb)',
+        borderRadius: '12px',
+        border: '1px solid var(--color-border, #e5e7eb)',
+      }}
+      data-testid="external-tools-panel"
+    >
+      <h3 style={{ margin: '0 0 8px', fontSize: '16px' }}>
+        External Deliverability Tests
+      </h3>
+      <p
+        style={{
+          color: 'var(--color-text-secondary)',
+          fontSize: '13px',
+          margin: '0 0 16px',
+        }}
+      >
+        DNS scans above confirm your config is plausible; these tools verify inbox
+        placement at real mailbox providers.
+      </p>
+
+      <button
+        type="button"
+        className="btn btn--secondary"
+        onClick={onGenerate}
+        disabled={!domain.trim() || isLoading}
+        data-testid="generate-external-tools-btn"
+        style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+      >
+        {isLoading ? (
+          <>
+            <RefreshCw size={16} className="spin" /> Loading...
+          </>
+        ) : (
+          <>
+            <Mail size={16} /> Generate Mail-Tester Address & Postmaster Link
+          </>
+        )}
+      </button>
+
+      {isError && (
+        <div
+          style={{
+            marginTop: '12px',
+            padding: '12px',
+            background: '#fef2f2',
+            border: '1px solid #fecaca',
+            borderRadius: '8px',
+            color: '#dc2626',
+            fontSize: '13px',
+          }}
+          data-testid="external-tools-error"
+        >
+          Could not load external deliverability tools. Try again in a moment.
+        </div>
+      )}
+
+      {data && (
+        <div style={{ marginTop: '20px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          {/* mail-tester.com section */}
+          <section data-testid="mail-tester-section">
+            <h4 style={{ margin: '0 0 6px', fontSize: '14px' }}>
+              mail-tester.com (spam score 0–10)
+            </h4>
+            <p
+              style={{
+                margin: '0 0 8px',
+                fontSize: '13px',
+                color: 'var(--color-text-secondary)',
+              }}
+            >
+              {data.mail_tester.instructions} Target score: 8/10 or higher.
+            </p>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '8px' }}>
+              <input
+                type="text"
+                className="input"
+                readOnly
+                value={data.mail_tester.test_address}
+                style={{ flex: 1, fontFamily: 'monospace', fontSize: '13px' }}
+                data-testid="mail-tester-address"
+              />
+              <button
+                type="button"
+                className="btn btn--ghost"
+                onClick={() => copyAddress(data.mail_tester.test_address)}
+                data-testid="mail-tester-copy-btn"
+                style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
+              >
+                <Copy size={14} /> {copied ? 'Copied!' : 'Copy'}
+              </button>
+            </div>
+            <a
+              href={data.mail_tester.report_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              data-testid="mail-tester-report-link"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '4px',
+                fontSize: '13px',
+              }}
+            >
+              View report (expires in ~{data.mail_tester.expires_in_minutes} min){' '}
+              <ExternalLink size={12} />
+            </a>
+          </section>
+
+          {/* Google Postmaster Tools section */}
+          <section data-testid="postmaster-section">
+            <h4 style={{ margin: '0 0 6px', fontSize: '14px' }}>
+              Google Postmaster Tools (Gmail reputation)
+            </h4>
+            <p
+              style={{
+                margin: '0 0 8px',
+                fontSize: '13px',
+                color: 'var(--color-text-secondary)',
+              }}
+            >
+              {data.google_postmaster.instructions}
+            </p>
+            <a
+              href={data.google_postmaster.dashboard_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              data-testid="postmaster-link"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '4px',
+                fontSize: '13px',
+              }}
+            >
+              Open Postmaster Tools <ExternalLink size={12} />
+            </a>
+          </section>
+
+          {/* Manual provider checklist */}
+          <section data-testid="provider-checklist">
+            <h4 style={{ margin: '0 0 6px', fontSize: '14px' }}>
+              Manual Inbox Placement Checklist
+            </h4>
+            <p
+              style={{
+                margin: '0 0 8px',
+                fontSize: '13px',
+                color: 'var(--color-text-secondary)',
+              }}
+            >
+              Send a test message to a real account at each provider and confirm it
+              lands in Inbox — not the spam folder.
+            </p>
+            <ul style={{ margin: 0, paddingLeft: '20px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {data.providers.map((p) => (
+                <li
+                  key={p.name}
+                  data-testid={`provider-${p.name.toLowerCase().replace(/[^a-z]/g, '-')}`}
+                  style={{ fontSize: '13px' }}
+                >
+                  <strong>{p.name}</strong>{' '}
+                  <span style={{ color: 'var(--color-text-secondary)' }}>
+                    — spam folder: <code>{p.spam_folder_label}</code>
+                  </span>
+                  <div
+                    style={{
+                      color: 'var(--color-text-secondary)',
+                      marginTop: '2px',
+                    }}
+                  >
+                    {p.instructions}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </section>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function DeliverabilityReport() {
   const setViewMode = useMailStore((s) => s.setViewMode);
   const [domain, setDomain] = useState('');
@@ -55,6 +282,12 @@ export function DeliverabilityReport() {
   // Added: Mutation for running the check (not a query since it's on-demand)
   const checkMutation = useMutation({
     mutationFn: (d: string) => runDeliverabilityCheck(d),
+  });
+
+  // Added: TMAIL-39 — mutation for the external tools panel; each fire mints a fresh
+  // mail-tester handle, so a mutation (action) is the right shape rather than a query.
+  const externalToolsMutation = useMutation({
+    mutationFn: (d: string) => getExternalDeliverabilityTools(d),
   });
 
   // Added: Toggle expanded state for a check's details
@@ -244,6 +477,18 @@ export function DeliverabilityReport() {
               </div>
             ))}
           </div>
+
+          {/* Added: TMAIL-39 — external deliverability tools (mail-tester + Postmaster
+              Tools + manual provider checklist). Rendered after the DNS scorecard so
+              admins see "here's your config status" then "here's how to test inbox
+              placement" without leaving the page. */}
+          <ExternalToolsPanel
+            data={externalToolsMutation.data}
+            isLoading={externalToolsMutation.isPending}
+            isError={externalToolsMutation.isError}
+            onGenerate={() => externalToolsMutation.mutate(report.domain)}
+            domain={report.domain}
+          />
         </div>
       )}
     </div>

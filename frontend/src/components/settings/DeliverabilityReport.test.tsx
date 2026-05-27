@@ -17,8 +17,11 @@ vi.mock('../../stores/mailStore', () => ({
 
 // Added: Mock the deliverability API
 const mockRunCheck = vi.fn();
+const mockGetExternalTools = vi.fn();
 vi.mock('../../api/deliverability', () => ({
   runDeliverabilityCheck: (...args: unknown[]) => mockRunCheck(...args),
+  getExternalDeliverabilityTools: (...args: unknown[]) =>
+    mockGetExternalTools(...args),
 }));
 
 function wrapper({ children }: { children: React.ReactNode }) {
@@ -164,6 +167,134 @@ describe('DeliverabilityReport', () => {
 
     await waitFor(() => {
       expect(screen.getByText('2 of 3 checks passed')).toBeInTheDocument();
+    });
+  });
+
+  // === TMAIL-39 — External deliverability tools panel ===
+  describe('External Tools panel', () => {
+    const sampleReport = {
+      domain: 'mail.example.com',
+      checks: [{ name: 'SPF Record', status: 'pass', details: 'v=spf1 found' }],
+      score: 100,
+    };
+
+    const sampleTools = {
+      mail_tester: {
+        test_address: 'test-tasmail-abc123@mail-tester.com',
+        report_url: 'https://www.mail-tester.com/test-tasmail-abc123',
+        expires_in_minutes: 45,
+        instructions:
+          'Send a test email to this address from your TASMail account.',
+      },
+      google_postmaster: {
+        dashboard_url:
+          'https://postmaster.google.com/managedomains?domain=mail.example.com',
+        instructions: 'Sign in with the Google account that owns this domain.',
+      },
+      providers: [
+        {
+          name: 'Gmail',
+          spam_folder_label: 'Spam',
+          instructions: 'Send to a Gmail seed account.',
+        },
+        {
+          name: 'Outlook / Hotmail',
+          spam_folder_label: 'Junk',
+          instructions: 'Send to an outlook.com account.',
+        },
+        {
+          name: 'Yahoo Mail',
+          spam_folder_label: 'Bulk',
+          instructions: 'Send to a Yahoo account.',
+        },
+        {
+          name: 'ProtonMail',
+          spam_folder_label: 'Spam',
+          instructions: 'Send to a ProtonMail account.',
+        },
+      ],
+    };
+
+    async function runReportFirst() {
+      mockRunCheck.mockResolvedValue(sampleReport);
+      render(<DeliverabilityReport />, { wrapper });
+      fireEvent.change(screen.getByTestId('domain-input'), {
+        target: { value: 'mail.example.com' },
+      });
+      fireEvent.click(screen.getByTestId('run-check-btn'));
+      await waitFor(() => {
+        expect(screen.getByTestId('report-results')).toBeInTheDocument();
+      });
+    }
+
+    it('renders the external tools panel after a report is loaded', async () => {
+      await runReportFirst();
+      expect(screen.getByTestId('external-tools-panel')).toBeInTheDocument();
+      expect(screen.getByTestId('generate-external-tools-btn')).toBeInTheDocument();
+    });
+
+    it('calls getExternalDeliverabilityTools with the reported domain', async () => {
+      await runReportFirst();
+      mockGetExternalTools.mockResolvedValue(sampleTools);
+      fireEvent.click(screen.getByTestId('generate-external-tools-btn'));
+      await waitFor(() => {
+        expect(mockGetExternalTools).toHaveBeenCalledWith('mail.example.com');
+      });
+    });
+
+    it('renders mail-tester address, report link, postmaster link, and all four providers', async () => {
+      await runReportFirst();
+      mockGetExternalTools.mockResolvedValue(sampleTools);
+      fireEvent.click(screen.getByTestId('generate-external-tools-btn'));
+
+      await waitFor(() => {
+        expect(screen.getByTestId('mail-tester-address')).toHaveValue(
+          'test-tasmail-abc123@mail-tester.com',
+        );
+      });
+
+      expect(screen.getByTestId('mail-tester-report-link')).toHaveAttribute(
+        'href',
+        'https://www.mail-tester.com/test-tasmail-abc123',
+      );
+      expect(screen.getByTestId('postmaster-link')).toHaveAttribute(
+        'href',
+        'https://postmaster.google.com/managedomains?domain=mail.example.com',
+      );
+
+      // TMAIL-39 — issue spec requires all four providers; assert each row is rendered.
+      expect(screen.getByText('Gmail')).toBeInTheDocument();
+      expect(screen.getByText('Outlook / Hotmail')).toBeInTheDocument();
+      expect(screen.getByText('Yahoo Mail')).toBeInTheDocument();
+      expect(screen.getByText('ProtonMail')).toBeInTheDocument();
+    });
+
+    it('copies the mail-tester address to the clipboard when the Copy button is clicked', async () => {
+      const writeText = vi.fn().mockResolvedValue(undefined);
+      Object.assign(navigator, { clipboard: { writeText } });
+
+      await runReportFirst();
+      mockGetExternalTools.mockResolvedValue(sampleTools);
+      fireEvent.click(screen.getByTestId('generate-external-tools-btn'));
+      await waitFor(() => {
+        expect(screen.getByTestId('mail-tester-copy-btn')).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByTestId('mail-tester-copy-btn'));
+      await waitFor(() => {
+        expect(writeText).toHaveBeenCalledWith(
+          'test-tasmail-abc123@mail-tester.com',
+        );
+      });
+    });
+
+    it('shows an error message when the external tools fetch fails', async () => {
+      await runReportFirst();
+      mockGetExternalTools.mockRejectedValue(new Error('upstream down'));
+      fireEvent.click(screen.getByTestId('generate-external-tools-btn'));
+      await waitFor(() => {
+        expect(screen.getByTestId('external-tools-error')).toBeInTheDocument();
+      });
     });
   });
 });
