@@ -48,7 +48,7 @@ npm run build:alt-ui           # Build themes/shadcn-prototype into frontend/pub
 ```
 
 ### Database
-PostgreSQL 16+. Default dev connection: `postgres://tasmail:tasmail@localhost/tasmail`. Migrations run automatically on backend startup via `sqlx::migrate!("./migrations")`. 65 migration files (001–065) covering the full schema; recent additions cover feature flags (`057`), usage-based billing (`058`), enterprise quote requests (`059`), and a series of FK-cascade + Postgres ENUM→TEXT-with-CHECK conversions (`060`–`065`) so sqlx can decode the columns as `String` in the Rust models. When adding a status/type column, prefer `TEXT + CHECK` over a Postgres ENUM — see migrations 061/063/065 for the pattern.
+PostgreSQL 16+. Default dev connection: `postgres://tasmail:tasmail@localhost/tasmail`. Migrations run automatically on backend startup via `sqlx::migrate!("./migrations")`. 68 migration files (001–068) covering the full schema; recent additions cover feature flags (`057`), usage-based billing (`058`), enterprise quote requests (`059`), a series of FK-cascade + Postgres ENUM→TEXT-with-CHECK conversions (`060`–`065`) so sqlx can decode the columns as `String` in the Rust models, email-queue priority + bounced state (`066`), push notification quiet-hours + grouping (`067`), and phishing dangerous-attachment tracking (`068`). When adding a status/type column, prefer `TEXT + CHECK` over a Postgres ENUM — see migrations 061/063/065 for the pattern.
 
 ## Architecture
 
