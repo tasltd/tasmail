@@ -41,10 +41,14 @@ npm run test:watch             # Vitest (watch mode)
 npx vitest run src/api/client.test.ts  # Run a single test file
 npm run e2e                    # Playwright E2E tests (Firefox)
 npm run e2e:headed             # Playwright E2E (headed Firefox)
+npm run e2e:report             # Open last Playwright HTML report
+npm run trace-check            # Run traceability drift gate locally (same as CI)
+npm run trace-check:update     # Refresh docs/traceability/orphans-baseline.json
+npm run build:alt-ui           # Build themes/shadcn-prototype into frontend/public/modern/
 ```
 
 ### Database
-PostgreSQL 16+. Default dev connection: `postgres://tasmail:tasmail@localhost/tasmail`. Migrations run automatically on backend startup via `sqlx::migrate!("./migrations")`. 59 migration files (001–059) covering the full schema; the latest set adds feature flags (`057`), usage-based billing (`058`) and enterprise quote requests (`059`).
+PostgreSQL 16+. Default dev connection: `postgres://tasmail:tasmail@localhost/tasmail`. Migrations run automatically on backend startup via `sqlx::migrate!("./migrations")`. 65 migration files (001–065) covering the full schema; recent additions cover feature flags (`057`), usage-based billing (`058`), enterprise quote requests (`059`), and a series of FK-cascade + Postgres ENUM→TEXT-with-CHECK conversions (`060`–`065`) so sqlx can decode the columns as `String` in the Rust models. When adding a status/type column, prefer `TEXT + CHECK` over a Postgres ENUM — see migrations 061/063/065 for the pattern.
 
 ## Architecture
 
@@ -119,7 +123,16 @@ Production infrastructure configs: `docker-compose.yml`, plus config directories
 Source-of-truth for the TASMail mark + palette. `BRAND.md` documents the `t@s` envelope mark, palette tokens (`--tm-blue-600`, `--tm-teal-400`, etc.), typography, and contrast rules. `src/build_logo.py` and `src/build_assets.py` regenerate every derivative in `build/` (`app-icons/`, `ico/`, `png/`, `social/`, `svg/`, `wordmark/`) from those primitives, and the published downloadable archive ships from the same pipeline. Run the scripts from `branding/` after any palette or glyph change rather than editing the rendered assets by hand.
 
 ### Repo-root `scripts/`
-Currently just `notebooklm-login-firefox.mjs` (NotebookLM auth helper). Operational scripts live under `deploy/scripts/` and `backend/`, not here — keep this folder for ad-hoc Node utilities only.
+Small grab-bag of repo-level tooling. Operational scripts live under `deploy/scripts/` and `backend/`, not here.
+
+| Script | Purpose |
+|--------|---------|
+| `trace-check.py` | Backend↔SPA route traceability gate. Used by the `trace-check` CI workflow and the `npm run trace-check` script. Reads `docs/traceability/orphans-baseline.json` to allow legacy orphans while blocking new drift on critical route categories (auth, billing, folders, messages, signatures, contacts). |
+| `build-alt-ui.sh` | Builds `themes/shadcn-prototype/` and copies the bundle into `frontend/public/modern/`. Called by `npm run build:alt-ui`. |
+| `notebooklm-login-firefox.mjs` | One-off NotebookLM auth helper. |
+
+### CI (`.github/workflows/`)
+- **`trace-check.yml`** — runs `scripts/trace-check.py` on PRs touching `backend/src/router.rs`, `backend/src/handlers/**`, `frontend/src/api/**`, `frontend/src/components/**`, `frontend/src/hooks/**`, `frontend/src/utils/**`, the script itself, or the baseline JSON. When adding/removing a route in a critical category, expect to either wire up a SPA consumer or refresh `docs/traceability/orphans-baseline.json` via `npm run trace-check:update`. Note that `frontend/src/utils/background-sync.ts` uses **dynamic imports** for some API modules, so the static scan can miss them — keep that in mind when investigating false positives.
 
 ### Alt-UI theme (`themes/shadcn-prototype/`)
 Standalone Vite + React app on top of shadcn/ui + Radix + Tailwind, **wired to the production backend** as an alternative theme served at `/modern/`. Logged-in users hop over via the wand-icon button in the classic SPA's TopBar (or by typing `/modern/index.html`); the alt-UI's AuthGate reads the same JWT from localStorage so no second login. The header shows a `← Classic` link to come back.
@@ -228,6 +241,21 @@ systemctl --user restart tasmail-backend.service   # picks up new release binary
 journalctl --user -u tasmail-backend.service -f
 ```
 
+## Pricing & business model (BYOK positioning)
+
+The product is sold as **TASMail BYOK at GHS 1.00 / GB · month** (≈ $0.07 USD, GHS 5
+monthly minimum) with a custom-quoted **Enterprise** tier (single-tenant, SAML/OIDC,
+on-prem option). Settlement is in Ghana cedis via Paystack, Mastercard MPGS, Cybersource
+invoicing or bank transfer — the same four providers PayPro uses. The live calculator
+is at `/pricing`. Keep this in mind when touching billing / quote-request code paths
+(`migrations/058_usage_billing.sql`, `migrations/059_enterprise_quote_requests.sql`,
+`handlers/billing.rs`).
+
 ## Documentation
 
-Detailed docs in `docs/`: PRD, Architecture (SRS), API Specification, Development Setup, Deployment Guide, Security, Project Management Plan, Ghana Business Validation, and `SELF-HOST-MAIL-SERVERS.md` (optional Postfix/Dovecot install path).
+Detailed docs in `docs/`: `PRD.md`, `ARCHITECTURE.md`, `SSR.md` (SRS), `API-SPECIFICATION.md`,
+`DEVELOPMENT-SETUP.md`, `DEPLOYMENT-GUIDE.md`, `SECURITY.md`, `PROJECT-MANAGEMENT-PLAN.md`,
+`PROJECT-MEMBERS.md`, `BUSINESS-VALIDATION-GHANA.md`, `DNS-MX-ONBOARDING.md`,
+`GAP-ANALYSIS.md`, `SELF-HOST-MAIL-SERVERS.md` (optional Postfix/Dovecot install path),
+plus `docs/research/` (raw research notes) and `docs/traceability/` (generated
+DOCX/PDF traceability reports — regenerated, don't hand-edit).
