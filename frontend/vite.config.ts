@@ -26,9 +26,37 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
+        // Added: drop previous-revision precaches on SW upgrade so Cache Storage
+        // doesn't accumulate one full precache per deploy (TMAIL-261 finding 8).
+        cleanupOutdatedCaches: true,
+        // NOTE: runtimeCaching is evaluated top-down. NetworkOnly first to ensure
+        // privacy/correctness-sensitive routes never sit in any cache, then the
+        // long-lived StaleWhileRevalidate for branding, then the catch-all
+        // NetworkFirst for the rest of /api/* GETs. Full per-route plan is in
+        // docs/assessments/frontend-pwa-offline-2026-05.md (TMAIL-261 finding 2);
+        // the split below is the conservative subset that only *removes* caching
+        // from routes that should never have been cached.
         runtimeCaching: [
           {
-            urlPattern: /^https?:\/\/.*\/api\//,
+            // Privacy + per-query garbage + time-sensitive availability: never cache.
+            urlPattern: /^https?:\/\/[^/]+\/api\/(auth|search|calendar\/free-busy)\b/,
+            handler: 'NetworkOnly',
+          },
+          {
+            // Branding rarely changes and every render reads it — SWR with 24h TTL.
+            urlPattern: /^https?:\/\/[^/]+\/api\/branding\b/,
+            method: 'GET',
+            handler: 'StaleWhileRevalidate',
+            options: {
+              cacheName: 'branding-cache',
+              expiration: { maxEntries: 4, maxAgeSeconds: 86400 },
+            },
+          },
+          {
+            // Catch-all for the rest of /api/* GETs. Explicit method:'GET' keeps
+            // mutations off the SW cache path regardless of Workbox defaults.
+            urlPattern: /^https?:\/\/[^/]+\/api\//,
+            method: 'GET',
             handler: 'NetworkFirst',
             options: {
               cacheName: 'api-cache',
