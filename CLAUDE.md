@@ -260,5 +260,6 @@ Detailed docs in `docs/`: `PRD.md`, `ARCHITECTURE.md`, `SSR.md` (SRS), `API-SPEC
 `MOBILE-PLATFORM-DECISION.md` (ADR: Flutter for the Ghana market — TMAIL-49),
 `BACKUP-RESTORE.md` (daily pg_dump + incremental Maildir rsync + off-site + verify — TMAIL-42),
 `IP-WARMUP-RUNBOOK.md` (8-week ramp + Google Postmaster Tools enrollment — TMAIL-17),
+`PAYMENT-PROVIDER-MIGRATION.md` (PayPro → TASMail credential migration runbook — TMAIL-163),
 plus `docs/research/` (raw research notes) and `docs/traceability/` (generated
 DOCX/PDF traceability reports — regenerated, don't hand-edit).
