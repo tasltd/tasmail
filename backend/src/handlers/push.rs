@@ -12,6 +12,7 @@ use serde::Serialize;
 use crate::error::AppError;
 use crate::models::push_notification::{
     PushDevice, PushNotificationPayload, PushPlatform, RegisterPushDeviceRequest,
+    UpdateBadgeCountRequest, UpdateQuietHoursRequest,
 };
 use crate::services::auth_service::Claims;
 use crate::services::push_service;
@@ -100,6 +101,8 @@ pub async fn test_notification(
         title: "TASMail Test Notification".to_string(),
         body: Some("If you see this, push notifications are working!".to_string()),
         data: Some(serde_json::json!({"type": "test"})),
+        collapse_key: None,
+        badge: None,
     };
 
     let results = push_service::send_notification(&state.db, &state.config, user_id, &payload)
@@ -114,6 +117,82 @@ pub async fn test_notification(
         successes,
         failures,
     }))
+}
+
+/// Added: Update a device's quiet-hours window (TMAIL-50)
+/// PUT /api/push/devices/{id}/quiet-hours
+/// PURPOSE: Sets or clears the per-device do-not-disturb window. Sending
+/// `{"quiet_hours_start": null, "quiet_hours_end": null, "quiet_hours_timezone": null}`
+/// clears the window entirely.
+pub async fn update_quiet_hours(
+    State(state): State<AppState>,
+    axum::Extension(claims): axum::Extension<Claims>,
+    Path(id): Path<uuid::Uuid>,
+    Json(body): Json<UpdateQuietHoursRequest>,
+) -> Result<Json<PushDevice>, AppError> {
+    let user_id = parse_user_id(&claims)?;
+
+    // NOTE: Validate timezone string if provided so we don't store junk that
+    // silently falls back to UTC at send-time.
+    if let Some(tz_name) = body.quiet_hours_timezone.as_deref() {
+        if tz_name.parse::<chrono_tz::Tz>().is_err() {
+            return Err(AppError::BadRequest(format!(
+                "Invalid IANA timezone: '{}'",
+                tz_name
+            )));
+        }
+    }
+
+    // NOTE: require both start AND end, or neither — partial windows make no sense
+    match (&body.quiet_hours_start, &body.quiet_hours_end) {
+        (Some(_), None) | (None, Some(_)) => {
+            return Err(AppError::BadRequest(
+                "quiet_hours_start and quiet_hours_end must both be set or both be null"
+                    .to_string(),
+            ));
+        }
+        _ => {}
+    }
+
+    let updated = PushDevice::update_quiet_hours(
+        &state.db,
+        id,
+        user_id,
+        body.quiet_hours_start,
+        body.quiet_hours_end,
+        body.quiet_hours_timezone.as_deref(),
+    )
+    .await?;
+
+    updated
+        .map(Json)
+        .ok_or_else(|| AppError::NotFound("Device not found".to_string()))
+}
+
+/// Added: Sync the unread badge count from the device (TMAIL-50)
+/// PUT /api/push/devices/{id}/badge
+/// PURPOSE: Client posts the current unread count so outbound APNs/FCM
+/// payloads carry the right badge number.
+pub async fn update_badge_count(
+    State(state): State<AppState>,
+    axum::Extension(claims): axum::Extension<Claims>,
+    Path(id): Path<uuid::Uuid>,
+    Json(body): Json<UpdateBadgeCountRequest>,
+) -> Result<Json<PushDevice>, AppError> {
+    let user_id = parse_user_id(&claims)?;
+
+    if body.badge_count < 0 {
+        return Err(AppError::BadRequest(
+            "badge_count must be >= 0".to_string(),
+        ));
+    }
+
+    let updated =
+        PushDevice::update_badge_count(&state.db, id, user_id, body.badge_count).await?;
+
+    updated
+        .map(Json)
+        .ok_or_else(|| AppError::NotFound("Device not found".to_string()))
 }
 
 // Added: Parse user UUID from JWT claims

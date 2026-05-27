@@ -898,6 +898,15 @@ pub fn create_router(state: AppState) -> Router {
             delete(handlers::push::unregister_device),
         )
         .route("/api/push/test", post(handlers::push::test_notification))
+        // Added: TMAIL-50 — quiet hours + badge count sync for push devices
+        .route(
+            "/api/push/devices/{id}/quiet-hours",
+            put(handlers::push::update_quiet_hours),
+        )
+        .route(
+            "/api/push/devices/{id}/badge",
+            put(handlers::push::update_badge_count),
+        )
         // Added: Sync checkpoint routes for offline-first delta sync (TMAIL-51)
         .route(
             "/api/sync/checkpoints",

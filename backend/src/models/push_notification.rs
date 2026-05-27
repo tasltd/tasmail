@@ -49,6 +49,12 @@ pub struct PushDevice {
     pub active: Option<bool>,
     pub last_used_at: Option<chrono::DateTime<chrono::Utc>>,
     pub created_at: Option<chrono::DateTime<chrono::Utc>>,
+    // Added: Quiet hours + badge count for TMAIL-50 (migration 067)
+    pub quiet_hours_start: Option<chrono::NaiveTime>,
+    pub quiet_hours_end: Option<chrono::NaiveTime>,
+    pub quiet_hours_timezone: Option<String>,
+    #[serde(default)]
+    pub badge_count: i32,
 }
 
 /// Added: Request body for registering a push device (TMAIL-50)
@@ -58,6 +64,24 @@ pub struct RegisterPushDeviceRequest {
     pub device_token: String,
     pub device_name: Option<String>,
     pub app_version: Option<String>,
+}
+
+/// Added: Request body for updating per-device quiet hours (TMAIL-50)
+/// PURPOSE: Lets the client set/clear the do-not-disturb window for one device.
+/// Setting all three to None clears quiet hours entirely.
+#[derive(Debug, Deserialize)]
+pub struct UpdateQuietHoursRequest {
+    pub quiet_hours_start: Option<chrono::NaiveTime>,
+    pub quiet_hours_end: Option<chrono::NaiveTime>,
+    pub quiet_hours_timezone: Option<String>,
+}
+
+/// Added: Request body for syncing the unread badge count from a device (TMAIL-50)
+/// PURPOSE: Mobile/web client posts its current unread count so the next outbound
+/// push carries the right APNs badge / FCM data.badge.
+#[derive(Debug, Deserialize)]
+pub struct UpdateBadgeCountRequest {
+    pub badge_count: i32,
 }
 
 /// Added: Push notification log entry for delivery tracking (TMAIL-50)
@@ -75,11 +99,53 @@ pub struct PushNotificationLog {
 }
 
 /// Added: Payload for sending a push notification (TMAIL-50)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// PURPOSE: `collapse_key` groups notifications on the device by sender or thread
+/// (FCM `android.collapse_key`, APNs `aps.thread-id`). `badge` overrides the unread
+/// count baked into the device row (e.g. when computed live from IMAP).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PushNotificationPayload {
     pub title: String,
     pub body: Option<String>,
     pub data: Option<serde_json::Value>,
+    // Added: TMAIL-50 — used as FCM android.collapse_key and APNs aps.thread-id
+    // so multiple emails from the same sender/thread coalesce in the tray.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collapse_key: Option<String>,
+    // Added: TMAIL-50 — overrides PushDevice.badge_count for this send only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub badge: Option<u32>,
+}
+
+/// Added: Decide whether a device is currently inside its quiet-hours window (TMAIL-50)
+/// PURPOSE: Used by push_service to skip delivery during do-not-disturb.
+/// - Handles overnight windows (e.g. 22:00 → 07:00) by inverting the comparison.
+/// - Falls back to UTC when no timezone is set on the device.
+/// - Returns false when the window is unset (start AND end both None).
+pub fn is_in_quiet_hours(
+    now_utc: chrono::DateTime<chrono::Utc>,
+    start: Option<chrono::NaiveTime>,
+    end: Option<chrono::NaiveTime>,
+    tz: Option<&str>,
+) -> bool {
+    let (start, end) = match (start, end) {
+        (Some(s), Some(e)) => (s, e),
+        _ => return false,
+    };
+    if start == end {
+        // NOTE: equal start/end is treated as "always quiet" (locked DND)
+        return true;
+    }
+    let local_time = match tz.and_then(|name| name.parse::<chrono_tz::Tz>().ok()) {
+        Some(tz) => now_utc.with_timezone(&tz).time(),
+        None => now_utc.time(),
+    };
+    if start < end {
+        // Same-day window, e.g. 13:00 -> 14:30
+        local_time >= start && local_time < end
+    } else {
+        // Overnight window, e.g. 22:00 -> 07:00 spans midnight
+        local_time >= start || local_time < end
+    }
 }
 
 impl PushDevice {
@@ -157,6 +223,65 @@ impl PushDevice {
         .execute(pool)
         .await?;
         Ok(result.rows_affected() > 0)
+    }
+
+    /// Added: Update the per-device quiet-hours window (TMAIL-50)
+    /// PURPOSE: Sets/clears the do-not-disturb window for a single device.
+    /// Setting all three params to None clears the window.
+    pub async fn update_quiet_hours(
+        pool: &PgPool,
+        id: Uuid,
+        user_id: Uuid,
+        start: Option<chrono::NaiveTime>,
+        end: Option<chrono::NaiveTime>,
+        tz: Option<&str>,
+    ) -> Result<Option<PushDevice>, sqlx::Error> {
+        sqlx::query_as::<_, PushDevice>(
+            "UPDATE push_devices \
+             SET quiet_hours_start = $3, quiet_hours_end = $4, quiet_hours_timezone = $5 \
+             WHERE id = $1 AND user_id = $2 \
+             RETURNING *",
+        )
+        .bind(id)
+        .bind(user_id)
+        .bind(start)
+        .bind(end)
+        .bind(tz)
+        .fetch_optional(pool)
+        .await
+    }
+
+    /// Added: Sync the unread badge count from the device (TMAIL-50)
+    /// PURPOSE: Outbound APNs/FCM payloads read this value so the system-tray
+    /// badge tracks the device's last-known unread count even when no new mail
+    /// has arrived since the last sync.
+    pub async fn update_badge_count(
+        pool: &PgPool,
+        id: Uuid,
+        user_id: Uuid,
+        badge_count: i32,
+    ) -> Result<Option<PushDevice>, sqlx::Error> {
+        // NOTE: clamp at 0 — DB also enforces this via CHECK constraint
+        let clamped = badge_count.max(0);
+        sqlx::query_as::<_, PushDevice>(
+            "UPDATE push_devices SET badge_count = $3 \
+             WHERE id = $1 AND user_id = $2 RETURNING *",
+        )
+        .bind(id)
+        .bind(user_id)
+        .bind(clamped)
+        .fetch_optional(pool)
+        .await
+    }
+
+    /// Added: Convenience check — is this device inside its quiet-hours window? (TMAIL-50)
+    pub fn is_in_quiet_hours_now(&self, now_utc: chrono::DateTime<chrono::Utc>) -> bool {
+        is_in_quiet_hours(
+            now_utc,
+            self.quiet_hours_start,
+            self.quiet_hours_end,
+            self.quiet_hours_timezone.as_deref(),
+        )
     }
 }
 
@@ -240,6 +365,10 @@ mod tests {
             active: Some(true),
             last_used_at: Some(chrono::Utc::now()),
             created_at: Some(chrono::Utc::now()),
+            quiet_hours_start: None,
+            quiet_hours_end: None,
+            quiet_hours_timezone: None,
+            badge_count: 0,
         };
 
         let json = serde_json::to_value(&device).unwrap();
@@ -248,6 +377,7 @@ mod tests {
         assert_eq!(json["device_name"], "Pixel 9 Pro");
         assert_eq!(json["app_version"], "2.1.0");
         assert_eq!(json["active"], true);
+        assert_eq!(json["badge_count"], 0);
     }
 
     #[test]
@@ -262,6 +392,10 @@ mod tests {
             active: Some(true),
             last_used_at: None,
             created_at: None,
+            quiet_hours_start: None,
+            quiet_hours_end: None,
+            quiet_hours_timezone: None,
+            badge_count: 0,
         };
 
         let json = serde_json::to_value(&device).unwrap();
@@ -272,6 +406,7 @@ mod tests {
 
     #[test]
     fn test_push_device_deserialization() {
+        // NOTE: badge_count omitted to verify #[serde(default)] kicks in
         let json = serde_json::json!({
             "id": "00000000-0000-0000-0000-000000000001",
             "user_id": "00000000-0000-0000-0000-000000000002",
@@ -290,6 +425,146 @@ mod tests {
         assert_eq!(device.device_name, Some("Chrome Desktop".to_string()));
         assert_eq!(device.active, Some(true));
         assert!(device.last_used_at.is_some());
+        assert_eq!(device.badge_count, 0);
+        assert!(device.quiet_hours_start.is_none());
+    }
+
+    // Added: Quiet hours window tests (TMAIL-50) — cover same-day, overnight,
+    // null inputs, equal start/end, and timezone-aware checks.
+    #[test]
+    fn test_quiet_hours_unset_returns_false() {
+        let now = chrono::Utc::now();
+        assert!(!is_in_quiet_hours(now, None, None, None));
+        assert!(!is_in_quiet_hours(now, Some(chrono::NaiveTime::from_hms_opt(22, 0, 0).unwrap()), None, None));
+        assert!(!is_in_quiet_hours(now, None, Some(chrono::NaiveTime::from_hms_opt(7, 0, 0).unwrap()), None));
+    }
+
+    #[test]
+    fn test_quiet_hours_same_day_window() {
+        // 13:00 -> 14:30 UTC window
+        let start = chrono::NaiveTime::from_hms_opt(13, 0, 0).unwrap();
+        let end = chrono::NaiveTime::from_hms_opt(14, 30, 0).unwrap();
+
+        let inside = chrono::DateTime::parse_from_rfc3339("2026-04-14T13:30:00Z").unwrap().with_timezone(&chrono::Utc);
+        let before = chrono::DateTime::parse_from_rfc3339("2026-04-14T12:59:00Z").unwrap().with_timezone(&chrono::Utc);
+        let after = chrono::DateTime::parse_from_rfc3339("2026-04-14T14:30:00Z").unwrap().with_timezone(&chrono::Utc);
+        let way_after = chrono::DateTime::parse_from_rfc3339("2026-04-14T20:00:00Z").unwrap().with_timezone(&chrono::Utc);
+
+        assert!(is_in_quiet_hours(inside, Some(start), Some(end), None));
+        assert!(!is_in_quiet_hours(before, Some(start), Some(end), None));
+        assert!(!is_in_quiet_hours(after, Some(start), Some(end), None));
+        assert!(!is_in_quiet_hours(way_after, Some(start), Some(end), None));
+    }
+
+    #[test]
+    fn test_quiet_hours_overnight_window() {
+        // 22:00 -> 07:00 UTC, spans midnight
+        let start = chrono::NaiveTime::from_hms_opt(22, 0, 0).unwrap();
+        let end = chrono::NaiveTime::from_hms_opt(7, 0, 0).unwrap();
+
+        let late_night = chrono::DateTime::parse_from_rfc3339("2026-04-14T23:30:00Z").unwrap().with_timezone(&chrono::Utc);
+        let early_morning = chrono::DateTime::parse_from_rfc3339("2026-04-14T03:00:00Z").unwrap().with_timezone(&chrono::Utc);
+        let midday = chrono::DateTime::parse_from_rfc3339("2026-04-14T12:00:00Z").unwrap().with_timezone(&chrono::Utc);
+        let evening = chrono::DateTime::parse_from_rfc3339("2026-04-14T21:59:00Z").unwrap().with_timezone(&chrono::Utc);
+
+        assert!(is_in_quiet_hours(late_night, Some(start), Some(end), None));
+        assert!(is_in_quiet_hours(early_morning, Some(start), Some(end), None));
+        assert!(!is_in_quiet_hours(midday, Some(start), Some(end), None));
+        assert!(!is_in_quiet_hours(evening, Some(start), Some(end), None));
+    }
+
+    #[test]
+    fn test_quiet_hours_equal_start_end_is_always_quiet() {
+        // NOTE: locked DND — start == end means quiet 24/7
+        let t = chrono::NaiveTime::from_hms_opt(10, 0, 0).unwrap();
+        let any_moment = chrono::Utc::now();
+        assert!(is_in_quiet_hours(any_moment, Some(t), Some(t), None));
+    }
+
+    #[test]
+    fn test_quiet_hours_respects_timezone() {
+        // 22:00 -> 07:00 Africa/Accra (UTC+0) — but pretend we want UTC-5 (America/New_York)
+        // 02:00 UTC == 22:00 NY previous day → should be inside quiet hours for NY user.
+        let start = chrono::NaiveTime::from_hms_opt(22, 0, 0).unwrap();
+        let end = chrono::NaiveTime::from_hms_opt(7, 0, 0).unwrap();
+
+        let utc_0200 = chrono::DateTime::parse_from_rfc3339("2026-04-14T02:00:00Z").unwrap().with_timezone(&chrono::Utc);
+        // 02:00 UTC == 22:00 EDT (UTC-4 in April) -> inside the 22:00-07:00 window
+        assert!(is_in_quiet_hours(utc_0200, Some(start), Some(end), Some("America/New_York")));
+
+        // 15:00 UTC == 11:00 EDT -> outside the window
+        let utc_1500 = chrono::DateTime::parse_from_rfc3339("2026-04-14T15:00:00Z").unwrap().with_timezone(&chrono::Utc);
+        assert!(!is_in_quiet_hours(utc_1500, Some(start), Some(end), Some("America/New_York")));
+    }
+
+    #[test]
+    fn test_quiet_hours_invalid_timezone_falls_back_to_utc() {
+        let start = chrono::NaiveTime::from_hms_opt(13, 0, 0).unwrap();
+        let end = chrono::NaiveTime::from_hms_opt(14, 0, 0).unwrap();
+        let inside_utc = chrono::DateTime::parse_from_rfc3339("2026-04-14T13:30:00Z").unwrap().with_timezone(&chrono::Utc);
+        assert!(is_in_quiet_hours(inside_utc, Some(start), Some(end), Some("Not/A/Real/Zone")));
+    }
+
+    #[test]
+    fn test_update_quiet_hours_request_parses() {
+        let json = serde_json::json!({
+            "quiet_hours_start": "22:00:00",
+            "quiet_hours_end": "07:00:00",
+            "quiet_hours_timezone": "Africa/Accra"
+        });
+        let req: UpdateQuietHoursRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(req.quiet_hours_start.unwrap().to_string(), "22:00:00");
+        assert_eq!(req.quiet_hours_end.unwrap().to_string(), "07:00:00");
+        assert_eq!(req.quiet_hours_timezone.as_deref(), Some("Africa/Accra"));
+    }
+
+    #[test]
+    fn test_update_quiet_hours_request_accepts_null_to_clear() {
+        let json = serde_json::json!({
+            "quiet_hours_start": null,
+            "quiet_hours_end": null,
+            "quiet_hours_timezone": null
+        });
+        let req: UpdateQuietHoursRequest = serde_json::from_value(json).unwrap();
+        assert!(req.quiet_hours_start.is_none());
+        assert!(req.quiet_hours_end.is_none());
+        assert!(req.quiet_hours_timezone.is_none());
+    }
+
+    #[test]
+    fn test_update_badge_count_request_parses() {
+        let req: UpdateBadgeCountRequest = serde_json::from_value(serde_json::json!({
+            "badge_count": 7
+        })).unwrap();
+        assert_eq!(req.badge_count, 7);
+    }
+
+    #[test]
+    fn test_push_notification_payload_grouping_and_badge_serialize() {
+        let payload = PushNotificationPayload {
+            title: "New mail".to_string(),
+            body: Some("subject line".to_string()),
+            data: None,
+            collapse_key: Some("thread:abc123".to_string()),
+            badge: Some(5),
+        };
+        let json = serde_json::to_value(&payload).unwrap();
+        assert_eq!(json["collapse_key"], "thread:abc123");
+        assert_eq!(json["badge"], 5);
+    }
+
+    #[test]
+    fn test_push_notification_payload_omits_optional_fields_when_unset() {
+        let payload = PushNotificationPayload {
+            title: "Hi".to_string(),
+            body: None,
+            data: None,
+            collapse_key: None,
+            badge: None,
+        };
+        let json = serde_json::to_value(&payload).unwrap();
+        assert!(json.get("collapse_key").is_none());
+        assert!(json.get("badge").is_none());
     }
 
     #[test]
@@ -370,6 +645,8 @@ mod tests {
             title: "New Email from Bob".to_string(),
             body: Some("Re: Project Update".to_string()),
             data: Some(serde_json::json!({"type": "new_email", "folder": "INBOX"})),
+            collapse_key: None,
+            badge: None,
         };
 
         let json = serde_json::to_value(&payload).unwrap();
@@ -384,6 +661,8 @@ mod tests {
             title: "Notification".to_string(),
             body: None,
             data: None,
+            collapse_key: None,
+            badge: None,
         };
 
         let json = serde_json::to_value(&payload).unwrap();
