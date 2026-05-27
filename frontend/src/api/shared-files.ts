@@ -37,6 +37,50 @@ export async function uploadSharedFile(formData: FormData): Promise<SharedFile> 
   return response.json();
 }
 
+// Added: TMAIL-138 — XHR-based upload that surfaces progress events for the
+// Composer's large-file auto-upload flow. fetch() cannot report upload
+// progress, so the Composer's progress bar needs XMLHttpRequest.
+export interface UploadProgressInfo {
+  loaded: number;
+  total: number;
+}
+
+export function uploadSharedFileWithProgress(
+  formData: FormData,
+  onProgress?: (info: UploadProgressInfo) => void,
+): Promise<SharedFile> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `${API_BASE_URL}/shared-files/upload`);
+    const token = apiClient.getToken();
+    if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+
+    if (onProgress && xhr.upload) {
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable) {
+          onProgress({ loaded: event.loaded, total: event.total });
+        }
+      };
+    }
+
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          resolve(JSON.parse(xhr.responseText));
+        } catch (e) {
+          reject(new Error(`Invalid response JSON: ${(e as Error).message}`));
+        }
+      } else {
+        reject(new Error(`Upload failed (${xhr.status}): ${xhr.responseText}`));
+      }
+    };
+    xhr.onerror = () => reject(new Error('Network error during upload'));
+    xhr.onabort = () => reject(new Error('Upload aborted'));
+
+    xhr.send(formData);
+  });
+}
+
 /// PURPOSE: List all shared files for the current user
 export async function listSharedFiles(): Promise<SharedFile[]> {
   return apiClient.get<SharedFile[]>('/shared-files');

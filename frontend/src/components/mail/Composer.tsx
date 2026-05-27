@@ -3,12 +3,14 @@ import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Link from '@tiptap/extension-link';
 import Placeholder from '@tiptap/extension-placeholder';
-import { Send, X, Save, Clock, Undo2, Sparkles } from 'lucide-react';
+import { Send, X, Save, Clock, Undo2, Sparkles, Paperclip } from 'lucide-react';
 import { saveDraft } from '../../api/messages';
 import { scheduledApi } from '../../api/scheduled';
 import { useMailStore } from '../../stores/mailStore';
 // Added: Import AiComposePanel for AI-powered draft generation (TMAIL-134)
 import { AiComposePanel } from './AiComposePanel';
+// Added: Large file auto-upload widget (TMAIL-138)
+import { LargeFileAttacher } from './LargeFileAttacher';
 
 export function Composer() {
   const setViewMode = useMailStore((s) => s.setViewMode);
@@ -23,6 +25,8 @@ export function Composer() {
   const [scheduleDate, setScheduleDate] = useState('');
   // Added: AI compose panel toggle state (TMAIL-134)
   const [showAiCompose, setShowAiCompose] = useState(false);
+  // Added: Large file attacher toggle state (TMAIL-138)
+  const [showLargeFile, setShowLargeFile] = useState(false);
   const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const undoTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -146,6 +150,22 @@ export function Composer() {
     setShowAiCompose(false);
   }, [editor]);
 
+  // Added: Handler for when LargeFileAttacher uploads a file successfully —
+  // appends the generated download-link HTML to the editor body in place of
+  // an inline attachment (TMAIL-138).
+  const handleLargeFileLink = useCallback(
+    (html: string) => {
+      if (!editor) return;
+      editor.commands.focus('end');
+      editor.commands.insertContent(html);
+    },
+    [editor],
+  );
+
+  const handleLargeFileError = useCallback((msg: string) => {
+    setError(msg);
+  }, []);
+
   const handleScheduleSend = async () => {
     if (!to.trim() || !scheduleDate) {
       setError('Recipients and schedule date required');
@@ -254,12 +274,32 @@ export function Composer() {
           <Sparkles size={16} />
           AI Compose
         </button>
+        {/* Added: Large file attacher toggle button for TMAIL-138 */}
+        <button
+          className="btn btn--secondary"
+          data-testid="large-file-toggle"
+          onClick={() => setShowLargeFile(!showLargeFile)}
+          disabled={sending}
+        >
+          <Paperclip size={16} />
+          Attach large file
+        </button>
       </div>
 
       {/* Added: AI Compose panel that appears when toggled (TMAIL-134) */}
       {showAiCompose && (
         <div style={{ padding: '12px 16px', borderTop: '1px solid var(--color-border)' }}>
           <AiComposePanel onUseDraft={handleUseDraft} />
+        </div>
+      )}
+
+      {/* Added: Large file attacher panel that appears when toggled (TMAIL-138) */}
+      {showLargeFile && (
+        <div style={{ padding: '12px 16px', borderTop: '1px solid var(--color-border)' }}>
+          <LargeFileAttacher
+            onLinkReady={handleLargeFileLink}
+            onError={handleLargeFileError}
+          />
         </div>
       )}
 
