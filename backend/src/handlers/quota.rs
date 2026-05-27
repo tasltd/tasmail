@@ -46,7 +46,10 @@ pub async fn get_quota(
 }
 
 /// POST /api/quota/sync — Sync quota from IMAP server (triggers GETQUOTAROOT)
-/// Changed: Invalidates and refreshes Redis cache after sync
+/// Changed: TMAIL-156 — migrated to ImapService::for_user (BYOK). The old path
+/// called ImapService::new(state.config.imap.clone()) and forwarded
+/// claims.username + a global master password, which under BYOK hits the empty
+/// global Dovecot host instead of the user's per-mailbox IMAP server.
 pub async fn sync_quota(
     State(state): State<AppState>,
     axum::Extension(claims): axum::Extension<Claims>,
@@ -60,12 +63,14 @@ pub async fn sync_quota(
         .await?
         .ok_or_else(|| AppError::NotFound("Mailbox not found".to_string()))?;
 
-    // Fetch quota from IMAP GETQUOTAROOT
-    let imap_config = &state.config.imap;
-    let imap_service = crate::services::imap_service::ImapService::new(imap_config.clone());
+    // Fetch quota from the user's BYOK IMAP server using their stored creds.
+    let imap_service = crate::services::imap_service::ImapService::for_user(&state, mailbox_id).await?;
+    let (imap_user, imap_pass) = imap_service
+        .user_creds()
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("BYOK IMAP credentials missing")))?;
 
     let (used_bytes, message_count) = imap_service
-        .get_quota(&claims.username, &get_imap_password(&state, mailbox_id).await?)
+        .get_quota(imap_user, imap_pass)
         .await
         .unwrap_or_else(|e| {
             tracing::warn!("Failed to fetch IMAP quota: {}", e);
@@ -87,16 +92,4 @@ pub async fn sync_quota(
     state.cache.set_quota(&claims.sub, &status).await;
 
     Ok(Json(status))
-}
-
-/// Retrieve the IMAP password for a mailbox from the session or stored credentials
-/// NOTE: In production, this would use stored IMAP credentials or a master password
-async fn get_imap_password(state: &AppState, _mailbox_id: uuid::Uuid) -> Result<String, AppError> {
-    // For now, use a configured master password or service account
-    // In a full implementation, passwords would be stored encrypted
-    state.config.imap.master_password.clone().ok_or_else(|| {
-        AppError::Internal(anyhow::anyhow!(
-            "IMAP master password not configured for quota sync"
-        ))
-    })
 }

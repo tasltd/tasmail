@@ -986,4 +986,44 @@ mod tests {
         assert_eq!(json["size"], 2048);
         assert_eq!(json["part_id"], "1.2");
     }
+
+    // Added: TMAIL-156 — BYOK contract regression tests for the two construction paths.
+    // Handlers MUST use ImapService::for_user(state, mailbox_id) and consume credentials
+    // via user_creds(). The legacy ImapService::new(global_config) path returns None from
+    // user_creds() — exercising that here so a future change can't quietly drop the
+    // per-user creds without flipping this test red.
+
+    fn fake_global_config() -> ImapConfig {
+        ImapConfig {
+            host: "127.0.0.1".to_string(),
+            port: 993,
+            tls: true,
+            master_password: None,
+        }
+    }
+
+    #[test]
+    fn test_user_creds_none_for_legacy_new() {
+        // ImapService::new is the legacy single-tenant constructor. It must NOT expose
+        // any user credentials — otherwise handlers that should be on the BYOK path
+        // could accidentally compile against it.
+        let svc = ImapService::new(fake_global_config());
+        assert!(svc.user_creds().is_none(),
+            "ImapService::new() must not surface user credentials; that path is BYOK-via-for_user only");
+    }
+
+    #[tokio::test]
+    async fn test_connect_user_errors_for_legacy_new() {
+        // connect_user() is the BYOK convenience method. On a service built via
+        // ImapService::new() it must return Internal — handlers relying on this
+        // convenience get a loud failure rather than a silent global-config connect.
+        let svc = ImapService::new(fake_global_config());
+        let err = svc.connect_user().await.expect_err(
+            "connect_user() on a legacy ImapService::new() must error out, not silently connect",
+        );
+        match err {
+            AppError::Internal(_) => {}
+            other => panic!("Expected AppError::Internal, got {:?}", other),
+        }
+    }
 }

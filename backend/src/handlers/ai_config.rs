@@ -240,9 +240,14 @@ pub async fn smart_reply(
         .await?
         .ok_or_else(|| AppError::NotFound("User mailbox not found".to_string()))?;
 
-    let imap_service = crate::services::imap_service::ImapService::new(state.config.imap.clone());
+    // Changed: TMAIL-156 — BYOK migration. Old path used the global IMAP host and the
+    // mailbox's bcrypt hash (which was never the IMAP password under BYOK).
+    let imap_service = crate::services::imap_service::ImapService::for_user(&state, mailbox.id).await?;
+    let (imap_user, imap_pass) = imap_service
+        .user_creds()
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("BYOK IMAP credentials missing")))?;
     let message = imap_service
-        .get_message(&mailbox.username, &mailbox.password_hash, &body.folder, body.uid)
+        .get_message(imap_user, imap_pass, &body.folder, body.uid)
         .await?;
 
     // Added: Use text_body or fallback to stripped html_body
@@ -311,12 +316,17 @@ pub async fn thread_summary(
         .await?
         .ok_or_else(|| AppError::NotFound("User mailbox not found".to_string()))?;
 
-    let imap_service = crate::services::imap_service::ImapService::new(state.config.imap.clone());
+    // Changed: TMAIL-156 — BYOK migration. Old path called ImapService::new and forwarded
+    // mailbox.password_hash (the Argon2 hash, not the IMAP password) — guaranteed to fail.
+    let imap_service = crate::services::imap_service::ImapService::for_user(&state, mailbox.id).await?;
+    let (imap_user, imap_pass) = imap_service
+        .user_creds()
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("BYOK IMAP credentials missing")))?;
     let mut email_texts: Vec<String> = Vec::with_capacity(body.uids.len());
 
     for uid in &body.uids {
         let message = imap_service
-            .get_message(&mailbox.username, &mailbox.password_hash, &body.folder, *uid)
+            .get_message(imap_user, imap_pass, &body.folder, *uid)
             .await?;
 
         // Added: Use text_body or fallback to html_body
