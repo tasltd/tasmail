@@ -77,3 +77,30 @@ The square primary mark is built on a **24-unit grid**:
 - Don't replace the `@` with a different separator — it's the BYOK symbol.
 - Don't crop tighter than the 2u clear space.
 - Don't render the mark below 16px square — the inner wordmark loses legibility.
+
+## Iterating with NotebookLM (TMAIL-192)
+
+To get an AI critique on contrast, kerning, and simplifications and then apply
+iterations:
+
+1. **Refresh `nlm` auth** — one-time interactive step that has to run on a
+   desktop session (Google login + 2FA cannot be completed headlessly):
+   ```bash
+   node scripts/notebooklm-login-firefox.mjs   # TMAIL-188 helper
+   ```
+2. **Run the critique pipeline** — creates/reuses the "TASMail Brand"
+   notebook, uploads `BRAND.md` + `build_logo.py` + every SVG variant, runs
+   the critique query, and writes the response to
+   `docs/research/brand-notebooklm-critique.md`:
+   ```bash
+   scripts/tasmail-brand-critique.sh
+   ```
+3. **Apply chosen iterations** by editing `branding/src/build_logo.py` (every
+   coordinate is intentional and lives there — never hand-edit the rendered
+   SVGs).
+4. **Regenerate everything**:
+   ```bash
+   python3 branding/src/build_logo.py     # rebuilds build/svg/* + build/wordmark/*
+   python3 branding/src/build_assets.py   # fans out to PNG/ICO/social/app icons
+   ```
+5. **Commit SVG sources + rasters together** so the build outputs stay in sync.
