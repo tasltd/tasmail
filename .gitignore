@@ -11,6 +11,11 @@ build/
 .env.local
 .env.*.local
 
+# TMAIL-159: operator-filled payment-provider credential files for
+# migrate-payment-providers.sh — must never be committed
+deploy/scripts/payment-providers.local.json
+deploy/scripts/payment-providers.*.local.json
+
 # IDE
 .vscode/
 .idea/

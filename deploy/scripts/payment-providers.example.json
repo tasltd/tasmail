@@ -1,0 +1,57 @@
+{
+  "_comment": "Template for migrate-payment-providers.sh. Copy to payment-providers.local.json (gitignored) and fill in PLAINTEXT values extracted from PayPro Admin UI. NEVER COMMIT THE FILLED-IN COPY.",
+  "providers": [
+    {
+      "provider": "PAYSTACK",
+      "tenant_id": null,
+      "name": "Production Paystack",
+      "description": "Migrated from PayPro production payment_provider_config",
+      "secret_key": "sk_live_REPLACE_ME",
+      "public_key": "pk_live_REPLACE_ME",
+      "webhook_secret": "REPLACE_ME_IF_WEBHOOKS_SIGNED",
+      "base_url": "https://api.paystack.co",
+      "callback_url": "https://mail.techatscale.io/api/billing/webhook/paystack",
+      "currency": "GHS",
+      "environment": "production",
+      "split_code": "SPL_REPLACE_ME"
+    },
+    {
+      "provider": "MASTERCARD",
+      "tenant_id": null,
+      "name": "Production Mastercard MPGS",
+      "merchant_id": "REPLACE_ME",
+      "api_password": "REPLACE_ME",
+      "base_url": "https://eu-gateway.mastercard.com/api/rest/version/72",
+      "callback_url": "https://mail.techatscale.io/api/billing/webhook/mastercard",
+      "currency": "GHS",
+      "environment": "production"
+    },
+    {
+      "provider": "CYBERSOURCE",
+      "tenant_id": null,
+      "name": "Production Cybersource",
+      "merchant_id": "REPLACE_ME",
+      "key_id": "REPLACE_ME",
+      "shared_secret_key": "REPLACE_ME_BASE64",
+      "key_file_path": "/etc/tasmail/cybersource.p12",
+      "base_url": "https://apitest.cybersource.com",
+      "currency": "GHS",
+      "environment": "production"
+    },
+    {
+      "provider": "BANK_TRANSFER",
+      "tenant_id": null,
+      "name": "Manual Bank Transfer",
+      "currency": "GHS",
+      "environment": "production",
+      "bank_details": {
+        "account_name": "Tech at Scale Ltd",
+        "account_number": "REPLACE_ME",
+        "bank": "REPLACE_ME",
+        "branch": "REPLACE_ME",
+        "swift": "REPLACE_ME",
+        "reference_prefix": "TASMAIL-"
+      }
+    }
+  ]
+}

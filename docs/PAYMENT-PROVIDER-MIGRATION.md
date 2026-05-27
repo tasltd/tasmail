@@ -152,6 +152,34 @@ export TASMAIL_BASE="https://mail.techatscale.io"   # or http://127.0.0.1:3300 o
 export TASMAIL_TOKEN="<admin JWT from POST /api/auth/login>"
 ```
 
+> **Faster alternative — use the operator helper script.** Instead of hand-crafting
+> four curl payloads, copy
+> [`deploy/scripts/payment-providers.example.json`](../deploy/scripts/payment-providers.example.json)
+> to `deploy/scripts/payment-providers.local.json` (gitignored), fill in plaintext
+> values, then run:
+>
+> ```bash
+> # Dry-run first — validates required fields and prints redacted payloads
+> ./deploy/scripts/migrate-payment-providers.sh \
+>   --file deploy/scripts/payment-providers.local.json --dry-run
+>
+> # Real run — POSTs all four, prints audit-log rows, runs verification
+> ./deploy/scripts/migrate-payment-providers.sh \
+>   --file deploy/scripts/payment-providers.local.json \
+>   --base-url "$TASMAIL_BASE" --token "$TASMAIL_TOKEN"
+>
+> # Verify only (no file needed) — useful after a manual run
+> ./deploy/scripts/migrate-payment-providers.sh \
+>   --base-url "$TASMAIL_BASE" --token "$TASMAIL_TOKEN" --verify-only
+> ```
+>
+> The script enforces the same required-field rules from §1, redacts sensitive
+> values in dry-run output, and prints a ready-to-paste audit-log row per
+> provider. Delete the filled-in JSON file the moment migration is done.
+
+The raw curl templates below remain available for operators who prefer to issue
+each request manually.
+
 ### Paystack
 
 ```bash
@@ -298,4 +326,5 @@ Each row migrated should be logged here once Path A or Path B completes.
 - Admin endpoint (POST / GET / DELETE): [`backend/src/handlers/admin/payment_providers.rs`](../backend/src/handlers/admin/payment_providers.rs)
 - Encryption service (AES-256-GCM, key derived from `JWT_SECRET`): [`backend/src/services/encryption.rs`](../backend/src/services/encryption.rs)
 - Billing handler that consumes resolved configs: [`backend/src/handlers/billing.rs`](../backend/src/handlers/billing.rs)
+- Path A operator helper: [`deploy/scripts/migrate-payment-providers.sh`](../deploy/scripts/migrate-payment-providers.sh) (+ [`payment-providers.example.json`](../deploy/scripts/payment-providers.example.json))
 - PayPro source-of-truth domain: `cloud.paypro.oms.billing.PaymentProviderConfig` in the `paypro-oms` repo
