@@ -1,0 +1,25 @@
+# Added: Logrotate configuration for TASMail nginx vhost (TMAIL-40)
+# PURPOSE: Rotate nginx access/error logs for the tasmail vhost daily so they do
+#          not grow without bound. Backend logs go to systemd-journald and are
+#          rotated automatically by journald (see /etc/systemd/journald.conf).
+#
+# Install: copy this file to /etc/logrotate.d/tasmail (deploy.sh handles this).
+# Test:    sudo logrotate -d /etc/logrotate.d/tasmail
+
+/var/log/nginx/tasmail_access.log
+/var/log/nginx/tasmail_error.log {
+    daily
+    missingok
+    rotate 30
+    compress
+    delaycompress
+    notifempty
+    create 0640 www-data adm
+    sharedscripts
+    postrotate
+        # Added: USR1 makes nginx reopen log files (atomic, no dropped requests)
+        if [ -f /var/run/nginx.pid ]; then
+            kill -USR1 `cat /var/run/nginx.pid`
+        fi
+    endscript
+}

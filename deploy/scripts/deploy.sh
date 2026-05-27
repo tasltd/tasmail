@@ -17,6 +17,9 @@ FRONTEND_DEST="/var/www/tasmail/frontend/dist"
 NGINX_CONF_SRC="${DEPLOY_DIR}/nginx/tasmail.conf"
 NGINX_CONF_DEST="/etc/nginx/sites-available/tasmail.conf"
 NGINX_ENABLED="/etc/nginx/sites-enabled/tasmail.conf"
+# Added: Logrotate config for nginx tasmail vhost logs (TMAIL-40)
+LOGROTATE_CONF_SRC="${DEPLOY_DIR}/logrotate/tasmail"
+LOGROTATE_CONF_DEST="/etc/logrotate.d/tasmail"
 
 HEALTH_URL="http://127.0.0.1:3000/api/health"
 HEALTH_TIMEOUT=30
@@ -116,6 +119,22 @@ deploy_nginx() {
     fi
 }
 
+# Added: Install logrotate config for nginx tasmail logs (TMAIL-40)
+deploy_logrotate() {
+    log_info "Installing logrotate configuration..."
+    if [[ ! -f "$LOGROTATE_CONF_SRC" ]]; then
+        log_warn "Logrotate config not found at ${LOGROTATE_CONF_SRC} — skipping"
+        return 0
+    fi
+    install -m 0644 -o root -g root "$LOGROTATE_CONF_SRC" "$LOGROTATE_CONF_DEST"
+    # Added: Dry-run logrotate to catch syntax errors early
+    if logrotate -d "$LOGROTATE_CONF_DEST" > /dev/null 2>&1; then
+        log_info "Logrotate configuration installed at ${LOGROTATE_CONF_DEST}"
+    else
+        log_warn "Logrotate dry-run reported issues — inspect with: logrotate -d ${LOGROTATE_CONF_DEST}"
+    fi
+}
+
 # Added: Restart the backend systemd service
 restart_backend() {
     log_info "Restarting tasmail-backend service..."
@@ -149,6 +168,7 @@ if [[ "$FRONTEND_ONLY" == "true" ]]; then
     build_frontend
     deploy_frontend
     deploy_nginx
+    deploy_logrotate
 elif [[ "$BACKEND_ONLY" == "true" ]]; then
     build_backend
     deploy_backend
@@ -161,6 +181,7 @@ else
     deploy_backend
     deploy_frontend
     deploy_nginx
+    deploy_logrotate
     restart_backend
     health_check
 fi
