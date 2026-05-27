@@ -143,6 +143,54 @@ pub fn generate_ics_uid(domain: &str) -> String {
     format!("{}@{}", Uuid::new_v4(), domain)
 }
 
+/// PURPOSE: Build a METHOD:REPLY iCalendar payload that records a single
+/// attendee's PARTSTAT for an invitation. Used by the inbound iMIP accept
+/// flow (TMAIL-127) to confirm acceptance back to the organizer.
+/// CONSTRAINTS: `partstat` must be one of "ACCEPTED", "DECLINED",
+/// "TENTATIVE" per RFC 5546 §3.2.3. `uid` must echo the original VEVENT's
+/// UID so the organizer's client can correlate the reply.
+pub fn generate_imip_reply(
+    uid: &str,
+    summary: &str,
+    start_time: &DateTime<Utc>,
+    end_time: &DateTime<Utc>,
+    all_day: bool,
+    organizer_email: &str,
+    attendee_email: &str,
+    attendee_cn: Option<&str>,
+    partstat: &str,
+) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    lines.push("BEGIN:VCALENDAR".to_string());
+    lines.push("VERSION:2.0".to_string());
+    lines.push("PRODID:-//TASMail//Calendar//EN".to_string());
+    lines.push("CALSCALE:GREGORIAN".to_string());
+    lines.push("METHOD:REPLY".to_string());
+
+    lines.push("BEGIN:VEVENT".to_string());
+    lines.push(fold_line(&format!("UID:{}", uid)));
+    lines.push(format!("DTSTAMP:{}", format_ics_datetime(&Utc::now())));
+    if all_day {
+        lines.push(fold_line(&format!("DTSTART;VALUE=DATE:{}", format_ics_date(start_time))));
+        lines.push(fold_line(&format!("DTEND;VALUE=DATE:{}", format_ics_date(end_time))));
+    } else {
+        lines.push(fold_line(&format!("DTSTART:{}", format_ics_datetime(start_time))));
+        lines.push(fold_line(&format!("DTEND:{}", format_ics_datetime(end_time))));
+    }
+    lines.push(fold_line(&format!("SUMMARY:{}", summary)));
+    lines.push(fold_line(&format!("ORGANIZER:mailto:{}", organizer_email)));
+
+    let cn = attendee_cn.unwrap_or(attendee_email);
+    lines.push(fold_line(&format!(
+        "ATTENDEE;CN={};PARTSTAT={}:mailto:{}",
+        cn, partstat, attendee_email
+    )));
+
+    lines.push("END:VEVENT".to_string());
+    lines.push("END:VCALENDAR".to_string());
+    lines.join("\r\n") + "\r\n"
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -343,6 +391,52 @@ mod tests {
     fn test_fold_line_short() {
         let line = "SHORT LINE";
         assert_eq!(fold_line(line), "SHORT LINE");
+    }
+
+    #[test]
+    fn test_generate_imip_reply_contains_method_reply_and_partstat() {
+        let start = Utc.with_ymd_and_hms(2026, 4, 20, 10, 0, 0).unwrap();
+        let end = Utc.with_ymd_and_hms(2026, 4, 20, 11, 0, 0).unwrap();
+        let reply = generate_imip_reply(
+            "abc-123@example.com",
+            "Project sync",
+            &start,
+            &end,
+            false,
+            "alice@example.com",
+            "bob@example.com",
+            Some("Bob"),
+            "ACCEPTED",
+        );
+        assert!(reply.contains("METHOD:REPLY"));
+        assert!(reply.contains("UID:abc-123@example.com"));
+        assert!(reply.contains("ORGANIZER:mailto:alice@example.com"));
+        assert!(reply.contains("ATTENDEE;CN=Bob;PARTSTAT=ACCEPTED:mailto:bob@example.com"));
+        assert!(reply.contains("DTSTART:20260420T100000Z"));
+        assert!(reply.contains("DTEND:20260420T110000Z"));
+        assert!(reply.contains("BEGIN:VEVENT"));
+        assert!(reply.contains("END:VEVENT"));
+    }
+
+    #[test]
+    fn test_generate_imip_reply_all_day_uses_date_value() {
+        let start = Utc.with_ymd_and_hms(2026, 4, 20, 0, 0, 0).unwrap();
+        let end = Utc.with_ymd_and_hms(2026, 4, 21, 0, 0, 0).unwrap();
+        let reply = generate_imip_reply(
+            "all-day@example.com",
+            "Offsite",
+            &start,
+            &end,
+            true,
+            "alice@example.com",
+            "bob@example.com",
+            None,
+            "ACCEPTED",
+        );
+        assert!(reply.contains("DTSTART;VALUE=DATE:20260420"));
+        assert!(reply.contains("DTEND;VALUE=DATE:20260421"));
+        // CN defaults to attendee email when display name is missing.
+        assert!(reply.contains("ATTENDEE;CN=bob@example.com;PARTSTAT=ACCEPTED:mailto:bob@example.com"));
     }
 
     #[test]

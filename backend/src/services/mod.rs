@@ -20,6 +20,8 @@ pub mod csv_processor;
 pub mod chat_notifier;
 // Added: ICS calendar file generator for meeting scheduling (TMAIL-127)
 pub mod ics_generator;
+// Added (TMAIL-127): Inbound iMIP parser for accepting VEVENT invitations.
+pub mod imip_parser;
 // Added: AI API client abstraction for BYOK AI integration (TMAIL-105)
 pub mod ai_client;
 // Added: Embedding generation and similarity search service for TMAIL-106

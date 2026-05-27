@@ -122,6 +122,76 @@ impl SmtpService {
         Ok(())
     }
 
+    /// PURPOSE: Send a METHOD:REPLY iMIP message back to a meeting organizer.
+    /// Builds a multipart/alternative payload carrying a text/plain summary and
+    /// the canonical text/calendar; method=REPLY part, which is what RFC 6047
+    /// requires for an interoperable RSVP back to Outlook / Apple / Google.
+    /// CONSTRAINTS: `ics_payload` must already be a complete iCalendar string
+    /// with `METHOD:REPLY` (built by `services::ics_generator::generate_imip_reply`).
+    /// EXTERNAL: Connects to the configured SMTP host with the user's
+    /// credentials, same auth path as `send()`.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn send_imip_reply(
+        &self,
+        from_address: &str,
+        from_password: &str,
+        to_address: &str,
+        subject: &str,
+        text_body: &str,
+        ics_payload: &str,
+    ) -> Result<(), AppError> {
+        let from: LettreMailbox = from_address
+            .parse()
+            .map_err(|e| AppError::BadRequest(format!("Invalid from address: {}", e)))?;
+        let to: LettreMailbox = to_address
+            .parse()
+            .map_err(|e| AppError::BadRequest(format!("Invalid to address '{}': {}", to_address, e)))?;
+
+        // NOTE: text/calendar parts in an iMIP REPLY carry the method as a parameter
+        // on Content-Type. lettre needs the parameter spelled out via ContentType::parse.
+        let calendar_ct =
+            ContentType::parse("text/calendar; method=REPLY; charset=UTF-8")
+                .map_err(|e| AppError::Smtp(format!("Invalid calendar content type: {}", e)))?;
+
+        let email = Message::builder()
+            .from(from)
+            .to(to)
+            .subject(subject)
+            .multipart(
+                MultiPart::alternative()
+                    .singlepart(
+                        SinglePart::builder()
+                            .header(ContentType::TEXT_PLAIN)
+                            .body(text_body.to_string()),
+                    )
+                    .singlepart(
+                        SinglePart::builder()
+                            .header(calendar_ct)
+                            .body(ics_payload.to_string()),
+                    ),
+            )
+            .map_err(|e| AppError::Smtp(format!("Failed to build iMIP reply: {}", e)))?;
+
+        let creds = Credentials::new(from_address.to_string(), from_password.to_string());
+        let transport = if self.config.tls {
+            AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&self.config.host)
+                .map_err(|e| AppError::Smtp(format!("SMTP transport error: {}", e)))?
+                .port(self.config.port)
+                .credentials(creds)
+                .build()
+        } else {
+            AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(&self.config.host)
+                .port(self.config.port)
+                .credentials(creds)
+                .build()
+        };
+        transport
+            .send(email)
+            .await
+            .map_err(|e| AppError::Smtp(format!("Failed to send iMIP reply: {}", e)))?;
+        Ok(())
+    }
+
     /// Added: Send a system-originated notification (billing receipt, OTP, password reset, etc.)
     /// Uses the configured `notification_from` / `notification_username` / `notification_password`
     /// fields from SmtpConfig — defaults to noreply@techatscale.io.

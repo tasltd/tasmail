@@ -223,6 +223,61 @@ impl CalendarEvent {
         .await
     }
 
+    /// PURPOSE: Insert a calendar event keyed by its ICS UID, or update the
+    /// existing row if one already exists for this organizer. Used by the
+    /// iMIP accept flow (TMAIL-127) so that subsequent REQUEST / REPLY /
+    /// CANCEL invitations carrying the same UID flow into the same row
+    /// rather than creating duplicates per RFC 5545 §3.8.4.7.
+    /// CONSTRAINTS: Relies on the composite UNIQUE (organizer_id, ics_uid)
+    /// introduced by migration 072.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn upsert_by_ics_uid(
+        pool: &PgPool,
+        organizer_id: Uuid,
+        ics_uid: &str,
+        title: &str,
+        description: Option<&str>,
+        location: Option<&str>,
+        start_time: DateTime<Utc>,
+        end_time: DateTime<Utc>,
+        all_day: bool,
+        status: &str,
+        linked_message_uid: Option<i32>,
+        linked_folder: Option<&str>,
+    ) -> Result<CalendarEvent, sqlx::Error> {
+        sqlx::query_as::<_, CalendarEvent>(
+            "INSERT INTO calendar_events
+                (organizer_id, title, description, location, start_time, end_time,
+                 all_day, status, linked_message_uid, linked_folder, ics_uid)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+             ON CONFLICT (organizer_id, ics_uid) DO UPDATE SET
+                title = EXCLUDED.title,
+                description = EXCLUDED.description,
+                location = EXCLUDED.location,
+                start_time = EXCLUDED.start_time,
+                end_time = EXCLUDED.end_time,
+                all_day = EXCLUDED.all_day,
+                status = EXCLUDED.status,
+                linked_message_uid = COALESCE(EXCLUDED.linked_message_uid, calendar_events.linked_message_uid),
+                linked_folder = COALESCE(EXCLUDED.linked_folder, calendar_events.linked_folder),
+                updated_at = now()
+             RETURNING *"
+        )
+        .bind(organizer_id)
+        .bind(title)
+        .bind(description)
+        .bind(location)
+        .bind(start_time)
+        .bind(end_time)
+        .bind(all_day)
+        .bind(status)
+        .bind(linked_message_uid)
+        .bind(linked_folder)
+        .bind(ics_uid)
+        .fetch_one(pool)
+        .await
+    }
+
     /// PURPOSE: Cancel an event by setting status to 'cancelled'
     pub async fn cancel(
         pool: &PgPool,

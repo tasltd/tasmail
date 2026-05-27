@@ -516,6 +516,12 @@ pub fn create_router(state: AppState) -> Router {
             "/api/calendar/events/{id}/ics",
             get(handlers::calendar::download_ics),
         )
+        // Added (TMAIL-127): Inbound iMIP accept — parse VEVENT from a
+        // message, upsert into calendar_events, send METHOD:REPLY to organizer.
+        .route(
+            "/api/calendar/imip/accept",
+            post(handlers::calendar::accept_imip),
+        )
         // Added: LDAP/AD configuration management routes for TMAIL-100
         .route(
             "/api/admin/ldap",
