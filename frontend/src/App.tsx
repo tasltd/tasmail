@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from './hooks/useAuth';
+import { useBranding } from './hooks/useBranding';
 import { useUiStore } from './stores/uiStore';
 import { AppShell } from './components/layout/AppShell';
 import { LoginPage } from './components/auth/LoginPage';
@@ -79,6 +80,11 @@ function AppContent() {
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
   }, [theme]);
+
+  // Added: TMAIL-111 — fetch /api/branding and apply CSS vars, title, favicon,
+  // and custom_css to the running document. Public endpoint, runs for both
+  // signed-in and signed-out routes (landing/login also pick up the brand).
+  useBranding();
 
   return (
     <BrowserRouter>
