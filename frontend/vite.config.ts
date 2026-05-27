@@ -2,10 +2,60 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
+// Added (TMAIL-259): bundle visualizer — writes dist/stats.html on every build
+// so we have a permanent record of chunk shape after each Vite change.
+import { visualizer } from 'rollup-plugin-visualizer'
 
 export default defineConfig({
+  // Added (TMAIL-259): manual vendor chunking. Splits the three largest
+  // third-party libraries out of the main bundle so each one is a separate
+  // cacheable file. Combined with React.lazy() on the Settings managers
+  // (AppShell.tsx) and the auxiliary routes (App.tsx), this brings the
+  // initial entry under the 300 kB gzip threshold from TMAIL-241.
+  build: {
+    rolldownOptions: {
+      output: {
+        // Vite 8 ships Rolldown, which takes manualChunks as a function rather
+        // than the Rollup object map. Returning a chunk name pulls the matched
+        // module into that named chunk; returning undefined lets the bundler
+        // decide. Vendor names match dist/assets/<name>-<hash>.js so the
+        // stats.html report stays human-readable.
+        manualChunks: (id: string) => {
+          if (id.includes('node_modules/')) {
+            if (
+              id.includes('/react/') ||
+              id.includes('/react-dom/') ||
+              id.includes('/react-router/') ||
+              id.includes('/react-router-dom/') ||
+              id.includes('/scheduler/')
+            ) {
+              return 'react-vendor'
+            }
+            if (id.includes('/@tanstack/')) {
+              return 'query-vendor'
+            }
+            if (id.includes('/@tiptap/') || id.includes('/prosemirror') || id.includes('/dompurify')) {
+              return 'editor-vendor'
+            }
+            if (id.includes('/@fullcalendar/')) {
+              return 'calendar-vendor'
+            }
+          }
+          return undefined
+        },
+      },
+    },
+  },
   plugins: [
     react(),
+    // Added (TMAIL-259): emit dist/stats.html with gzip + brotli sizes so the
+    // bundle-size assessment can be re-run by re-reading the artifact.
+    visualizer({
+      filename: 'dist/stats.html',
+      template: 'treemap',
+      gzipSize: true,
+      brotliSize: true,
+    }),
     VitePWA({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.svg'],

@@ -1,6 +1,6 @@
 // Added: Calendar/meeting manager component for TMAIL-127
 // Changed: Added CalendarView toggle for visual calendar grid (TMAIL-118)
-import React from 'react';
+import React, { lazy, Suspense } from 'react';
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Trash2, ArrowLeft, Calendar, Download, Check, X, HelpCircle, Users, MapPin, LayoutGrid, Link2, Copy } from 'lucide-react';
@@ -21,8 +21,10 @@ import { useMailStore } from '../../stores/mailStore';
 import { LoadingSkeleton } from '../shared/LoadingSkeleton';
 // Added (TMAIL-269): builder for the public /book/:token share URL.
 import { buildBookingUrl } from '../../api/public-calendar';
-// Added: Import CalendarView for visual calendar grid toggle (TMAIL-118)
-import { CalendarView } from './CalendarView';
+// Changed (TMAIL-259): CalendarView pulls in the full @fullcalendar/* family
+// (~600 kB raw). Defer it until the user toggles into Grid mode so the
+// list-mode entry into the Calendar manager is fast for the common case.
+const CalendarView = lazy(() => import('./CalendarView').then((m) => ({ default: m.CalendarView })));
 
 // Added: Status badge color mapping for event status display
 const STATUS_COLORS: Record<string, string> = {
@@ -449,14 +451,19 @@ export function CalendarManager() {
         </button>
       </div>
 
-      {/* Added: Visual calendar grid view (TMAIL-118) */}
+      {/* Added: Visual calendar grid view (TMAIL-118)
+          Changed (TMAIL-259): wrapped in Suspense — the calendar-vendor chunk
+          (~600 kB raw, ~180 kB gzip for @fullcalendar/*) only loads when the
+          user toggles into Grid mode, not on every Calendar Manager visit. */}
       {showCalendarView && (
         <div style={{ marginTop: '12px' }}>
-          <CalendarView
-            onSelectEvent={(eventId) => setSelectedEventId(eventId)}
-            onCreateEvent={() => setIsCreating(true)}
-            onRescheduleEvent={(id, start, end) => rescheduleMut.mutate({ id, start, end })}
-          />
+          <Suspense fallback={<LoadingSkeleton />}>
+            <CalendarView
+              onSelectEvent={(eventId) => setSelectedEventId(eventId)}
+              onCreateEvent={() => setIsCreating(true)}
+              onRescheduleEvent={(id, start, end) => rescheduleMut.mutate({ id, start, end })}
+            />
+          </Suspense>
         </div>
       )}
 

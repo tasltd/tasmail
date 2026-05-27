@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { lazy, Suspense, useEffect } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from './hooks/useAuth';
@@ -6,27 +6,35 @@ import { useBranding } from './hooks/useBranding';
 import { useUiStore } from './stores/uiStore';
 import { AppShell } from './components/layout/AppShell';
 import { LoginPage } from './components/auth/LoginPage';
-import { SignupPage } from './components/auth/SignupPage';
-import { OnboardingWizard } from './components/onboarding/OnboardingWizard';
 import { LandingPage } from './components/landing/LandingPage';
-import { PricingPage } from './components/landing/PricingPage';
-import { FeatureFlagsManager } from './components/admin/FeatureFlagsManager';
-import { QuoteRequestsManager } from './components/admin/QuoteRequestsManager';
-// Added: TMAIL-197 — admin shell + role guard + placeholders for the
-// six follow-up admin pages (TMAIL-198..203).
-import { AdminShell } from './components/admin/AdminShell';
-import { RequireAdmin } from './components/admin/RequireAdmin';
-import { AuditLogManager } from './components/admin/AuditLogManager';
-import { CacheManager } from './components/admin/CacheManager';
-import { DomainsManager } from './components/admin/DomainsManager';
-import { PaymentProvidersManager } from './components/admin/PaymentProvidersManager';
-import { UsersManager } from './components/admin/UsersManager';
-import { WarmupManager } from './components/admin/WarmupManager';
-import { UsageBillingPage } from './components/billing/UsageBillingPage';
-// Added (TMAIL-269): public booking page for external participants.
-import { BookingPage } from './components/booking/BookingPage';
 import { ErrorBoundary } from './components/shared/ErrorBoundary';
 import './App.css';
+
+// Changed (TMAIL-259): auxiliary routes (signup, onboarding, pricing, admin,
+// billing, public booking) are now lazy-loaded. Landing + login stay eager —
+// they are the public entry points and adding a Suspense round-trip there
+// would hurt first-paint for the marketing surface. Admin shell + its eight
+// managers all share one chunk after manualChunks vendor splitting.
+const SignupPage = lazy(() => import('./components/auth/SignupPage').then((m) => ({ default: m.SignupPage })));
+const OnboardingWizard = lazy(() => import('./components/onboarding/OnboardingWizard').then((m) => ({ default: m.OnboardingWizard })));
+const PricingPage = lazy(() => import('./components/landing/PricingPage').then((m) => ({ default: m.PricingPage })));
+const FeatureFlagsManager = lazy(() => import('./components/admin/FeatureFlagsManager').then((m) => ({ default: m.FeatureFlagsManager })));
+const QuoteRequestsManager = lazy(() => import('./components/admin/QuoteRequestsManager').then((m) => ({ default: m.QuoteRequestsManager })));
+const AdminShell = lazy(() => import('./components/admin/AdminShell').then((m) => ({ default: m.AdminShell })));
+const RequireAdmin = lazy(() => import('./components/admin/RequireAdmin').then((m) => ({ default: m.RequireAdmin })));
+const AuditLogManager = lazy(() => import('./components/admin/AuditLogManager').then((m) => ({ default: m.AuditLogManager })));
+const CacheManager = lazy(() => import('./components/admin/CacheManager').then((m) => ({ default: m.CacheManager })));
+const DomainsManager = lazy(() => import('./components/admin/DomainsManager').then((m) => ({ default: m.DomainsManager })));
+const PaymentProvidersManager = lazy(() => import('./components/admin/PaymentProvidersManager').then((m) => ({ default: m.PaymentProvidersManager })));
+const UsersManager = lazy(() => import('./components/admin/UsersManager').then((m) => ({ default: m.UsersManager })));
+const WarmupManager = lazy(() => import('./components/admin/WarmupManager').then((m) => ({ default: m.WarmupManager })));
+const UsageBillingPage = lazy(() => import('./components/billing/UsageBillingPage').then((m) => ({ default: m.UsageBillingPage })));
+const BookingPage = lazy(() => import('./components/booking/BookingPage').then((m) => ({ default: m.BookingPage })));
+
+// Added (TMAIL-259): shared Suspense fallback for the route-level lazy splits.
+function RouteLoading() {
+  return <div className="app-loading">Loading…</div>;
+}
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -90,6 +98,7 @@ function AppContent() {
 
   return (
     <BrowserRouter>
+      <Suspense fallback={<RouteLoading />}>
       <Routes>
         {/* Public landing page at the root */}
         <Route path="/" element={<LandingPage />} />
@@ -159,6 +168,7 @@ function AppContent() {
         {/* Catch-all: send unknown URLs back to the landing page */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+      </Suspense>
     </BrowserRouter>
   );
 }

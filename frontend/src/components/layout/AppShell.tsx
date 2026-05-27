@@ -1,77 +1,8 @@
+import { lazy, Suspense } from 'react';
 import { Sidebar } from './Sidebar';
 import { TopBar } from './TopBar';
 import { MessageList } from '../mail/MessageList';
 import { MessageView } from '../mail/MessageView';
-import { Composer } from '../mail/Composer';
-import { SearchResults } from '../mail/SearchResults';
-import { SignatureManager } from '../settings/SignatureManager';
-import { ContactManager } from '../settings/ContactManager';
-import { TwoFactorManager } from '../settings/TwoFactorManager';
-import { VacationResponder } from '../settings/VacationResponder';
-import { GroupManager } from '../settings/GroupManager';
-import { MigrationManager } from '../settings/MigrationManager';
-import { LowBandwidthSettings } from '../settings/LowBandwidthSettings';
-import { FilterManager } from '../settings/FilterManager';
-// Added: Shared mailbox management component (TMAIL-96)
-import { SharedMailboxManager } from '../settings/SharedMailboxManager';
-// Added: Email queue management component (TMAIL-58)
-import { QueueManager } from '../settings/QueueManager';
-// Added: Task/to-do management component (TMAIL-126)
-import { TaskManager } from '../settings/TaskManager';
-// Added: Webhook management component (TMAIL-131)
-import { WebhookManager } from '../settings/WebhookManager';
-// Added: Branding management component (TMAIL-111)
-import { BrandingManager } from '../settings/BrandingManager';
-// Added: Retention policy and legal hold management component (TMAIL-109)
-import { RetentionManager } from '../settings/RetentionManager';
-// Added: Custom hostname management component (TMAIL-112)
-import { HostnameManager } from '../settings/HostnameManager';
-// Added: Shared file management component for large file sharing (TMAIL-138)
-import { SharedFileManager } from '../settings/SharedFileManager';
-// Added: Bulk user import management component (TMAIL-136)
-import { BulkImportManager } from '../settings/BulkImportManager';
-// Added: Chat integration management component (TMAIL-129)
-import { ChatIntegrationManager } from '../settings/ChatIntegrationManager';
-// Added: Calendar/meeting scheduling management component (TMAIL-127)
-import { CalendarManager } from '../settings/CalendarManager';
-// Added: LDAP/AD directory sync management component (TMAIL-100)
-import { LdapManager } from '../settings/LdapManager';
-// Added: AI configuration management component for BYOK AI integration (TMAIL-105)
-import { AiConfigManager } from '../settings/AiConfigManager';
-// Added: SAML 2.0 SSO configuration management component (TMAIL-101)
-import { SamlManager } from '../settings/SamlManager';
-// Added: OIDC identity provider management component (TMAIL-99)
-import { OidcManager } from '../settings/OidcManager';
-// Added: eDiscovery search management component (TMAIL-137)
-import { EdiscoveryManager } from '../settings/EdiscoveryManager';
-// Added: DLP rule management component for Data Loss Prevention (TMAIL-108)
-import { DlpManager } from '../settings/DlpManager';
-// Added: DANE/TLSA policy and verification management component (TMAIL-125)
-import { DaneManager } from '../settings/DaneManager';
-// Added: BYO-SMTP configuration management component (TMAIL-48)
-import { SmtpConfigManager } from '../settings/SmtpConfigManager';
-// Added: Plugin management component for extensible plugin architecture (TMAIL-132)
-import { PluginManager } from '../settings/PluginManager';
-// Added: Contacts App management component with groups, import/export, merge (TMAIL-119)
-import { ContactsApp } from '../settings/ContactsApp';
-// Added: POP3 configuration management component for Dovecot POP3 access (TMAIL-133)
-import { Pop3ConfigManager } from '../settings/Pop3ConfigManager';
-// Added: Email archive management component for Piler integration (TMAIL-107)
-import { ArchiveManager } from '../settings/ArchiveManager';
-// Added: ActiveSync device management component for TMAIL-130
-import { ActiveSyncManager } from '../settings/ActiveSyncManager';
-// Added: Ollama local LLM management component (TMAIL-102)
-import { OllamaManager } from '../settings/OllamaManager';
-// Added: CalDAV/CardDAV configuration management component (TMAIL-117)
-import { DavConfigManager } from '../settings/DavConfigManager';
-// Added: Rspamd spam filter management component (TMAIL-15)
-import { SpamFilterManager } from '../settings/SpamFilterManager';
-// Added: Billing management component for Paystack/MoMo payments (TMAIL-46)
-import { BillingManager } from '../settings/BillingManager';
-// Added: Email deliverability testing component for TMAIL-39
-import { DeliverabilityReport } from '../settings/DeliverabilityReport';
-// Added: TMAIL-204 — push device management
-import { PushDevicesManager } from '../settings/PushDevicesManager';
 import { useMailStore } from '../../stores/mailStore';
 import { useUiStore } from '../../stores/uiStore';
 // Added: Keyboard shortcuts hook and help dialog for TMAIL-121
@@ -82,8 +13,61 @@ import { useResponsive } from '../../hooks/useResponsive';
 // Added (TMAIL-32): two-way sync between search state and the URL query string.
 import { useSearchUrlSync } from '../../hooks/useSearchUrlSync';
 
+// Changed (TMAIL-259): Every Settings manager + Composer + SearchResults moved
+// to React.lazy() so the initial mailbox bundle ships only the list/reader
+// flow. Each manager becomes its own on-demand chunk, keyed off viewMode.
+// The Composer also includes the @tiptap/* vendor chunk; deferring it cuts
+// ~150 kB raw from the entry. See docs/assessments/frontend-bundle-2026-05.md.
+const Composer = lazy(() => import('../mail/Composer').then((m) => ({ default: m.Composer })));
+const SearchResults = lazy(() => import('../mail/SearchResults').then((m) => ({ default: m.SearchResults })));
+const SignatureManager = lazy(() => import('../settings/SignatureManager').then((m) => ({ default: m.SignatureManager })));
+const ContactManager = lazy(() => import('../settings/ContactManager').then((m) => ({ default: m.ContactManager })));
+const TwoFactorManager = lazy(() => import('../settings/TwoFactorManager').then((m) => ({ default: m.TwoFactorManager })));
+const VacationResponder = lazy(() => import('../settings/VacationResponder').then((m) => ({ default: m.VacationResponder })));
+const GroupManager = lazy(() => import('../settings/GroupManager').then((m) => ({ default: m.GroupManager })));
+const MigrationManager = lazy(() => import('../settings/MigrationManager').then((m) => ({ default: m.MigrationManager })));
+const LowBandwidthSettings = lazy(() => import('../settings/LowBandwidthSettings').then((m) => ({ default: m.LowBandwidthSettings })));
+const FilterManager = lazy(() => import('../settings/FilterManager').then((m) => ({ default: m.FilterManager })));
+const SharedMailboxManager = lazy(() => import('../settings/SharedMailboxManager').then((m) => ({ default: m.SharedMailboxManager })));
+const QueueManager = lazy(() => import('../settings/QueueManager').then((m) => ({ default: m.QueueManager })));
+const TaskManager = lazy(() => import('../settings/TaskManager').then((m) => ({ default: m.TaskManager })));
+const WebhookManager = lazy(() => import('../settings/WebhookManager').then((m) => ({ default: m.WebhookManager })));
+const BrandingManager = lazy(() => import('../settings/BrandingManager').then((m) => ({ default: m.BrandingManager })));
+const RetentionManager = lazy(() => import('../settings/RetentionManager').then((m) => ({ default: m.RetentionManager })));
+const HostnameManager = lazy(() => import('../settings/HostnameManager').then((m) => ({ default: m.HostnameManager })));
+const SharedFileManager = lazy(() => import('../settings/SharedFileManager').then((m) => ({ default: m.SharedFileManager })));
+const BulkImportManager = lazy(() => import('../settings/BulkImportManager').then((m) => ({ default: m.BulkImportManager })));
+const ChatIntegrationManager = lazy(() => import('../settings/ChatIntegrationManager').then((m) => ({ default: m.ChatIntegrationManager })));
+const CalendarManager = lazy(() => import('../settings/CalendarManager').then((m) => ({ default: m.CalendarManager })));
+const LdapManager = lazy(() => import('../settings/LdapManager').then((m) => ({ default: m.LdapManager })));
+const AiConfigManager = lazy(() => import('../settings/AiConfigManager').then((m) => ({ default: m.AiConfigManager })));
+const SamlManager = lazy(() => import('../settings/SamlManager').then((m) => ({ default: m.SamlManager })));
+const OidcManager = lazy(() => import('../settings/OidcManager').then((m) => ({ default: m.OidcManager })));
+const EdiscoveryManager = lazy(() => import('../settings/EdiscoveryManager').then((m) => ({ default: m.EdiscoveryManager })));
+const DlpManager = lazy(() => import('../settings/DlpManager').then((m) => ({ default: m.DlpManager })));
+const DaneManager = lazy(() => import('../settings/DaneManager').then((m) => ({ default: m.DaneManager })));
+const SmtpConfigManager = lazy(() => import('../settings/SmtpConfigManager').then((m) => ({ default: m.SmtpConfigManager })));
+const PluginManager = lazy(() => import('../settings/PluginManager').then((m) => ({ default: m.PluginManager })));
+const ContactsApp = lazy(() => import('../settings/ContactsApp').then((m) => ({ default: m.ContactsApp })));
+const Pop3ConfigManager = lazy(() => import('../settings/Pop3ConfigManager').then((m) => ({ default: m.Pop3ConfigManager })));
+const ArchiveManager = lazy(() => import('../settings/ArchiveManager').then((m) => ({ default: m.ArchiveManager })));
+const ActiveSyncManager = lazy(() => import('../settings/ActiveSyncManager').then((m) => ({ default: m.ActiveSyncManager })));
+const OllamaManager = lazy(() => import('../settings/OllamaManager').then((m) => ({ default: m.OllamaManager })));
+const DavConfigManager = lazy(() => import('../settings/DavConfigManager').then((m) => ({ default: m.DavConfigManager })));
+const SpamFilterManager = lazy(() => import('../settings/SpamFilterManager').then((m) => ({ default: m.SpamFilterManager })));
+const BillingManager = lazy(() => import('../settings/BillingManager').then((m) => ({ default: m.BillingManager })));
+const DeliverabilityReport = lazy(() => import('../settings/DeliverabilityReport').then((m) => ({ default: m.DeliverabilityReport })));
+const PushDevicesManager = lazy(() => import('../settings/PushDevicesManager').then((m) => ({ default: m.PushDevicesManager })));
+
 interface AppShellProps {
   onLogout: () => void;
+}
+
+// Added (TMAIL-259): single fallback used by every lazy Suspense boundary in
+// the shell. Plain text avoids pulling additional dependencies into the
+// initial chunk just for a spinner.
+function ViewLoading() {
+  return <div className="app-shell__view-loading">Loading…</div>;
 }
 
 export function AppShell({ onLogout }: AppShellProps) {
@@ -117,78 +101,55 @@ export function AppShell({ onLogout }: AppShellProps) {
         {/* Added: On desktop, always show sidebar even if sidebarOpen is false (TMAIL-33) */}
         {!sidebarOpen && !isMobile && <Sidebar />}
         <main className="app-shell__content">
+          {/* Eager — the list + reader is the entry surface and must paint
+              without an extra round trip. Everything else is gated behind
+              Suspense so its code only loads when the user selects it. */}
           {viewMode === 'list' && <MessageList />}
           {viewMode === 'reader' && <MessageView />}
-          {viewMode === 'compose' && <Composer />}
-          {viewMode === 'search' && <SearchResults />}
-          {viewMode === 'signatures' && <SignatureManager />}
-          {viewMode === 'contacts' && <ContactManager />}
-          {viewMode === 'security' && <TwoFactorManager />}
-          {/* Added: TMAIL-204 — push notification device management */}
-          {viewMode === 'push-devices' && <PushDevicesManager />}
-          {viewMode === 'vacation' && <VacationResponder />}
-          {viewMode === 'groups' && <GroupManager />}
-          {viewMode === 'migration' && <MigrationManager />}
-          {viewMode === 'bandwidth' && <LowBandwidthSettings />}
-          {viewMode === 'filters' && <FilterManager />}
-          {/* Added: Shared mailbox ACL management view (TMAIL-96) */}
-          {viewMode === 'shared' && <SharedMailboxManager />}
-          {/* Added: Email queue management view (TMAIL-58) */}
-          {viewMode === 'queue' && <QueueManager />}
-          {/* Added: Task/to-do management view (TMAIL-126) */}
-          {viewMode === 'tasks' && <TaskManager />}
-          {/* Added: Webhook management view (TMAIL-131) */}
-          {viewMode === 'webhooks' && <WebhookManager />}
-          {/* Added: Branding management view (TMAIL-111) */}
-          {viewMode === 'branding' && <BrandingManager />}
-          {/* Added: Retention policy and legal hold management view (TMAIL-109) */}
-          {viewMode === 'retention' && <RetentionManager />}
-          {/* Added: Custom hostname management view (TMAIL-112) */}
-          {viewMode === 'hostnames' && <HostnameManager />}
-          {/* Added: Shared file management view (TMAIL-138) */}
-          {viewMode === 'shared-files' && <SharedFileManager />}
-          {/* Added: Bulk user import management view (TMAIL-136) */}
-          {viewMode === 'bulk-import' && <BulkImportManager />}
-          {/* Added: Chat integration management view (TMAIL-129) */}
-          {viewMode === 'chat' && <ChatIntegrationManager />}
-          {/* Added: Calendar/meeting scheduling view (TMAIL-127) */}
-          {viewMode === 'calendar' && <CalendarManager />}
-          {/* Added: LDAP/AD directory sync management view (TMAIL-100) */}
-          {viewMode === 'ldap' && <LdapManager />}
-          {/* Added: AI configuration management view (TMAIL-105) */}
-          {viewMode === 'ai-config' && <AiConfigManager />}
-          {/* Added: SAML SSO configuration management view (TMAIL-101) */}
-          {viewMode === 'saml' && <SamlManager />}
-          {/* Added: OIDC provider management view (TMAIL-99) */}
-          {viewMode === 'oidc' && <OidcManager />}
-          {/* Added: eDiscovery search management view (TMAIL-137) */}
-          {viewMode === 'ediscovery' && <EdiscoveryManager />}
-          {/* Added: DLP rule management view (TMAIL-108) */}
-          {viewMode === 'dlp' && <DlpManager />}
-          {/* Added: DANE/TLSA policy and verification management view (TMAIL-125) */}
-          {viewMode === 'dane' && <DaneManager />}
-          {/* Added: BYO-SMTP configuration management view (TMAIL-48) */}
-          {viewMode === 'smtp-config' && <SmtpConfigManager />}
-          {/* Added: Plugin management view (TMAIL-132) */}
-          {viewMode === 'plugins' && <PluginManager />}
-          {/* Added: Contacts App management view (TMAIL-119) */}
-          {viewMode === 'contacts-app' && <ContactsApp />}
-          {/* Added: POP3 configuration management view (TMAIL-133) */}
-          {viewMode === 'pop3' && <Pop3ConfigManager />}
-          {/* Added: Email archive management view (TMAIL-107) */}
-          {viewMode === 'archive' && <ArchiveManager />}
-          {/* Added: ActiveSync device management view (TMAIL-130) */}
-          {viewMode === 'activesync' && <ActiveSyncManager />}
-          {/* Added: Ollama local LLM management view (TMAIL-102) */}
-          {viewMode === 'ollama' && <OllamaManager />}
-          {/* Added: CalDAV/CardDAV configuration management view (TMAIL-117) */}
-          {viewMode === 'dav-config' && <DavConfigManager />}
-          {/* Added: Rspamd spam filter management view (TMAIL-15) */}
-          {viewMode === 'spam' && <SpamFilterManager />}
-          {/* Added: Billing management view for Paystack/MoMo payments (TMAIL-46) */}
-          {viewMode === 'billing' && <BillingManager />}
-          {/* Added: Email deliverability testing view (TMAIL-39) */}
-          {viewMode === 'deliverability' && <DeliverabilityReport />}
+          {viewMode !== 'list' && viewMode !== 'reader' && (
+            <Suspense fallback={<ViewLoading />}>
+              {viewMode === 'compose' && <Composer />}
+              {viewMode === 'search' && <SearchResults />}
+              {viewMode === 'signatures' && <SignatureManager />}
+              {viewMode === 'contacts' && <ContactManager />}
+              {viewMode === 'security' && <TwoFactorManager />}
+              {viewMode === 'push-devices' && <PushDevicesManager />}
+              {viewMode === 'vacation' && <VacationResponder />}
+              {viewMode === 'groups' && <GroupManager />}
+              {viewMode === 'migration' && <MigrationManager />}
+              {viewMode === 'bandwidth' && <LowBandwidthSettings />}
+              {viewMode === 'filters' && <FilterManager />}
+              {viewMode === 'shared' && <SharedMailboxManager />}
+              {viewMode === 'queue' && <QueueManager />}
+              {viewMode === 'tasks' && <TaskManager />}
+              {viewMode === 'webhooks' && <WebhookManager />}
+              {viewMode === 'branding' && <BrandingManager />}
+              {viewMode === 'retention' && <RetentionManager />}
+              {viewMode === 'hostnames' && <HostnameManager />}
+              {viewMode === 'shared-files' && <SharedFileManager />}
+              {viewMode === 'bulk-import' && <BulkImportManager />}
+              {viewMode === 'chat' && <ChatIntegrationManager />}
+              {viewMode === 'calendar' && <CalendarManager />}
+              {viewMode === 'ldap' && <LdapManager />}
+              {viewMode === 'ai-config' && <AiConfigManager />}
+              {viewMode === 'saml' && <SamlManager />}
+              {viewMode === 'oidc' && <OidcManager />}
+              {viewMode === 'ediscovery' && <EdiscoveryManager />}
+              {viewMode === 'dlp' && <DlpManager />}
+              {viewMode === 'dane' && <DaneManager />}
+              {viewMode === 'smtp-config' && <SmtpConfigManager />}
+              {viewMode === 'plugins' && <PluginManager />}
+              {viewMode === 'contacts-app' && <ContactsApp />}
+              {viewMode === 'pop3' && <Pop3ConfigManager />}
+              {viewMode === 'archive' && <ArchiveManager />}
+              {viewMode === 'activesync' && <ActiveSyncManager />}
+              {viewMode === 'ollama' && <OllamaManager />}
+              {viewMode === 'dav-config' && <DavConfigManager />}
+              {viewMode === 'spam' && <SpamFilterManager />}
+              {viewMode === 'billing' && <BillingManager />}
+              {viewMode === 'deliverability' && <DeliverabilityReport />}
+            </Suspense>
+          )}
         </main>
       </div>
       {/* Added: Keyboard shortcut help dialog, toggled by '?' key */}

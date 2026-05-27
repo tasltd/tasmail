@@ -157,12 +157,16 @@ describe('AppShell', () => {
     { viewMode: 'bandwidth', testId: 'low-bandwidth' },
   ];
 
+  // Changed (TMAIL-259): every non-list/reader view is now React.lazy() so
+  // its module loads on first hit. findByTestId waits for Suspense to swap
+  // the fallback for the resolved mock; the eager list/reader cases still
+  // resolve synchronously through the original getByTestId path.
   it.each(viewModeTests)(
     'renders $testId when viewMode is "$viewMode"',
-    ({ viewMode, testId }) => {
+    async ({ viewMode, testId }) => {
       mockViewMode.mockReturnValue(viewMode);
       render(<AppShell onLogout={mockLogout} />, { wrapper });
-      expect(screen.getByTestId(testId)).toBeInTheDocument();
+      expect(await screen.findByTestId(testId)).toBeInTheDocument();
     },
   );
 
