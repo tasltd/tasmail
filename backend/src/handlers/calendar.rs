@@ -93,10 +93,155 @@ pub async fn create_event(
         vec![]
     };
 
+    // Added (TMAIL-127): Auto-send iMIP REQUEST invitation to every attendee
+    // using the organizer's BYO-SMTP. Best-effort — SMTP failures are logged
+    // but don't roll back event creation, mirroring the iMIP REPLY flow in
+    // `accept_imip` so the user-visible win (event saved) always survives.
+    if !attendees.is_empty() {
+        send_imip_invitations(&state, user_id, &claims.username, &event, &attendees).await;
+    }
+
     Ok((
         StatusCode::CREATED,
         Json(CalendarEventWithAttendees { event, attendees }),
     ))
+}
+
+/// PURPOSE: Send a METHOD:REQUEST iMIP invitation to each attendee of a newly
+/// created event via the organizer's configured BYO-SMTP server (TMAIL-127).
+/// CONSTRAINTS: Best-effort — every failure path (no SMTP config, decrypt
+/// failure, transport failure per attendee) is logged via `tracing` and
+/// swallowed so the event-creation response stays a 2xx.
+/// EXTERNAL: Loads `smtp_configurations` for the user, decrypts the password
+/// with the JWT-derived key, then dials the user's SMTP host once per
+/// attendee with the same ICS payload (only To/recipient differs).
+async fn send_imip_invitations(
+    state: &AppState,
+    user_id: uuid::Uuid,
+    organizer_email: &str,
+    event: &CalendarEvent,
+    attendees: &[EventAttendee],
+) {
+    // ---- Load the user's default BYO-SMTP server -----------------------
+    let smtp_cfg = match crate::models::smtp_config::SmtpConfiguration::find_default(
+        &state.db, user_id,
+    )
+    .await
+    {
+        Ok(Some(c)) => c,
+        Ok(None) => {
+            tracing::warn!(
+                user_id = %user_id,
+                event_id = %event.id,
+                "iMIP invite skipped: no default SMTP server configured"
+            );
+            return;
+        }
+        Err(e) => {
+            tracing::warn!(
+                user_id = %user_id,
+                event_id = %event.id,
+                error = ?e,
+                "iMIP invite skipped: SMTP config lookup failed"
+            );
+            return;
+        }
+    };
+
+    let enc_key = crate::models::ai_config::derive_encryption_key(&state.config.jwt.secret);
+    let smtp_password = match smtp_cfg.decrypted_password(&enc_key) {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!(
+                user_id = %user_id,
+                event_id = %event.id,
+                error = %e,
+                "iMIP invite skipped: SMTP password decrypt failed"
+            );
+            return;
+        }
+    };
+    let smtp_from = smtp_cfg
+        .from_address
+        .clone()
+        .unwrap_or_else(|| smtp_cfg.username.clone());
+
+    let smtp_runtime_cfg = crate::config::SmtpConfig {
+        host: smtp_cfg.host.clone(),
+        port: smtp_cfg.port as u16,
+        tls: matches!(smtp_cfg.encryption.as_str(), "ssl" | "starttls"),
+        notification_from: None,
+        notification_username: None,
+        notification_password: None,
+    };
+    let smtp_service = SmtpService::new(smtp_runtime_cfg);
+
+    // ---- Build the ICS payload once (same body for every attendee) -----
+    let ics_data = IcsEventData {
+        uid: event.ics_uid.clone(),
+        summary: event.title.clone(),
+        description: event.description.clone(),
+        location: event.location.clone(),
+        start_time: event.start_time,
+        end_time: event.end_time,
+        all_day: event.all_day,
+        organizer_email: organizer_email.to_string(),
+        attendees: attendees
+            .iter()
+            .map(|a| IcsAttendee {
+                email: a.email.clone(),
+                display_name: a.display_name.clone(),
+                rsvp_status: a.rsvp.clone(),
+            })
+            .collect(),
+        status: event.status.clone(),
+    };
+    let ics_payload = generate_ics(&ics_data);
+
+    let subject = format!("Invitation: {}", event.title);
+    let text_body = build_invite_text_body(event, organizer_email);
+
+    // ---- Fan out one send per attendee --------------------------------
+    for attendee in attendees {
+        if let Err(e) = smtp_service
+            .send_imip_request(
+                &smtp_from,
+                &smtp_password,
+                &attendee.email,
+                &subject,
+                &text_body,
+                &ics_payload,
+            )
+            .await
+        {
+            tracing::warn!(
+                event_id = %event.id,
+                attendee = %attendee.email,
+                error = ?e,
+                "iMIP invitation send failed"
+            );
+        }
+    }
+}
+
+/// PURPOSE: Build the plain-text fallback body shown by mail clients that
+/// don't recognise the text/calendar part. Keep it short — the calendar
+/// app gets all the structured detail from the ICS half.
+fn build_invite_text_body(event: &CalendarEvent, organizer_email: &str) -> String {
+    let mut body = format!("You have been invited to: {}\n\n", event.title);
+    body.push_str(&format!("Organizer: {}\n", organizer_email));
+    body.push_str(&format!(
+        "Start: {}\n",
+        event.start_time.to_rfc3339()
+    ));
+    body.push_str(&format!("End: {}\n", event.end_time.to_rfc3339()));
+    if let Some(ref loc) = event.location {
+        body.push_str(&format!("Location: {}\n", loc));
+    }
+    if let Some(ref desc) = event.description {
+        body.push_str(&format!("\n{}\n", desc));
+    }
+    body
 }
 
 /// GET /api/calendar/events/:id — get event detail with attendees
@@ -1007,6 +1152,7 @@ mod tests {
     use super::*;
     use crate::models::calendar_event::{CreateEventRequest, UpdateEventRequest, RsvpRequest, AttendeeInput};
     use crate::services::auth_service::Claims;
+    use chrono::TimeZone;
 
     #[test]
     fn test_parse_user_id_valid() {
@@ -1081,6 +1227,65 @@ mod tests {
         };
         let json = serde_json::to_value(&resp).unwrap();
         assert_eq!(json["filename"], "meeting.ics");
+    }
+
+    // Added (TMAIL-127): plain-text invite body must echo title, organizer,
+    // start/end and optional location/description so non-calendar mail
+    // clients still show something useful.
+    #[test]
+    fn test_build_invite_text_body_includes_all_fields() {
+        let event = CalendarEvent {
+            id: uuid::Uuid::new_v4(),
+            organizer_id: uuid::Uuid::new_v4(),
+            title: "Q3 Review".to_string(),
+            description: Some("Quarterly business review".to_string()),
+            location: Some("Conference Room 1".to_string()),
+            start_time: chrono::Utc.with_ymd_and_hms(2026, 7, 15, 10, 0, 0).unwrap(),
+            end_time: chrono::Utc.with_ymd_and_hms(2026, 7, 15, 11, 0, 0).unwrap(),
+            all_day: false,
+            recurrence_rule: None,
+            status: "confirmed".to_string(),
+            linked_message_uid: None,
+            linked_folder: None,
+            ics_uid: "abc@tasmail.io".to_string(),
+            public_token: uuid::Uuid::new_v4(),
+            public_enabled: false,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        let body = build_invite_text_body(&event, "alice@tasmail.io");
+        assert!(body.contains("Q3 Review"));
+        assert!(body.contains("alice@tasmail.io"));
+        assert!(body.contains("2026-07-15T10:00:00+00:00"));
+        assert!(body.contains("2026-07-15T11:00:00+00:00"));
+        assert!(body.contains("Conference Room 1"));
+        assert!(body.contains("Quarterly business review"));
+    }
+
+    #[test]
+    fn test_build_invite_text_body_omits_optional_fields_when_absent() {
+        let event = CalendarEvent {
+            id: uuid::Uuid::new_v4(),
+            organizer_id: uuid::Uuid::new_v4(),
+            title: "Quick Chat".to_string(),
+            description: None,
+            location: None,
+            start_time: chrono::Utc.with_ymd_and_hms(2026, 7, 15, 10, 0, 0).unwrap(),
+            end_time: chrono::Utc.with_ymd_and_hms(2026, 7, 15, 10, 15, 0).unwrap(),
+            all_day: false,
+            recurrence_rule: None,
+            status: "confirmed".to_string(),
+            linked_message_uid: None,
+            linked_folder: None,
+            ics_uid: "xyz@tasmail.io".to_string(),
+            public_token: uuid::Uuid::new_v4(),
+            public_enabled: false,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        let body = build_invite_text_body(&event, "alice@tasmail.io");
+        assert!(!body.contains("Location:"));
+        assert!(body.contains("Quick Chat"));
     }
 
     #[test]

@@ -122,6 +122,93 @@ impl SmtpService {
         Ok(())
     }
 
+    /// PURPOSE: Build the lettre `Message` for an outbound iMIP invitation
+    /// (METHOD:REQUEST). Extracted from `send_imip_request` so tests can
+    /// inspect the multipart shape without dialling an SMTP server.
+    /// CONSTRAINTS: `ics_payload` must be a complete iCalendar string with
+    /// `METHOD:REQUEST` (built by `services::ics_generator::generate_ics`).
+    pub fn build_imip_request_message(
+        from_address: &str,
+        to_address: &str,
+        subject: &str,
+        text_body: &str,
+        ics_payload: &str,
+    ) -> Result<Message, AppError> {
+        let from: LettreMailbox = from_address
+            .parse()
+            .map_err(|e| AppError::BadRequest(format!("Invalid from address: {}", e)))?;
+        let to: LettreMailbox = to_address
+            .parse()
+            .map_err(|e| AppError::BadRequest(format!("Invalid to address '{}': {}", to_address, e)))?;
+
+        // NOTE: RFC 6047 — the text/calendar part of an iMIP REQUEST carries
+        // the iTIP method as a Content-Type parameter. lettre needs the
+        // parameter spelled out via ContentType::parse.
+        let calendar_ct = ContentType::parse("text/calendar; method=REQUEST; charset=UTF-8")
+            .map_err(|e| AppError::Smtp(format!("Invalid calendar content type: {}", e)))?;
+
+        Message::builder()
+            .from(from)
+            .to(to)
+            .subject(subject)
+            .multipart(
+                MultiPart::alternative()
+                    .singlepart(
+                        SinglePart::builder()
+                            .header(ContentType::TEXT_PLAIN)
+                            .body(text_body.to_string()),
+                    )
+                    .singlepart(
+                        SinglePart::builder()
+                            .header(calendar_ct)
+                            .body(ics_payload.to_string()),
+                    ),
+            )
+            .map_err(|e| AppError::Smtp(format!("Failed to build iMIP request: {}", e)))
+    }
+
+    /// PURPOSE: Send a METHOD:REQUEST iMIP invitation to one attendee. Used
+    /// by the calendar create-event flow (TMAIL-127) so attendees receive
+    /// a calendar-app-recognised invite in their inbox.
+    /// CONSTRAINTS: `ics_payload` must already carry `METHOD:REQUEST`. Auth
+    /// uses the same BYO-SMTP credentials as `send()` and `send_imip_reply`.
+    pub async fn send_imip_request(
+        &self,
+        from_address: &str,
+        from_password: &str,
+        to_address: &str,
+        subject: &str,
+        text_body: &str,
+        ics_payload: &str,
+    ) -> Result<(), AppError> {
+        let email = Self::build_imip_request_message(
+            from_address,
+            to_address,
+            subject,
+            text_body,
+            ics_payload,
+        )?;
+
+        let creds = Credentials::new(from_address.to_string(), from_password.to_string());
+        let transport = if self.config.tls {
+            AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&self.config.host)
+                .map_err(|e| AppError::Smtp(format!("SMTP transport error: {}", e)))?
+                .port(self.config.port)
+                .credentials(creds)
+                .build()
+        } else {
+            AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(&self.config.host)
+                .port(self.config.port)
+                .credentials(creds)
+                .build()
+        };
+        transport
+            .send(email)
+            .await
+            .map_err(|e| AppError::Smtp(format!("Failed to send iMIP request: {}", e)))?;
+        Ok(())
+    }
+
     /// PURPOSE: Send a METHOD:REPLY iMIP message back to a meeting organizer.
     /// Builds a multipart/alternative payload carrying a text/plain summary and
     /// the canonical text/calendar; method=REPLY part, which is what RFC 6047
@@ -333,6 +420,83 @@ mod tests {
         }"#;
         let req: SendRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.to.len(), 3);
+    }
+
+    // Added (TMAIL-127): verify the multipart shape of an outbound iMIP
+    // invitation. We don't need an SMTP server — `Message::formatted()`
+    // emits the full RFC 5322 byte stream that lettre would dial out.
+    #[test]
+    fn test_build_imip_request_message_multipart_shape() {
+        let ics = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nMETHOD:REQUEST\r\n\
+                   BEGIN:VEVENT\r\nUID:invite-1@example.com\r\nSUMMARY:Sync\r\n\
+                   END:VEVENT\r\nEND:VCALENDAR\r\n";
+        let msg = SmtpService::build_imip_request_message(
+            "organizer@example.com",
+            "attendee@example.com",
+            "Invitation: Project Sync",
+            "You have been invited to: Project Sync",
+            ics,
+        )
+        .expect("message build should succeed");
+
+        let raw = String::from_utf8(msg.formatted())
+            .expect("lettre formats as UTF-8 for ASCII headers/bodies");
+
+        // ---- Envelope headers -----------------------------------------
+        assert!(raw.contains("From: organizer@example.com"), "from header missing");
+        assert!(raw.contains("To: attendee@example.com"), "to header missing");
+        assert!(raw.contains("Subject: Invitation: Project Sync"), "subject missing");
+
+        // ---- Multipart shape (text/plain + text/calendar) -------------
+        assert!(
+            raw.to_lowercase().contains("content-type: multipart/alternative"),
+            "expected multipart/alternative wrapper, got:\n{}",
+            raw
+        );
+        assert!(raw.contains("text/plain"), "text/plain part missing");
+        assert!(raw.contains("text/calendar"), "text/calendar part missing");
+        assert!(
+            raw.contains("method=REQUEST"),
+            "calendar Content-Type missing method=REQUEST parameter"
+        );
+
+        // ---- Both bodies present in the assembled MIME ----------------
+        assert!(
+            raw.contains("You have been invited to: Project Sync"),
+            "plain-text fallback body missing"
+        );
+        // The ICS body is base64-encoded by lettre for non-ASCII safety,
+        // but the VCALENDAR markers survive ASCII so they appear verbatim
+        // OR within the encoded payload. Check the iCal source-of-truth
+        // marker shows up either way by also checking for the method line.
+        assert!(
+            raw.contains("BEGIN:VCALENDAR") || raw.contains("QkVHSU46VkNBTEVO"),
+            "ICS payload not present in MIME body"
+        );
+    }
+
+    #[test]
+    fn test_build_imip_request_message_rejects_bad_from_address() {
+        let res = SmtpService::build_imip_request_message(
+            "not-an-email",
+            "attendee@example.com",
+            "Subject",
+            "body",
+            "BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n",
+        );
+        assert!(matches!(res, Err(AppError::BadRequest(_))));
+    }
+
+    #[test]
+    fn test_build_imip_request_message_rejects_bad_to_address() {
+        let res = SmtpService::build_imip_request_message(
+            "organizer@example.com",
+            "also-not-an-email",
+            "Subject",
+            "body",
+            "BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n",
+        );
+        assert!(matches!(res, Err(AppError::BadRequest(_))));
     }
 
     #[test]
