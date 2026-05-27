@@ -115,25 +115,48 @@ describe('billing API', () => {
       expect(result.authorization_url).toContain('paystack.com');
     });
 
-    it('calls POST /billing/subscribe with MoMo provider and phone', async () => {
+    // Changed: MoMo provider removed in pivot — backend whitelist is now
+    // paystack/mastercard/cybersource/bank_transfer. This test exercises the bank-transfer
+    // path, which returns a "bank_transfer:..." instructions string instead of a redirect URL.
+    it('calls POST /billing/subscribe with bank_transfer provider and surfaces instructions', async () => {
       const reqData = {
         plan_id: 'plan-2',
-        provider: 'mtn_momo' as const,
-        phone_number: '0241234567',
+        provider: 'bank_transfer' as const,
       };
       const mockResp = {
         subscription_id: 'sub-2',
         payment_id: 'pay-2',
-        provider: 'mtn_momo',
-        authorization_url: null,
+        provider: 'bank_transfer',
+        authorization_url: 'bank_transfer:Pay GHS 49.99 to Acme Bank, Acct 0123456789, Ref TMAIL-def456',
         reference: 'TMAIL-def456',
       };
       vi.mocked(apiClient.post).mockResolvedValue(mockResp);
 
       const result = await subscribe(reqData);
       expect(apiClient.post).toHaveBeenCalledWith('/billing/subscribe', reqData);
-      expect(result.authorization_url).toBeNull();
+      expect(result.authorization_url).toContain('bank_transfer:');
+      expect(result.authorization_url).toContain('Acme Bank');
       expect(result.reference).toBe('TMAIL-def456');
+    });
+
+    // Added: Verify each post-pivot provider is accepted by the client and serialized through.
+    it.each<['paystack' | 'mastercard' | 'cybersource' | 'bank_transfer']>([
+      ['paystack'],
+      ['mastercard'],
+      ['cybersource'],
+      ['bank_transfer'],
+    ])('calls POST /billing/subscribe with provider=%s', async (provider) => {
+      const reqData = { plan_id: 'plan-1', provider };
+      vi.mocked(apiClient.post).mockResolvedValue({
+        subscription_id: 'sub-x',
+        payment_id: 'pay-x',
+        provider,
+        authorization_url: null,
+        reference: `TMAIL-${provider}`,
+      });
+      const result = await subscribe(reqData);
+      expect(apiClient.post).toHaveBeenCalledWith('/billing/subscribe', reqData);
+      expect(result.provider).toBe(provider);
     });
   });
 

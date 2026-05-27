@@ -1,12 +1,22 @@
-// Added: Billing management UI for Paystack/MoMo payment integration (TMAIL-46)
-// PURPOSE: Allows users to view plans, manage subscriptions, and see payment history
-// EXTERNAL: Uses TanStack Query for data fetching; redirects to Paystack checkout for card payments
+// Changed: Billing management UI now matches PayPro's provider set — Paystack, Mastercard, Cybersource, Bank Transfer (TMAIL-46).
+// MoMo provider removed: TASMail pivoted to mirror PayPro, which does not use MoMo.
+// PURPOSE: Allows users to view plans, manage subscriptions, and see payment history.
+// EXTERNAL: Uses TanStack Query for data fetching; redirects to provider checkout when authorization_url is a URL,
+//           otherwise renders inline instructions (bank transfer) or session/invoice references.
 
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, CreditCard, Phone, CheckCircle, XCircle, Clock, RefreshCw } from 'lucide-react';
-import { listPlans, getSubscription, subscribe, listPayments } from '../../api/billing';
-import type { BillingPlan, SubscribeRequest } from '../../api/billing';
+import { ArrowLeft, CreditCard, Landmark, FileText, CheckCircle, XCircle, Clock, RefreshCw } from 'lucide-react';
+import {
+  listPlans,
+  getSubscription,
+  subscribe,
+  listPayments,
+  providerLabel,
+  type BillingPlan,
+  type BillingProvider,
+  type SubscribeRequest,
+} from '../../api/billing';
 import { useMailStore } from '../../stores/mailStore';
 import { LoadingSkeleton } from '../shared/LoadingSkeleton';
 
@@ -33,14 +43,29 @@ function formatGHS(amount: number): string {
   return `GHS ${amount.toFixed(2)}`;
 }
 
+// Added: True when the backend returned a real HTTP(S) checkout URL we can redirect to.
+function isHttpUrl(value: string | null | undefined): value is string {
+  return !!value && (value.startsWith('http://') || value.startsWith('https://'));
+}
+
+// Added: Extract human-readable bank-transfer instructions from the backend's
+// "bank_transfer:..." authorization_url payload, falling back to the raw string.
+function bankInstructionsFrom(authUrl: string | null | undefined): string | null {
+  if (!authUrl) return null;
+  return authUrl.startsWith('bank_transfer:') ? authUrl.slice('bank_transfer:'.length) : authUrl;
+}
+
 export function BillingManager() {
   const setViewMode = useMailStore((s) => s.setViewMode);
   const queryClient = useQueryClient();
 
-  // Added: State for MoMo phone number input
-  const [momoPhone, setMomoPhone] = useState('');
-  const [selectedPlan, setSelectedPlan] = useState<BillingPlan | null>(null);
-  const [showMomoInput, setShowMomoInput] = useState(false);
+  // Added: After a non-redirect provider (bank transfer / mpgs session / cybersource invoice)
+  // returns instructions or a reference, surface them inline so the user can act on them.
+  const [pendingInstruction, setPendingInstruction] = useState<{
+    provider: BillingProvider;
+    reference: string;
+    detail: string | null;
+  } | null>(null);
 
   // Added: Fetch billing data
   const { data: plans, isLoading: plansLoading } = useQuery({
@@ -64,44 +89,27 @@ export function BillingManager() {
     onSuccess: (resp) => {
       queryClient.invalidateQueries({ queryKey: ['billing-subscription'] });
       queryClient.invalidateQueries({ queryKey: ['billing-payments'] });
-      // Added: Redirect to Paystack checkout if authorization_url is provided
-      if (resp.authorization_url) {
+      // Changed: Only Paystack returns a redirectable URL. Mastercard returns "mpgs:session:{id}",
+      // Cybersource returns "cybersource:invoice:{id}", Bank Transfer returns "bank_transfer:{instructions}".
+      // Render those inline rather than navigating.
+      if (isHttpUrl(resp.authorization_url)) {
         window.location.href = resp.authorization_url;
-      } else {
-        // NOTE: MoMo — payment prompt sent to phone, show confirmation
-        alert(`Payment request sent to your phone. Reference: ${resp.reference}`);
+        return;
       }
-      setSelectedPlan(null);
-      setShowMomoInput(false);
-      setMomoPhone('');
+      setPendingInstruction({
+        provider: resp.provider as BillingProvider,
+        reference: resp.reference,
+        detail: bankInstructionsFrom(resp.authorization_url),
+      });
     },
     onError: () => {
       alert('Payment initialization failed. Please try again.');
     },
   });
 
-  // Added: Handle plan selection for Paystack (card) payment
-  const handlePaystack = (plan: BillingPlan) => {
-    subscribeMut.mutate({
-      plan_id: plan.id,
-      provider: 'paystack',
-    });
-  };
-
-  // Added: Handle plan selection for MoMo payment — shows phone input first
-  const handleMomoSelect = (plan: BillingPlan) => {
-    setSelectedPlan(plan);
-    setShowMomoInput(true);
-  };
-
-  // Added: Submit MoMo payment with phone number
-  const handleMomoSubmit = () => {
-    if (!selectedPlan || !momoPhone.trim()) return;
-    subscribeMut.mutate({
-      plan_id: selectedPlan.id,
-      provider: 'mtn_momo',
-      phone_number: momoPhone.trim(),
-    });
+  // Added: Handle plan selection for any provider — backend whitelists paystack/mastercard/cybersource/bank_transfer.
+  const handleSubscribe = (plan: BillingPlan, provider: BillingProvider) => {
+    subscribeMut.mutate({ plan_id: plan.id, provider });
   };
 
   if (plansLoading || subLoading) {
@@ -128,7 +136,7 @@ export function BillingManager() {
                 <span className={statusBadgeClass(currentSub.status)}>{currentSub.status}</span>
               </div>
               <div>
-                <strong>Provider:</strong> {currentSub.provider === 'mtn_momo' ? 'MTN MoMo' : 'Paystack'}
+                <strong>Provider:</strong> {providerLabel(currentSub.provider)}
               </div>
             </div>
             {currentSub.current_period_end && (
@@ -174,19 +182,39 @@ export function BillingManager() {
               <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                 <button
                   className="btn btn--primary"
-                  onClick={() => handlePaystack(plan)}
+                  onClick={() => handleSubscribe(plan, 'paystack')}
                   disabled={subscribeMut.isPending}
+                  data-testid={`pay-paystack-${plan.id}`}
                 >
                   <CreditCard size={16} />
                   Pay with Card
                 </button>
                 <button
                   className="btn btn--secondary"
-                  onClick={() => handleMomoSelect(plan)}
+                  onClick={() => handleSubscribe(plan, 'mastercard')}
                   disabled={subscribeMut.isPending}
+                  data-testid={`pay-mastercard-${plan.id}`}
                 >
-                  <Phone size={16} />
-                  MTN MoMo
+                  <CreditCard size={16} />
+                  Mastercard
+                </button>
+                <button
+                  className="btn btn--secondary"
+                  onClick={() => handleSubscribe(plan, 'cybersource')}
+                  disabled={subscribeMut.isPending}
+                  data-testid={`pay-cybersource-${plan.id}`}
+                >
+                  <FileText size={16} />
+                  Invoice
+                </button>
+                <button
+                  className="btn btn--ghost"
+                  onClick={() => handleSubscribe(plan, 'bank_transfer')}
+                  disabled={subscribeMut.isPending}
+                  data-testid={`pay-bank-${plan.id}`}
+                >
+                  <Landmark size={16} />
+                  Bank Transfer
                 </button>
               </div>
             </div>
@@ -194,38 +222,36 @@ export function BillingManager() {
         </div>
       </section>
 
-      {/* Added: MoMo phone number input dialog */}
-      {showMomoInput && selectedPlan && (
-        <section className="settings-section" data-testid="momo-input">
-          <h3>MTN MoMo Payment — {selectedPlan.name}</h3>
-          <p>Enter your MTN MoMo phone number to receive a payment prompt.</p>
-          <div style={{ display: 'flex', gap: '8px', marginTop: '8px', maxWidth: '400px' }}>
-            <input
-              type="tel"
-              className="input"
-              placeholder="0241234567"
-              value={momoPhone}
-              onChange={(e) => setMomoPhone(e.target.value)}
-              data-testid="momo-phone-input"
-            />
-            <button
-              className="btn btn--primary"
-              onClick={handleMomoSubmit}
-              disabled={!momoPhone.trim() || subscribeMut.isPending}
-            >
-              {subscribeMut.isPending ? <RefreshCw size={16} className="spin" /> : 'Send'}
-            </button>
-            <button
-              className="btn btn--ghost"
-              onClick={() => {
-                setShowMomoInput(false);
-                setSelectedPlan(null);
-                setMomoPhone('');
+      {/* Added: Non-redirect provider instructions (bank transfer, mpgs session id, cybersource invoice id). */}
+      {pendingInstruction && (
+        <section className="settings-section" data-testid="payment-instructions">
+          <h3>Next steps — {providerLabel(pendingInstruction.provider)}</h3>
+          <p>
+            <strong>Reference:</strong>{' '}
+            <span style={{ fontFamily: 'monospace' }}>{pendingInstruction.reference}</span>
+          </p>
+          {pendingInstruction.detail && (
+            <pre
+              style={{
+                whiteSpace: 'pre-wrap',
+                background: 'var(--color-surface)',
+                padding: '12px',
+                borderRadius: '6px',
+                marginTop: '8px',
               }}
+              data-testid="payment-instructions-detail"
             >
-              Cancel
-            </button>
-          </div>
+              {pendingInstruction.detail}
+            </pre>
+          )}
+          <button
+            className="btn btn--ghost"
+            onClick={() => setPendingInstruction(null)}
+            style={{ marginTop: '8px' }}
+          >
+            Dismiss
+          </button>
+          {subscribeMut.isPending && <RefreshCw size={16} className="spin" />}
         </section>
       )}
 
@@ -250,7 +276,7 @@ export function BillingManager() {
                 <tr key={p.id}>
                   <td>{p.created_at ? new Date(p.created_at).toLocaleDateString() : '—'}</td>
                   <td>{formatGHS(p.amount_cedis)}</td>
-                  <td>{p.provider === 'mtn_momo' ? 'MTN MoMo' : 'Paystack'}</td>
+                  <td>{providerLabel(p.provider)}</td>
                   <td style={{ fontFamily: 'monospace', fontSize: '0.85rem' }}>{p.provider_ref}</td>
                   <td>
                     <span className={statusBadgeClass(p.status)}>

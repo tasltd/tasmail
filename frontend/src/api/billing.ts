@@ -1,6 +1,23 @@
-// Added: Billing API client for Paystack/MoMo payment integration (TMAIL-46)
+// Changed: Billing API client now matches PayPro's provider set — Paystack, Mastercard, Cybersource, BankTransfer (TMAIL-46).
+// MoMo provider removed: TASMail pivoted to mirror PayPro, which does not use MoMo.
 
 import { apiClient } from './client';
+
+// Added: Provider literal type — matches backend whitelist in handlers/billing.rs::subscribe.
+export type BillingProvider = 'paystack' | 'mastercard' | 'cybersource' | 'bank_transfer';
+
+// Added: Display label for each provider (used by UI components and history table).
+export const PROVIDER_LABELS: Record<BillingProvider, string> = {
+  paystack: 'Paystack',
+  mastercard: 'Mastercard',
+  cybersource: 'Cybersource',
+  bank_transfer: 'Bank Transfer',
+};
+
+// Added: Human-readable label with safe fallback for unknown/legacy provider strings.
+export function providerLabel(provider: string): string {
+  return (PROVIDER_LABELS as Record<string, string>)[provider] ?? provider;
+}
 
 // Added: Billing plan type matching backend BillingPlan struct
 export interface BillingPlan {
@@ -22,7 +39,8 @@ export interface Subscription {
   id: string;
   user_id: string;
   plan_id: string;
-  provider: 'paystack' | 'mtn_momo';
+  // Changed: Provider union now mirrors backend whitelist (was 'paystack' | 'mtn_momo').
+  provider: BillingProvider;
   provider_subscription_id: string | null;
   status: string;
   current_period_start: string | null;
@@ -37,7 +55,8 @@ export interface Payment {
   id: string;
   user_id: string;
   subscription_id: string | null;
-  provider: 'paystack' | 'mtn_momo';
+  // Changed: Provider union now mirrors backend whitelist (was 'paystack' | 'mtn_momo').
+  provider: BillingProvider;
   provider_ref: string;
   amount_cedis: number;
   currency: string | null;
@@ -47,10 +66,11 @@ export interface Payment {
 }
 
 // Added: Subscribe request body
+// Changed: Removed phone_number field — MoMo flow removed; bank/mastercard/cybersource use
+// authorization_url or instructions returned from the backend.
 export interface SubscribeRequest {
   plan_id: string;
-  provider: 'paystack' | 'mtn_momo';
-  phone_number?: string;
+  provider: BillingProvider;
 }
 
 // Added: Subscribe response from backend
@@ -58,6 +78,8 @@ export interface SubscribeResponse {
   subscription_id: string;
   payment_id: string;
   provider: string;
+  // NOTE: Paystack returns a hosted-checkout URL; Mastercard returns "mpgs:session:{id}";
+  // Cybersource returns "cybersource:invoice:{id}"; Bank Transfer returns "bank_transfer:{instructions}".
   authorization_url: string | null;
   reference: string;
 }
@@ -72,7 +94,7 @@ export async function getSubscription(): Promise<Subscription | null> {
   return apiClient.get<Subscription | null>('/billing/subscription');
 }
 
-// PURPOSE: Initialize a new subscription with Paystack or MoMo
+// PURPOSE: Initialize a new subscription with the selected provider
 export async function subscribe(data: SubscribeRequest): Promise<SubscribeResponse> {
   return apiClient.post<SubscribeResponse>('/billing/subscribe', data);
 }
