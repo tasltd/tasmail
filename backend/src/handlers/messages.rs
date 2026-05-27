@@ -6,12 +6,23 @@ use axum::{
 use serde::Deserialize;
 
 use crate::error::AppError;
+use crate::models::webhook::WebhookEvent;
 use crate::services::auth_service::Claims;
 use crate::services::imap_service::{FullMessage, ImapService};
 use crate::services::smtp_service::{SendRequest, SmtpService};
+use crate::services::webhook_dispatcher;
 use crate::state::AppState;
 // Added: Input validation for message operations (TMAIL-37)
 use crate::validation;
+
+// Added: Fire-and-forget webhook dispatch (TMAIL-131). Spawned on the runtime so the request
+// returns immediately even if downstream webhook receivers are slow or unreachable.
+fn fire_webhook(state: &AppState, user_id: uuid::Uuid, event: WebhookEvent, data: serde_json::Value) {
+    let db = state.db.clone();
+    tokio::spawn(async move {
+        webhook_dispatcher::dispatch_webhook_event(&db, user_id, event, data).await;
+    });
+}
 
 #[derive(Debug, Deserialize)]
 pub struct ListMessagesQuery {
@@ -183,6 +194,19 @@ pub async fn send_message(
     let smtp_service = SmtpService::new(smtp_runtime_cfg);
     smtp_service.send(&smtp_from, &smtp_password, &body).await?;
 
+    // Added: TMAIL-131 — fire email.sent webhook with envelope including recipients and subject
+    fire_webhook(
+        &state,
+        mailbox.id,
+        WebhookEvent::EmailSent,
+        serde_json::json!({
+            "from": smtp_from,
+            "to": body.to,
+            "cc": body.cc,
+            "subject": body.subject,
+        }),
+    );
+
     Ok(StatusCode::CREATED)
 }
 
@@ -249,6 +273,14 @@ pub async fn delete_message(
         .delete_message(_imap_user, _imap_pass, &folder, uid)
         .await?;
 
+    // Added: TMAIL-131 — fire email.deleted webhook
+    fire_webhook(
+        &state,
+        mailbox.id,
+        WebhookEvent::EmailDeleted,
+        serde_json::json!({ "folder": folder, "uid": uid }),
+    );
+
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -277,6 +309,18 @@ pub async fn move_message(
         .move_message(_imap_user, _imap_pass, &folder, uid, &body.to_folder)
         .await?;
 
+    // Added: TMAIL-131 — fire email.moved webhook with source + destination folder
+    fire_webhook(
+        &state,
+        mailbox.id,
+        WebhookEvent::EmailMoved,
+        serde_json::json!({
+            "from_folder": folder,
+            "to_folder": body.to_folder,
+            "uid": uid,
+        }),
+    );
+
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -304,6 +348,19 @@ pub async fn flag_message(
     imap_service
         .set_flag(_imap_user, _imap_pass, &folder, uid, &body.flag, body.add)
         .await?;
+
+    // Added: TMAIL-131 — fire email.flagged webhook (covers both adding and removing flags)
+    fire_webhook(
+        &state,
+        mailbox.id,
+        WebhookEvent::EmailFlagged,
+        serde_json::json!({
+            "folder": folder,
+            "uid": uid,
+            "flag": body.flag,
+            "added": body.add,
+        }),
+    );
 
     Ok(StatusCode::NO_CONTENT)
 }
