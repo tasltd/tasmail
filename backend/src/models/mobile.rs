@@ -3,7 +3,15 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-/// Minimal message fields for mobile inbox listing — no body content
+// Default cap on body preview length when the client opts into low-bandwidth mode.
+// Picked to fit a single TCP packet (~1.5 KB MSS) so that the message-list payload
+// stays under one round trip on 2G/Edge networks common in the Ghana market.
+pub const LOW_BANDWIDTH_PREVIEW_CHARS: usize = 280;
+
+/// Minimal message fields for mobile inbox listing — no body content by default.
+/// When the client opts into low-bandwidth mode, a short `preview` snippet
+/// (LOW_BANDWIDTH_PREVIEW_CHARS) is added so the list view can render meaningful
+/// rows without a follow-up `/api/mobile/message/...` call per message.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MobileMessageSummary {
     pub uid: u32,
@@ -13,6 +21,9 @@ pub struct MobileMessageSummary {
     pub is_read: bool,
     pub is_flagged: bool,
     pub has_attachment: bool,
+    /// Optional text-only snippet, populated only in low-bandwidth mode.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preview: Option<String>,
 }
 
 /// Folder name with unread count only — no message totals or other metadata
@@ -82,23 +93,64 @@ pub struct SyncDelta {
     pub has_more: bool,
 }
 
-// Added: Pagination query params shared across mobile endpoints
-#[derive(Debug, Deserialize)]
+// Added: Pagination query params shared across mobile endpoints.
+// `low_bandwidth=true` switches the inbox response to lighter rows that include a
+// short text preview and skip optional fields the client can render from cache.
+#[derive(Debug, Deserialize, Default)]
 pub struct MobileInboxQuery {
     pub page: Option<u32>,
     pub per_page: Option<u32>,
+    #[serde(default, alias = "low_bw")]
+    pub low_bandwidth: Option<bool>,
 }
 
-// Added: Query param for optional body truncation on message detail
-#[derive(Debug, Deserialize)]
+// Query params for the message detail endpoint.
+// `low_bandwidth=true` forces text-only output (HTML stripped) and caps the body
+// at LOW_BANDWIDTH_PREVIEW_CHARS regardless of `max_body`, so 2G/Edge clients pay
+// a bounded cost even when a sender includes a 200 KB HTML newsletter.
+#[derive(Debug, Deserialize, Default)]
 pub struct MobileMessageQuery {
     pub max_body: Option<usize>,
+    #[serde(default, alias = "low_bw")]
+    pub low_bandwidth: Option<bool>,
 }
 
-// Added: Query param for delta sync since a given timestamp
+// Query param for the GET form of delta sync — clients pass `since=<RFC3339>`
+// and get back any changes after that timestamp.
 #[derive(Debug, Deserialize)]
 pub struct SyncQuery {
     pub since: String,
+}
+
+// Query/body for the POST form of delta sync — clients pass `version=<sync_token>`
+// from the previous response. Wrapping the cursor in an opaque token (instead of
+// a raw timestamp) lets the server change its internal representation later
+// (CONDSTORE/QRESYNC MODSEQ, change-log row ID, etc.) without breaking clients.
+#[derive(Debug, Deserialize, Default)]
+pub struct SyncVersionQuery {
+    pub version: Option<String>,
+}
+
+// Optional JSON body for POST /api/mobile/sync. Lets clients send the cursor in
+// either the query string (?version=...) or the body so retries with large
+// version tokens stay under URL length limits on proxies.
+#[derive(Debug, Deserialize, Default)]
+pub struct SyncVersionBody {
+    pub version: Option<String>,
+}
+
+// Lightweight quota payload for mobile dashboards. Subset of the full
+// `QuotaStatus` returned by `/api/quota`, with only the fields the mobile UI
+// renders (used / quota / percent / warning flag / message count). Skips the
+// `last_synced_at` timestamp because the mobile client refreshes on demand.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MobileUsage {
+    pub used_bytes: i64,
+    pub quota_bytes: i64,
+    pub usage_percent: f64,
+    pub message_count: i32,
+    pub is_warning: bool,
+    pub is_over_quota: bool,
 }
 
 // Added: Max number of sub-requests allowed in a single batch call
@@ -124,6 +176,7 @@ mod tests {
             is_read: false,
             is_flagged: true,
             has_attachment: false,
+            preview: None,
         };
 
         let json = serde_json::to_value(&summary).unwrap();
@@ -145,6 +198,7 @@ mod tests {
             is_read: true,
             is_flagged: false,
             has_attachment: false,
+            preview: None,
         };
 
         let json = serde_json::to_value(&summary).unwrap();

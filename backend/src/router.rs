@@ -884,7 +884,12 @@ pub fn create_router(state: AppState) -> Router {
             get(handlers::mobile::mobile_unread_count),
         )
         .route("/api/mobile/batch", post(handlers::mobile::mobile_batch))
-        .route("/api/mobile/sync", get(handlers::mobile::mobile_sync))
+        .route(
+            "/api/mobile/sync",
+            get(handlers::mobile::mobile_sync).post(handlers::mobile::mobile_sync_post),
+        )
+        // Added: Lightweight data quota for mobile dashboards (TMAIL-52)
+        .route("/api/mobile/usage", get(handlers::mobile::mobile_usage))
         // Added: Push notification device management routes for TMAIL-50
         .route("/api/push/register", post(handlers::push::register_device))
         .route("/api/push/devices", get(handlers::push::list_devices))
@@ -944,11 +949,19 @@ pub fn create_router(state: AppState) -> Router {
         axum::http::HeaderValue::from_static("1.0"),
     );
 
-    // Added: Gzip compression for low-bandwidth optimization
+    // Added: Multi-algorithm compression for low-bandwidth mobile clients (TMAIL-52).
+    // CompressionLayer::new() negotiates gzip, brotli, and deflate based on the
+    // client's Accept-Encoding header. Brotli wins for text payloads (JSON, HTML);
+    // gzip stays the safe fallback for older clients.
     Router::new()
         .merge(public_routes)
         .merge(protected_routes)
-        .layer(CompressionLayer::new())
+        .layer(
+            CompressionLayer::new()
+                .gzip(true)
+                .br(true)
+                .deflate(true),
+        )
         .layer(api_version_layer)
         // Added: Prometheus request instrumentation on all routes (TMAIL-41)
         .layer(axum_middleware::from_fn(metrics_middleware))

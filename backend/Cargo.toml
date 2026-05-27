@@ -12,7 +12,7 @@ axum-extra = { version = "0.10", features = ["cookie", "typed-header"] }
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["compat"] }
 tower = { version = "0.5", features = ["full"] }
-tower-http = { version = "0.6", features = ["cors", "compression-gzip", "trace", "limit", "set-header"] }
+tower-http = { version = "0.6", features = ["cors", "compression-gzip", "compression-br", "compression-deflate", "trace", "limit", "set-header"] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -74,6 +74,9 @@ tokio-test = "0.4"
 tempfile = "3"
 # Added: HTTP body utilities for reading response bodies in integration tests
 http-body-util = "0.1"
+# Added: Query-string parsing in mobile handler tests (TMAIL-52). axum uses this
+# transitively but we need it as a direct dep so the test code can import it.
+serde_urlencoded = "0.7"
 # Added: Criterion benchmarks for performance profiling critical paths (TMAIL-38)
 criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
 tokio = { version = "1", features = ["full"] }
