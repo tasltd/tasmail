@@ -196,6 +196,7 @@ async fn protected_route_with_wrong_secret_returns_401() {
         sub: uuid::Uuid::new_v4().to_string(),
         username: "wrong@example.com".to_string(),
         is_admin: false,
+        is_compliance_officer: false,
         exp: (now + Duration::seconds(900)).timestamp() as usize,
         iat: now.timestamp() as usize,
     };

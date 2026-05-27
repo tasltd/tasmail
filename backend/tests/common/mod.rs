@@ -174,6 +174,7 @@ pub fn create_test_token(user_id: Option<Uuid>, is_admin: bool) -> String {
         sub: uid.to_string(),
         username: "testuser@example.com".to_string(),
         is_admin,
+        is_compliance_officer: false,
         exp: exp.timestamp() as usize,
         iat: now.timestamp() as usize,
     };
@@ -193,6 +194,7 @@ pub fn create_expired_token() -> String {
         sub: Uuid::new_v4().to_string(),
         username: "expired@example.com".to_string(),
         is_admin: false,
+        is_compliance_officer: false,
         exp: (past + Duration::seconds(900)).timestamp() as usize,
         iat: past.timestamp() as usize,
     };
