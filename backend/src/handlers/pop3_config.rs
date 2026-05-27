@@ -122,6 +122,7 @@ mod tests {
             sub: uuid::Uuid::new_v4().to_string(),
             username: "test@example.com".into(),
             is_admin: false,
+            is_compliance_officer: false,
             exp: 0,
             iat: 0,
         };
@@ -134,6 +135,7 @@ mod tests {
             sub: "not-a-uuid".into(),
             username: "test@example.com".into(),
             is_admin: false,
+            is_compliance_officer: false,
             exp: 0,
             iat: 0,
         };

@@ -16,6 +16,51 @@ pub enum EdiscoveryStatus {
     Exported,
 }
 
+/// PURPOSE: TMAIL-137 — export format selection for eDiscovery result bundles.
+/// CONSTRAINTS: must match the CHECK constraint added in migration 069
+/// (mbox | eml | pdf). Stored as TEXT in the DB per project convention.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ExportFormat {
+    Mbox,
+    Eml,
+    Pdf,
+}
+
+impl ExportFormat {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ExportFormat::Mbox => "mbox",
+            ExportFormat::Eml => "eml",
+            ExportFormat::Pdf => "pdf",
+        }
+    }
+
+    pub fn file_extension(&self) -> &'static str {
+        // Eml export bundles multiple .eml files into a zip; mbox + pdf are single files.
+        match self {
+            ExportFormat::Mbox => "mbox",
+            ExportFormat::Eml => "zip",
+            ExportFormat::Pdf => "pdf",
+        }
+    }
+}
+
+impl std::str::FromStr for ExportFormat {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
+            "mbox" => Ok(ExportFormat::Mbox),
+            "eml" => Ok(ExportFormat::Eml),
+            "pdf" => Ok(ExportFormat::Pdf),
+            other => Err(format!(
+                "invalid export_format '{}': expected one of mbox, eml, pdf",
+                other
+            )),
+        }
+    }
+}
+
 /// PURPOSE: Represents an eDiscovery search created by an admin
 /// CONSTRAINTS: admin_id must reference a valid admin user
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -32,8 +77,20 @@ pub struct EdiscoverySearch {
     pub status: EdiscoveryStatus,
     pub results_count: Option<i32>,
     pub export_path: Option<String>,
+    // Added: TMAIL-137 — scope toggle. When true, search runs against the set
+    // of mailboxes currently under an active legal hold.
+    #[serde(default)]
+    pub legal_hold_only: bool,
+    // Added: TMAIL-137 — selected export format; stored as TEXT in the DB
+    // (migration 069). Decoded into ExportFormat at the boundary.
+    #[serde(default = "default_export_format_str")]
+    pub export_format: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub completed_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+fn default_export_format_str() -> String {
+    "mbox".to_string()
 }
 
 /// PURPOSE: Represents a single result from an eDiscovery search
@@ -62,6 +119,13 @@ pub struct CreateEdiscoveryRequest {
     pub date_from: Option<chrono::DateTime<chrono::Utc>>,
     pub date_to: Option<chrono::DateTime<chrono::Utc>>,
     pub include_attachments: Option<bool>,
+    // Added: TMAIL-137 — when true, search is scoped to currently-held users
+    // regardless of what target_users the caller supplied. The handler
+    // intersects with active legal holds before persisting the row.
+    pub legal_hold_only: Option<bool>,
+    // Added: TMAIL-137 — export format for the eventual results bundle.
+    // Defaults to mbox on the server side if omitted. Accepted: mbox|eml|pdf.
+    pub export_format: Option<String>,
 }
 
 /// PURPOSE: Combined search with its results for the detail endpoint
@@ -96,23 +160,32 @@ impl EdiscoverySearch {
     }
 
     /// PURPOSE: Create a new eDiscovery search with pending status
+    /// CONSTRAINTS: caller must have already resolved `target_users` and
+    /// `export_format` against the legal-hold scope and the CHECK constraint
+    /// (mbox|eml|pdf); this method does not re-validate.
     pub async fn create(
         pool: &PgPool,
         admin_id: Uuid,
         input: &CreateEdiscoveryRequest,
+        target_users: Option<Vec<Uuid>>,
+        export_format: &str,
     ) -> Result<EdiscoverySearch, sqlx::Error> {
         sqlx::query_as::<_, EdiscoverySearch>(
-            "INSERT INTO ediscovery_searches (admin_id, name, description, search_query, target_users, date_from, date_to, include_attachments) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *",
+            "INSERT INTO ediscovery_searches \
+                (admin_id, name, description, search_query, target_users, date_from, date_to, \
+                 include_attachments, legal_hold_only, export_format) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *",
         )
         .bind(admin_id)
         .bind(&input.name)
         .bind(&input.description)
         .bind(&input.search_query)
-        .bind(&input.target_users)
+        .bind(&target_users)
         .bind(input.date_from)
         .bind(input.date_to)
         .bind(input.include_attachments.unwrap_or(false))
+        .bind(input.legal_hold_only.unwrap_or(false))
+        .bind(export_format)
         .fetch_one(pool)
         .await
     }
@@ -237,6 +310,8 @@ mod tests {
             date_from: Some(chrono::Utc::now()),
             date_to: None,
             include_attachments: true,
+            legal_hold_only: false,
+            export_format: "mbox".to_string(),
             status: EdiscoveryStatus::Pending,
             results_count: Some(0),
             export_path: None,
@@ -263,6 +338,8 @@ mod tests {
             date_from: None,
             date_to: None,
             include_attachments: false,
+            legal_hold_only: false,
+            export_format: "mbox".to_string(),
             status: EdiscoveryStatus::Running,
             results_count: None,
             export_path: None,
@@ -378,6 +455,8 @@ mod tests {
             date_from: None,
             date_to: None,
             include_attachments: false,
+            legal_hold_only: false,
+            export_format: "mbox".to_string(),
             status: EdiscoveryStatus::Completed,
             results_count: Some(1),
             export_path: None,
@@ -394,6 +473,39 @@ mod tests {
         // NOTE: #[serde(flatten)] merges search fields into top level
         assert_eq!(json["name"], "Test Search");
         assert_eq!(json["results"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn test_export_format_from_str_valid() {
+        assert_eq!("mbox".parse::<ExportFormat>().unwrap(), ExportFormat::Mbox);
+        assert_eq!("MBOX".parse::<ExportFormat>().unwrap(), ExportFormat::Mbox);
+        assert_eq!("eml".parse::<ExportFormat>().unwrap(), ExportFormat::Eml);
+        assert_eq!("pdf".parse::<ExportFormat>().unwrap(), ExportFormat::Pdf);
+    }
+
+    #[test]
+    fn test_export_format_from_str_rejects_unknown() {
+        let err = "csv".parse::<ExportFormat>().unwrap_err();
+        assert!(err.contains("csv"));
+        assert!(err.contains("mbox"));
+        let err = "".parse::<ExportFormat>().unwrap_err();
+        assert!(err.contains("expected one of"));
+    }
+
+    #[test]
+    fn test_export_format_extension_mapping() {
+        // Eml exports get zipped into a bundle of .eml files.
+        assert_eq!(ExportFormat::Mbox.file_extension(), "mbox");
+        assert_eq!(ExportFormat::Eml.file_extension(), "zip");
+        assert_eq!(ExportFormat::Pdf.file_extension(), "pdf");
+    }
+
+    #[test]
+    fn test_export_format_serialization_is_lowercase() {
+        let json = serde_json::to_value(&ExportFormat::Mbox).unwrap();
+        assert_eq!(json, "mbox");
+        let json = serde_json::to_value(&ExportFormat::Pdf).unwrap();
+        assert_eq!(json, "pdf");
     }
 
     #[test]

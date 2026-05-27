@@ -18,6 +18,10 @@ pub struct Claims {
     pub sub: String, // mailbox_id
     pub username: String,
     pub is_admin: bool,
+    // Added: TMAIL-137 — dedicated compliance officer role for eDiscovery.
+    // `default` lets us decode pre-migration tokens issued before this field existed.
+    #[serde(default)]
+    pub is_compliance_officer: bool,
     pub exp: usize,
     pub iat: usize,
 }
@@ -32,6 +36,19 @@ pub fn require_admin(claims: &Claims) -> Result<(), AppError> {
         return Err(AppError::Forbidden("Admin access required".to_string()));
     }
     Ok(())
+}
+
+/// Added: TMAIL-137 — compliance role gate. Admins implicitly pass; a
+/// dedicated compliance officer (without full admin rights) also passes.
+/// Used by eDiscovery handlers so investigators can be granted access
+/// without the broader admin surface.
+pub fn require_compliance(claims: &Claims) -> Result<(), AppError> {
+    if claims.is_admin || claims.is_compliance_officer {
+        return Ok(());
+    }
+    Err(AppError::Forbidden(
+        "Compliance officer or admin access required".to_string(),
+    ))
 }
 
 #[derive(Debug, Serialize)]
@@ -72,6 +89,7 @@ pub fn create_access_token(
         sub: mailbox.id.to_string(),
         username: mailbox.username.clone(),
         is_admin: mailbox.is_admin,
+        is_compliance_officer: mailbox.is_compliance_officer,
         exp: exp.timestamp() as usize,
         iat: now.timestamp() as usize,
     };
@@ -267,6 +285,7 @@ mod tests {
             quota_warn_percent: 80,
             active: true,
             is_admin: false,
+            is_compliance_officer: false,
             created_at: Utc::now(),
             updated_at: Utc::now(),
             totp_secret: None,
@@ -386,6 +405,7 @@ mod tests {
             sub: mailbox.id.to_string(),
             username: mailbox.username,
             is_admin: false,
+            is_compliance_officer: false,
             exp: (past + Duration::seconds(900)).timestamp() as usize,
             iat: past.timestamp() as usize,
         };

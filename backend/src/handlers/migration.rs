@@ -157,6 +157,7 @@ mod tests {
             sub: "550e8400-e29b-41d4-a716-446655440000".to_string(),
             username: "test@example.com".to_string(),
             is_admin: false,
+            is_compliance_officer: false,
             exp: 0,
             iat: 0,
         };
@@ -169,6 +170,7 @@ mod tests {
             sub: "invalid".to_string(),
             username: "test@example.com".to_string(),
             is_admin: false,
+            is_compliance_officer: false,
             exp: 0,
             iat: 0,
         };

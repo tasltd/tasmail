@@ -32,6 +32,7 @@ mod tests {
             sub: "00000000-0000-0000-0000-000000000001".into(),
             username: "user@example.com".into(),
             is_admin,
+            is_compliance_officer: false,
             exp: 9_999_999_999,
             iat: 0,
         }

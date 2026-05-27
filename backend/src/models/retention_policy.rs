@@ -155,6 +155,19 @@ impl LegalHold {
         .await
     }
 
+    /// PURPOSE: TMAIL-137 — return distinct user_ids that currently have at
+    /// least one active legal hold. Used by eDiscovery searches with
+    /// `legal_hold_only=true` so investigators cannot accidentally scope a
+    /// search to mailboxes that are not under hold.
+    pub async fn find_active_user_ids(pool: &PgPool) -> Result<Vec<Uuid>, sqlx::Error> {
+        let rows: Vec<(Uuid,)> = sqlx::query_as(
+            "SELECT DISTINCT user_id FROM legal_holds WHERE active = true",
+        )
+        .fetch_all(pool)
+        .await?;
+        Ok(rows.into_iter().map(|(u,)| u).collect())
+    }
+
     /// PURPOSE: Place a new legal hold on a user
     pub async fn create(
         pool: &PgPool,

@@ -409,6 +409,7 @@ mod tests {
             quota_warn_percent: 80,
             active,
             is_admin,
+            is_compliance_officer: false,
             created_at: Utc.with_ymd_and_hms(2026, 4, 15, 10, 30, 0).unwrap(),
             updated_at: Utc::now(),
             totp_secret: Some("SECRETOTP123".to_string()),

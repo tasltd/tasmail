@@ -14,6 +14,10 @@ pub struct Mailbox {
     pub quota_warn_percent: i32,
     pub active: bool,
     pub is_admin: bool,
+    // Added: TMAIL-137 — dedicated compliance officer role for eDiscovery.
+    // Default false on existing rows via migration 069.
+    #[serde(default)]
+    pub is_compliance_officer: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub totp_secret: Option<String>,
@@ -32,6 +36,8 @@ pub struct MailboxInfo {
     pub quota_warn_percent: i32,
     pub active: bool,
     pub is_admin: bool,
+    // Added: TMAIL-137 — exposed so admin UI can show / set the role.
+    pub is_compliance_officer: bool,
     pub created_at: DateTime<Utc>,
 }
 
@@ -46,6 +52,7 @@ impl From<Mailbox> for MailboxInfo {
             quota_warn_percent: m.quota_warn_percent,
             active: m.active,
             is_admin: m.is_admin,
+            is_compliance_officer: m.is_compliance_officer,
             created_at: m.created_at,
         }
     }
@@ -155,6 +162,7 @@ mod tests {
             quota_warn_percent: 80,
             active: true,
             is_admin: false,
+            is_compliance_officer: false,
             created_at: Utc::now(),
             updated_at: Utc::now(),
             totp_secret: Some("JBSWY3DPEHPK3PXP".to_string()),
