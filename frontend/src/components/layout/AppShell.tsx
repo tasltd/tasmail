@@ -79,6 +79,8 @@ import { useKeyboardShortcuts } from '../../hooks/useKeyboardShortcuts';
 import { KeyboardShortcutHelp } from '../shared/KeyboardShortcutHelp';
 // Added: Responsive hook for mobile layout handling (TMAIL-33)
 import { useResponsive } from '../../hooks/useResponsive';
+// Added (TMAIL-32): two-way sync between search state and the URL query string.
+import { useSearchUrlSync } from '../../hooks/useSearchUrlSync';
 
 interface AppShellProps {
   onLogout: () => void;
@@ -92,6 +94,8 @@ export function AppShell({ onLogout }: AppShellProps) {
   const { showHelp, setShowHelp } = useKeyboardShortcuts();
   // Added: Responsive breakpoint detection for mobile layout (TMAIL-33)
   const { isMobile } = useResponsive();
+  // Added (TMAIL-32): keep ?q=... and advanced filters in the URL so search is bookmarkable.
+  useSearchUrlSync();
 
   return (
     <div className={`app-shell ${sidebarOpen ? '' : 'app-shell--sidebar-collapsed'}`}>

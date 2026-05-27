@@ -14,14 +14,20 @@ const mockSetSearchQuery = vi.fn();
 const mockSetSelectedUid = vi.fn();
 // Changed: Added advancedSearch and setAdvancedSearch for TMAIL-32
 const mockSetAdvancedSearch = vi.fn();
+// Changed (TMAIL-32): make store fields mutable per-test so we can simulate
+// different query / advanced-search inputs without redefining the mock.
+const storeState: { searchQuery: string; advancedSearch: unknown } = {
+  searchQuery: 'test search',
+  advancedSearch: null,
+};
 vi.mock('../../stores/mailStore', () => ({
   useMailStore: (selector: (s: Record<string, unknown>) => unknown) =>
     selector({
-      searchQuery: 'test search',
+      get searchQuery() { return storeState.searchQuery; },
       selectedFolder: 'INBOX',
       setSearchQuery: mockSetSearchQuery,
       setSelectedUid: mockSetSelectedUid,
-      advancedSearch: null,
+      get advancedSearch() { return storeState.advancedSearch; },
       setAdvancedSearch: mockSetAdvancedSearch,
     }),
 }));
@@ -35,6 +41,9 @@ describe('SearchResults', () => {
     vi.clearAllMocks();
     // Added: Default return for advanced search hook (not active by default)
     mockUseAdvancedSearch.mockReturnValue({ data: undefined, isLoading: false, error: null });
+    // Reset per-test store state
+    storeState.searchQuery = 'test search';
+    storeState.advancedSearch = null;
   });
 
   it('shows loading skeleton when isLoading', () => {
@@ -94,6 +103,60 @@ describe('SearchResults', () => {
     expect(screen.getByText('alice@example.com')).toBeInTheDocument();
     expect(screen.getByText('Hello World')).toBeInTheDocument();
     expect(screen.getByText('2026-04-10')).toBeInTheDocument();
+  });
+
+  // Added (TMAIL-32): keyword highlighting in result rows
+  it('highlights query tokens that appear in from / subject', () => {
+    storeState.searchQuery = 'budget alice';
+    mockUseSearch.mockReturnValue({
+      data: {
+        total: 1,
+        messages: [
+          {
+            uid: 1,
+            from: 'alice@example.com',
+            subject: 'Q3 budget review notes',
+            date: '2026-04-10',
+            flags: [],
+          },
+        ],
+      },
+      isLoading: false,
+      error: null,
+    });
+    const { container } = render(<SearchResults />);
+    const marks = Array.from(container.querySelectorAll('mark.search-highlight'));
+    const matchedText = marks.map((m) => m.textContent?.toLowerCase());
+    expect(matchedText).toContain('alice');
+    expect(matchedText).toContain('budget');
+  });
+
+  // Added (TMAIL-32): advanced filter values also contribute to highlight set
+  it('highlights tokens from advanced subject / from filters', () => {
+    storeState.searchQuery = '';
+    storeState.advancedSearch = { query: '', subject: 'invoice', from: 'bob' };
+    mockUseAdvancedSearch.mockReturnValue({
+      data: {
+        total: 1,
+        messages: [
+          {
+            uid: 2,
+            from: 'bob@example.com',
+            subject: 'March invoice attached',
+            date: '2026-04-10',
+            flags: [],
+          },
+        ],
+      },
+      isLoading: false,
+      error: null,
+    });
+    const { container } = render(<SearchResults />);
+    const matchedText = Array.from(container.querySelectorAll('mark.search-highlight')).map(
+      (m) => m.textContent?.toLowerCase(),
+    );
+    expect(matchedText).toContain('invoice');
+    expect(matchedText).toContain('bob');
   });
 
   it('clear search button calls setSearchQuery with empty string', () => {

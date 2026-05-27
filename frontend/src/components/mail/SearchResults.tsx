@@ -2,11 +2,33 @@ import { X } from 'lucide-react';
 import { useSearch, useAdvancedSearch } from '../../hooks/useMailbox';
 import { useMailStore } from '../../stores/mailStore';
 import { formatMessageDate } from '../../utils/date';
+import { highlightKeywords, tokenizeQuery } from '../../utils/highlight';
 import { LoadingSkeleton } from '../shared/LoadingSkeleton';
 import type { MessageEnvelope } from '../../types/mail';
 import type { AdvancedSearchParams } from '../../api/messages';
 
-function SearchRow({ message }: { message: MessageEnvelope }) {
+// Added (TMAIL-32): collect highlightable terms from both the free-text query
+// and the advanced-filter inputs so the row marks what actually matched.
+function buildHighlightKeywords(
+  query: string,
+  advanced: AdvancedSearchParams | null,
+): string[] {
+  const tokens = tokenizeQuery(query);
+  if (advanced) {
+    if (advanced.from) tokens.push(...tokenizeQuery(advanced.from));
+    if (advanced.to) tokens.push(...tokenizeQuery(advanced.to));
+    if (advanced.subject) tokens.push(...tokenizeQuery(advanced.subject));
+  }
+  return Array.from(new Set(tokens));
+}
+
+function SearchRow({
+  message,
+  keywords,
+}: {
+  message: MessageEnvelope;
+  keywords: string[];
+}) {
   const setSelectedUid = useMailStore((s) => s.setSelectedUid);
 
   const isRead = message.flags.some((f) => f.includes('Seen'));
@@ -19,8 +41,12 @@ function SearchRow({ message }: { message: MessageEnvelope }) {
       tabIndex={0}
       onKeyDown={(e) => e.key === 'Enter' && setSelectedUid(message.uid)}
     >
-      <div className="message-row__from">{message.from || '(unknown)'}</div>
-      <div className="message-row__subject">{message.subject || '(no subject)'}</div>
+      <div className="message-row__from">
+        {message.from ? highlightKeywords(message.from, keywords) : '(unknown)'}
+      </div>
+      <div className="message-row__subject">
+        {message.subject ? highlightKeywords(message.subject, keywords) : '(no subject)'}
+      </div>
       <div className="message-row__date">{formatMessageDate(message.date)}</div>
     </div>
   );
@@ -128,7 +154,11 @@ export function SearchResults() {
       {data && (
         <div className="message-list__items">
           {data.messages.map((msg) => (
-            <SearchRow key={msg.uid} message={msg} />
+            <SearchRow
+              key={msg.uid}
+              message={msg}
+              keywords={buildHighlightKeywords(searchQuery, advancedSearch)}
+            />
           ))}
         </div>
       )}

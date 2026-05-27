@@ -652,6 +652,18 @@ body {
 }
 .filter-chip__remove:hover { opacity: 1; }
 
+/* Added (TMAIL-32): keyword highlight chip on search result rows */
+.search-highlight {
+  background: #fef08a;
+  color: inherit;
+  padding: 0 2px;
+  border-radius: 2px;
+}
+[data-theme="dark"] .search-highlight {
+  background: #a16207;
+  color: #fff;
+}
+
 /* Added: Keyboard shortcut help dialog */
 .shortcut-help-overlay {
   position: fixed;
