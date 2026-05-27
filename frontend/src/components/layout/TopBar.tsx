@@ -41,7 +41,14 @@ export function TopBar({ onLogout }: TopBarProps) {
   return (
     <header className="topbar">
       {/* Changed: Added data-testid for mobile hamburger toggle (TMAIL-33) */}
-      <button className="btn btn--icon" onClick={toggleSidebar} data-testid="sidebar-toggle">
+      {/* Added (TMAIL-260): aria-label for icon-only button — title only shows on hover */}
+      <button
+        className="btn btn--icon"
+        onClick={toggleSidebar}
+        data-testid="sidebar-toggle"
+        aria-label="Toggle sidebar"
+        title="Toggle sidebar"
+      >
         <Menu size={20} />
       </button>
 
@@ -55,11 +62,14 @@ export function TopBar({ onLogout }: TopBarProps) {
             onChange={(e) => setInputValue(e.target.value)}
           />
           {/* Added: Filter toggle button for TMAIL-32 advanced search */}
+          {/* Added (TMAIL-260): aria-label + aria-pressed so screen readers announce state */}
           <button
             type="button"
             className={`btn btn--icon topbar__filter-toggle ${showFilters ? 'topbar__filter-toggle--active' : ''}`}
             onClick={() => setShowFilters((prev) => !prev)}
             title="Toggle advanced filters"
+            aria-label="Toggle advanced filters"
+            aria-pressed={showFilters}
             data-testid="filter-toggle"
           >
             <SlidersHorizontal size={18} />
@@ -70,6 +80,8 @@ export function TopBar({ onLogout }: TopBarProps) {
             className={`btn btn--icon topbar__semantic-toggle ${showSemanticSearch ? 'topbar__semantic-toggle--active' : ''}`}
             onClick={() => setShowSemanticSearch((prev) => !prev)}
             title="Toggle semantic search"
+            aria-label="Toggle semantic search"
+            aria-pressed={showSemanticSearch}
             data-testid="semantic-search-toggle"
           >
             <Sparkles size={18} />
@@ -80,6 +92,8 @@ export function TopBar({ onLogout }: TopBarProps) {
             className={`btn btn--icon topbar__nlp-toggle ${showNlpSearch ? 'topbar__nlp-toggle--active' : ''}`}
             onClick={() => setShowNlpSearch((prev) => !prev)}
             title="Toggle AI search"
+            aria-label="Toggle AI search"
+            aria-pressed={showNlpSearch}
             data-testid="nlp-search-toggle"
           >
             <BrainCircuit size={18} />
@@ -100,7 +114,13 @@ export function TopBar({ onLogout }: TopBarProps) {
             <WifiOff size={18} /> Offline
           </span>
         )}
-        <button className="btn btn--icon" onClick={toggleTheme} title="Toggle theme">
+        {/* Added (TMAIL-260): aria-label describes the action that will happen on activation */}
+        <button
+          className="btn btn--icon"
+          onClick={toggleTheme}
+          title="Toggle theme"
+          aria-label={theme === 'light' ? 'Switch to dark theme' : 'Switch to light theme'}
+        >
           {theme === 'light' ? <Moon size={18} /> : <Sun size={18} />}
         </button>
         {/* TMAIL-223: hop to the alt-UI (built bundle in frontend/public/modern/).
@@ -114,7 +134,9 @@ export function TopBar({ onLogout }: TopBarProps) {
         >
           <Wand2 size={18} />
         </a>
-        <button className="btn btn--icon" onClick={onLogout} title="Logout">
+        {/* Added (TMAIL-260): aria-label for screen readers — title kept as "Logout" so
+            existing tests / selectors still match the visible tooltip. */}
+        <button className="btn btn--icon" onClick={onLogout} title="Logout" aria-label="Log out">
           <LogOut size={18} />
         </button>
       </div>

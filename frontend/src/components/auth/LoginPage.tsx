@@ -69,7 +69,8 @@ export function LoginPage({ onLogin }: LoginPageProps) {
           <p>Webmail for any IMAP/SMTP server</p>
         </div>
 
-        {error && <div className="login-card__error">{error}</div>}
+        {/* Added (TMAIL-260): role=alert so screen readers announce login failures */}
+        {error && <div className="login-card__error" role="alert">{error}</div>}
 
         <form onSubmit={handleSubmit} className="login-card__form">
           <div className="form-group">

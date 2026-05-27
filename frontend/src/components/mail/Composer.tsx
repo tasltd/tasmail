@@ -207,17 +207,27 @@ export function Composer() {
     <div className="composer">
       <div className="composer__toolbar">
         <h3>New Message</h3>
-        {draftStatus === 'saving' && <span style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>Saving draft...</span>}
-        {draftStatus === 'saved' && <span style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>Draft saved</span>}
-        <button className="btn btn--icon" onClick={saveDraftNow} title="Save draft now">
+        {/* Added (TMAIL-260): single live region so screen readers announce draft state transitions */}
+        <span role="status" aria-live="polite" style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>
+          {draftStatus === 'saving' && 'Saving draft...'}
+          {draftStatus === 'saved' && 'Draft saved'}
+        </span>
+        {/* Added (TMAIL-260): aria-label so SR users hear the action; title kept for mouse hover */}
+        <button className="btn btn--icon" onClick={saveDraftNow} title="Save draft now" aria-label="Save draft now">
           <Save size={18} />
         </button>
-        <button className="btn btn--icon" onClick={() => setViewMode('list')}>
+        <button
+          className="btn btn--icon"
+          onClick={() => setViewMode('list')}
+          title="Close composer"
+          aria-label="Close composer"
+        >
           <X size={20} />
         </button>
       </div>
 
-      {error && <div className="composer__error">{error}</div>}
+      {/* Added (TMAIL-260): role=alert so screen readers announce send failures immediately */}
+      {error && <div className="composer__error" role="alert">{error}</div>}
 
       <div className="composer__fields">
         <div className="composer__field">
@@ -239,8 +249,10 @@ export function Composer() {
           />
         </div>
         <div className="composer__field">
-          <label>Subject:</label>
+          {/* Added (TMAIL-260): htmlFor / id wiring so clicking "Subject" focuses the input */}
+          <label htmlFor="composer-subject">Subject:</label>
           <input
+            id="composer-subject"
             type="text"
             value={subject}
             onChange={(e) => setSubject(e.target.value)}
@@ -322,8 +334,10 @@ export function Composer() {
 
       {showSchedulePicker && (
         <div className="composer__schedule" style={{ padding: '8px 16px', borderTop: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <label style={{ fontSize: '13px' }}>Send at:</label>
+          {/* Added (TMAIL-260): htmlFor / id wiring for the Send-at picker */}
+          <label htmlFor="composer-schedule-at" style={{ fontSize: '13px' }}>Send at:</label>
           <input
+            id="composer-schedule-at"
             type="datetime-local"
             value={scheduleDate}
             onChange={(e) => setScheduleDate(e.target.value)}
@@ -349,12 +363,19 @@ export function Composer() {
       )}
 
       {undoState && (
-        <div className="composer__undo-toast" style={{
-          position: 'fixed', bottom: '24px', left: '50%', transform: 'translateX(-50%)',
-          background: 'var(--color-bg-elevated, #333)', color: 'var(--color-text-inverse, #fff)',
-          padding: '12px 20px', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '12px',
-          boxShadow: '0 4px 12px rgba(0,0,0,0.3)', zIndex: 1000,
-        }}>
+        // Added (TMAIL-260): role=status + aria-live=polite so screen readers announce
+        // the "Message sent (Ns)" countdown and undo affordance without interrupting.
+        <div
+          className="composer__undo-toast"
+          role="status"
+          aria-live="polite"
+          style={{
+            position: 'fixed', bottom: '24px', left: '50%', transform: 'translateX(-50%)',
+            background: 'var(--color-bg-elevated, #333)', color: 'var(--color-text-inverse, #fff)',
+            padding: '12px 20px', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '12px',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.3)', zIndex: 1000,
+          }}
+        >
           <span>Message sent ({undoState.countdown}s)</span>
           <button onClick={handleUndo} style={{
             background: 'transparent', color: 'var(--color-primary, #4a90d9)',

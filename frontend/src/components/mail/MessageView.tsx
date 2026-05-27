@@ -125,20 +125,32 @@ export function MessageView() {
 
   return (
     <div className="message-view">
-      <div className="message-view__toolbar">
-        <button className="btn btn--icon" onClick={() => setSelectedUid(null)} title="Back to list">
+      {/* Added (TMAIL-260): toolbar role + aria-label so screen readers announce the group */}
+      <div className="message-view__toolbar" role="toolbar" aria-label="Message actions">
+        {/* Added (TMAIL-260): aria-label on every icon-only button — title only fires on hover */}
+        <button
+          className="btn btn--icon"
+          onClick={() => setSelectedUid(null)}
+          title="Back to list"
+          aria-label="Back to list"
+        >
           <ArrowLeft size={20} />
         </button>
-        <button className="btn btn--icon" onClick={handleReply} title="Reply">
+        <button className="btn btn--icon" onClick={handleReply} title="Reply" aria-label="Reply">
           <Reply size={20} />
         </button>
-        <button className="btn btn--icon" title="Forward">
+        {/* NOTE (TMAIL-260): Forward currently has no onClick — see assessment finding 4.
+            Marked disabled so keyboard users aren't sent to a dead control.
+            Title kept as "Forward" so existing tests / E2E selectors still find it. */}
+        <button className="btn btn--icon" title="Forward" aria-label="Forward (not yet implemented)" disabled>
           <Forward size={20} />
         </button>
         <button
           className={`btn btn--icon ${isFlagged ? 'btn--active' : ''}`}
           onClick={() => flagMut.mutate({ flag: '\\Flagged', add: !isFlagged })}
           title={isFlagged ? 'Unstar' : 'Star'}
+          aria-label={isFlagged ? 'Unstar message' : 'Star message'}
+          aria-pressed={isFlagged}
         >
           <Star size={20} />
         </button>
@@ -148,6 +160,7 @@ export function MessageView() {
           onClick={() => exportEmlMut.mutate()}
           disabled={exportEmlMut.isPending}
           title="Download .eml"
+          aria-label="Download as .eml file"
         >
           <Download size={20} />
         </button>
@@ -158,6 +171,7 @@ export function MessageView() {
             if (folder) moveMut.mutate(folder);
           }}
           title="Move to folder"
+          aria-label="Move to folder"
         >
           <FolderInput size={20} />
         </button>
@@ -171,6 +185,7 @@ export function MessageView() {
           className="btn btn--icon btn--danger"
           onClick={() => deleteMut.mutate()}
           title="Delete"
+          aria-label="Delete message"
         >
           <Trash2 size={20} />
         </button>
