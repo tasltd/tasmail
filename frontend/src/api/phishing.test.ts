@@ -114,3 +114,34 @@ describe('updatePhishingAction', () => {
     }
   });
 });
+
+describe('scanMessage with attachments (TMAIL-124)', () => {
+  it('forwards attachment metadata to the backend', async () => {
+    // Added: TMAIL-124 — verify attachments make it through the API client
+    const responseWithDanger: PhishingReport = {
+      ...sampleReport,
+      dangerous_attachments: [
+        { filename: 'invoice.exe', extension: 'exe', reason: 'Executable file' },
+      ],
+    };
+    mockPost.mockResolvedValue(responseWithDanger);
+
+    const scanRequest: ScanRequest = {
+      html_body: '<p>see attached</p>',
+      sender_display_name: 'Accounting',
+      sender_email: 'ap@vendor.com',
+      attachments: [
+        { filename: 'invoice.exe', content_type: 'application/x-msdownload' },
+      ],
+    };
+
+    const result = await scanMessage('INBOX', 42, scanRequest);
+
+    expect(mockPost).toHaveBeenCalledWith(
+      '/folders/INBOX/messages/42/phishing/scan',
+      scanRequest,
+    );
+    expect(result.dangerous_attachments).toBeDefined();
+    expect(result.dangerous_attachments?.[0].extension).toBe('exe');
+  });
+});

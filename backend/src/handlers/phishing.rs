@@ -10,7 +10,7 @@ use uuid::Uuid;
 use crate::error::AppError;
 use crate::models::phishing_report::{PhishingReport, UpdatePhishingAction};
 use crate::services::auth_service::Claims;
-use crate::services::phishing_scanner;
+use crate::services::phishing_scanner::{self, AttachmentMeta};
 use crate::state::AppState;
 
 /// Added: Request body for triggering a phishing scan on a message
@@ -19,6 +19,9 @@ pub struct ScanRequest {
     pub html_body: String,
     pub sender_display_name: String,
     pub sender_email: String,
+    // Added: TMAIL-124 — optional attachment list so the scanner can flag dangerous file types
+    #[serde(default)]
+    pub attachments: Vec<AttachmentMeta>,
 }
 
 /// GET /api/folders/{folder}/messages/{uid}/phishing — Get phishing report for a message
@@ -48,15 +51,19 @@ pub async fn scan_message(
         .parse()
         .map_err(|_| AppError::Internal(anyhow::anyhow!("Invalid mailbox ID in JWT claims")))?;
 
-    // Added: Run the heuristic phishing scanner on the provided email body
-    let scan_result = phishing_scanner::scan_email(
+    // Added: Run the heuristic phishing scanner on the provided email body + attachments
+    let scan_result = phishing_scanner::scan_email_with_attachments(
         &body.html_body,
         &body.sender_display_name,
         &body.sender_email,
+        &body.attachments,
     );
 
     let suspicious_links_json = serde_json::to_value(&scan_result.suspicious_links)
         .map_err(|e| AppError::Internal(anyhow::anyhow!("Failed to serialize suspicious links: {}", e)))?;
+    // Added: TMAIL-124 — serialize dangerous attachment warnings for JSONB persistence
+    let dangerous_attachments_json = serde_json::to_value(&scan_result.dangerous_attachments)
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("Failed to serialize dangerous attachments: {}", e)))?;
 
     // Added: Persist the scan result to the database
     let report = PhishingReport::create(
@@ -68,6 +75,7 @@ pub async fn scan_message(
         scan_result.suspicious_sender,
         scan_result.spoofed_display_name,
         scan_result.risk_score,
+        dangerous_attachments_json,
     )
     .await?;
 
@@ -114,6 +122,27 @@ mod tests {
         assert_eq!(req.sender_display_name, "PayPal");
         assert_eq!(req.sender_email, "scam@evil.com");
         assert!(req.html_body.contains("evil.com"));
+        // Added: TMAIL-124 — attachments default to empty list when omitted
+        assert!(req.attachments.is_empty());
+    }
+
+    #[test]
+    fn test_scan_request_with_attachments() {
+        // Added: TMAIL-124 — verify attachment list is parsed
+        let json = r#"{
+            "html_body": "<p>see attached</p>",
+            "sender_display_name": "Acct",
+            "sender_email": "ap@vendor.com",
+            "attachments": [
+                {"filename": "invoice.pdf", "content_type": "application/pdf"},
+                {"filename": "open.exe"}
+            ]
+        }"#;
+        let req: ScanRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.attachments.len(), 2);
+        assert_eq!(req.attachments[0].filename, "invoice.pdf");
+        assert_eq!(req.attachments[1].filename, "open.exe");
+        assert!(req.attachments[1].content_type.is_none());
     }
 
     #[test]

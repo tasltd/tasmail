@@ -19,6 +19,9 @@ pub struct PhishingReport {
     pub spoofed_display_name: bool,
     pub risk_score: i32,
     pub user_action: String,
+    // Added: TMAIL-124 — dangerous attachment warnings (Outlook Safe Attachments equivalent)
+    #[serde(default)]
+    pub dangerous_attachments: serde_json::Value,
     pub created_at: DateTime<Utc>,
 }
 
@@ -30,6 +33,7 @@ pub struct UpdatePhishingAction {
 
 impl PhishingReport {
     /// Added: Create a new phishing report for a scanned message
+    #[allow(clippy::too_many_arguments)]
     pub async fn create(
         pool: &PgPool,
         mailbox_id: Uuid,
@@ -39,10 +43,12 @@ impl PhishingReport {
         suspicious_sender: bool,
         spoofed_display_name: bool,
         risk_score: i32,
+        // Added: TMAIL-124 — dangerous attachment list (JSONB)
+        dangerous_attachments: serde_json::Value,
     ) -> Result<PhishingReport, sqlx::Error> {
         sqlx::query_as::<_, PhishingReport>(
-            "INSERT INTO phishing_reports (mailbox_id, message_uid, folder, suspicious_links, suspicious_sender, spoofed_display_name, risk_score)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)
+            "INSERT INTO phishing_reports (mailbox_id, message_uid, folder, suspicious_links, suspicious_sender, spoofed_display_name, risk_score, dangerous_attachments)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
              RETURNING *"
         )
         .bind(mailbox_id)
@@ -52,6 +58,7 @@ impl PhishingReport {
         .bind(suspicious_sender)
         .bind(spoofed_display_name)
         .bind(risk_score)
+        .bind(&dangerous_attachments)
         .fetch_one(pool)
         .await
     }
@@ -107,6 +114,7 @@ mod tests {
             "spoofed_display_name": true,
             "risk_score": 65,
             "user_action": "none",
+            "dangerous_attachments": [],
             "created_at": "2026-04-14T10:00:00Z"
         }"#;
         let report: PhishingReport = serde_json::from_str(json).unwrap();
@@ -114,6 +122,25 @@ mod tests {
         assert_eq!(report.risk_score, 65);
         assert!(report.spoofed_display_name);
         assert!(!report.suspicious_sender);
+    }
+
+    #[test]
+    fn test_phishing_report_deserialization_missing_dangerous_attachments_defaults() {
+        // Added: TMAIL-124 — legacy rows without dangerous_attachments deserialize to empty
+        let json = r#"{
+            "id": "550e8400-e29b-41d4-a716-446655440000",
+            "mailbox_id": "550e8400-e29b-41d4-a716-446655440001",
+            "message_uid": 1,
+            "folder": "INBOX",
+            "suspicious_links": [],
+            "suspicious_sender": false,
+            "spoofed_display_name": false,
+            "risk_score": 0,
+            "user_action": "none",
+            "created_at": "2026-04-14T10:00:00Z"
+        }"#;
+        let report: PhishingReport = serde_json::from_str(json).unwrap();
+        assert!(report.dangerous_attachments.is_null() || report.dangerous_attachments.as_array().map(|a| a.is_empty()).unwrap_or(true));
     }
 
     #[test]
@@ -129,6 +156,9 @@ mod tests {
             spoofed_display_name: false,
             risk_score: 30,
             user_action: "none".to_string(),
+            dangerous_attachments: serde_json::json!([
+                {"filename": "x.exe", "extension": "exe", "reason": "Executable"}
+            ]),
             created_at: Utc::now(),
         };
         let json = serde_json::to_string(&report).unwrap();
@@ -136,6 +166,7 @@ mod tests {
         assert_eq!(parsed["risk_score"], 30);
         assert_eq!(parsed["suspicious_sender"], true);
         assert_eq!(parsed["user_action"], "none");
+        assert_eq!(parsed["dangerous_attachments"][0]["extension"], "exe");
     }
 
     #[test]

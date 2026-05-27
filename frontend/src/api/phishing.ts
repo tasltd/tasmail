@@ -9,6 +9,19 @@ export interface SuspiciousLink {
   reasons: string[];
 }
 
+// Added: TMAIL-124 — Attachment metadata sent into a phishing scan
+export interface AttachmentMeta {
+  filename: string;
+  content_type?: string;
+}
+
+// Added: TMAIL-124 — Dangerous attachment warning surfaced by the scanner
+export interface DangerousAttachment {
+  filename: string;
+  extension: string;
+  reason: string;
+}
+
 // Added: Full phishing report for a scanned message
 export interface PhishingReport {
   id: string;
@@ -20,6 +33,8 @@ export interface PhishingReport {
   spoofed_display_name: boolean;
   risk_score: number;
   user_action: string;
+  // Added: TMAIL-124 — defaulted to [] by the backend when scanner had no attachment input
+  dangerous_attachments?: DangerousAttachment[];
   created_at: string;
 }
 
@@ -28,6 +43,8 @@ export interface ScanRequest {
   html_body: string;
   sender_display_name: string;
   sender_email: string;
+  // Added: TMAIL-124 — optional attachment list so the backend can flag executable/script files
+  attachments?: AttachmentMeta[];
 }
 
 // Added: Request body for updating user action on a phishing report

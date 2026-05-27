@@ -5,13 +5,13 @@
 import React from 'react';
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, ShieldAlert, ShieldCheck, ShieldOff, Search, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, ShieldAlert, ShieldCheck, ShieldOff, Search, AlertTriangle, FileWarning } from 'lucide-react';
 import {
   getPhishingReport,
   scanMessage,
   updatePhishingAction,
 } from '../../api/phishing';
-import type { PhishingReport, UpdateActionRequest } from '../../api/phishing';
+import type { PhishingReport, UpdateActionRequest, AttachmentMeta } from '../../api/phishing';
 import { useMailStore } from '../../stores/mailStore';
 import { LoadingSkeleton } from '../shared/LoadingSkeleton';
 
@@ -41,6 +41,8 @@ export function PhishingManager() {
   const [scanHtmlBody, setScanHtmlBody] = useState('');
   const [scanSenderName, setScanSenderName] = useState('');
   const [scanSenderEmail, setScanSenderEmail] = useState('');
+  // Added: TMAIL-124 — comma-separated attachment filenames for Safe-Attachments-style scanning
+  const [scanAttachmentNames, setScanAttachmentNames] = useState('');
 
   // Added: Lookup form state for fetching existing report
   const [lookupFolder, setLookupFolder] = useState('');
@@ -56,12 +58,20 @@ export function PhishingManager() {
 
   // Added: Scan mutation triggers phishing analysis on a message
   const scanMut = useMutation({
-    mutationFn: () =>
-      scanMessage(scanFolder, parseInt(scanUid, 10), {
+    mutationFn: () => {
+      // Added: TMAIL-124 — parse comma-separated filenames into AttachmentMeta entries
+      const attachments: AttachmentMeta[] = scanAttachmentNames
+        .split(',')
+        .map((name) => name.trim())
+        .filter((name) => name.length > 0)
+        .map((filename) => ({ filename }));
+      return scanMessage(scanFolder, parseInt(scanUid, 10), {
         html_body: scanHtmlBody,
         sender_display_name: scanSenderName,
         sender_email: scanSenderEmail,
-      }),
+        ...(attachments.length > 0 ? { attachments } : {}),
+      });
+    },
     onSuccess: (scanResult) => {
       setCurrentReport(scanResult);
       queryClient.invalidateQueries({ queryKey: ['phishing-reports'] });
@@ -159,6 +169,15 @@ export function PhishingManager() {
               rows={4}
               required
               style={{ width: '100%', resize: 'vertical' }}
+            />
+          </div>
+          {/* Added: TMAIL-124 — optional attachment filenames for executable-type warnings */}
+          <div className="composer__field" style={{ marginBottom: '8px' }}>
+            <label>Attachments (comma-separated filenames, optional)</label>
+            <input
+              value={scanAttachmentNames}
+              onChange={(e) => setScanAttachmentNames(e.target.value)}
+              placeholder="invoice.pdf, statement.exe"
             />
           </div>
           <div className="composer__actions">
@@ -261,6 +280,33 @@ export function PhishingManager() {
                   <div><strong>URL:</strong> <code>{link.url}</code></div>
                   <div><strong>Display Text:</strong> {link.display_text}</div>
                   <div><strong>Reasons:</strong> {link.reasons.join(', ')}</div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Added: TMAIL-124 — Dangerous attachments (Outlook Safe Attachments equivalent) */}
+          {displayReport.dangerous_attachments && displayReport.dangerous_attachments.length > 0 && (
+            <div style={{ marginTop: '12px' }} data-testid="dangerous-attachments">
+              <strong style={{ fontSize: '13px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <FileWarning size={14} style={{ color: '#ef4444' }} />
+                Dangerous Attachments ({displayReport.dangerous_attachments.length}):
+              </strong>
+              {displayReport.dangerous_attachments.map((att, index) => (
+                <div
+                  key={index}
+                  style={{
+                    marginTop: '4px',
+                    padding: '8px',
+                    border: '1px solid #ef4444',
+                    background: 'rgba(239, 68, 68, 0.08)',
+                    borderRadius: '4px',
+                    fontSize: '12px',
+                  }}
+                >
+                  <div><strong>File:</strong> <code>{att.filename}</code></div>
+                  <div><strong>Extension:</strong> .{att.extension}</div>
+                  <div><strong>Reason:</strong> {att.reason}</div>
                 </div>
               ))}
             </div>
