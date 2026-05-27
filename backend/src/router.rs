@@ -472,6 +472,11 @@ pub fn create_router(state: AppState) -> Router {
             "/api/admin/users/bulk-import/template",
             get(handlers::bulk_import::download_template),
         )
+        // Added: User CSV export endpoint (TMAIL-136 — companion to bulk-import)
+        .route(
+            "/api/admin/users/export",
+            get(handlers::bulk_import::export_users_csv),
+        )
         // Added: Chat integration management routes for TMAIL-129
         .route(
             "/api/chat-integrations",

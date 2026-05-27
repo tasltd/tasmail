@@ -8,6 +8,7 @@ const mockUpload = vi.fn();
 const mockList = vi.fn();
 const mockGet = vi.fn();
 const mockDownloadTemplate = vi.fn();
+const mockExportUsers = vi.fn();
 
 vi.mock('../../api/bulk-import', () => ({
   bulkImportApi: {
@@ -15,6 +16,7 @@ vi.mock('../../api/bulk-import', () => ({
     list: () => mockList(),
     get: (...args: unknown[]) => mockGet(...args),
     downloadTemplate: () => mockDownloadTemplate(),
+    exportUsers: () => mockExportUsers(),
   },
 }));
 
@@ -171,6 +173,32 @@ describe('BulkImportManager', () => {
     await waitFor(() => {
       expect(screen.getByText('Invalid email format')).toBeInTheDocument();
       expect(screen.getByText('Too short')).toBeInTheDocument();
+    });
+  });
+
+  // Added: TMAIL-136 export side — verify button renders and triggers exportUsers()
+  it('renders Export Users button', async () => {
+    mockList.mockResolvedValue([]);
+    render(<BulkImportManager />, { wrapper: createWrapper() });
+
+    await waitFor(() => {
+      expect(screen.getByText('Export Users (CSV)')).toBeInTheDocument();
+    });
+  });
+
+  it('invokes exportUsers when Export Users button is clicked', async () => {
+    mockList.mockResolvedValue([]);
+    mockExportUsers.mockResolvedValue(undefined);
+    render(<BulkImportManager />, { wrapper: createWrapper() });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('export-users-button')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId('export-users-button'));
+
+    await waitFor(() => {
+      expect(mockExportUsers).toHaveBeenCalledTimes(1);
     });
   });
 

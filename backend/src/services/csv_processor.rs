@@ -1,5 +1,6 @@
 // Added: CSV parsing and validation service for bulk user import (TMAIL-136)
 use crate::models::bulk_import::{BulkImportError, BulkImportRow};
+use crate::models::mailbox::Mailbox;
 
 /// PURPOSE: Result of parsing and validating a CSV file
 /// CONSTRAINTS: validated_rows only contains rows that passed all validation checks
@@ -219,6 +220,31 @@ pub fn generate_template() -> String {
     "email,display_name,password,role\nuser@example.com,John Doe,SecurePass123!,user\n".to_string()
 }
 
+/// PURPOSE: Generate a CSV export of user accounts for admin download (TMAIL-136)
+/// CONSTRAINTS: NEVER includes password_hash or totp_secret — security boundary.
+/// Columns: email, display_name, role, active, quota_bytes, created_at (RFC 3339).
+pub fn generate_users_export(users: &[Mailbox]) -> Result<String, csv::Error> {
+    let mut writer = csv::WriterBuilder::new().from_writer(vec![]);
+    writer.write_record(["email", "display_name", "role", "active", "quota_bytes", "created_at"])?;
+
+    for user in users {
+        let role = if user.is_admin { "admin" } else { "user" };
+        writer.write_record([
+            user.username.as_str(),
+            user.display_name.as_deref().unwrap_or(""),
+            role,
+            if user.active { "true" } else { "false" },
+            &user.quota_bytes.to_string(),
+            &user.created_at.to_rfc3339(),
+        ])?;
+    }
+
+    // NOTE: into_inner on Vec<u8> never fails (Vec::write is infallible);
+    // bytes are always valid UTF-8 since every field is &str or to_string() of a primitive.
+    let bytes = writer.into_inner().expect("Vec<u8> writer cannot fail");
+    Ok(String::from_utf8(bytes).expect("csv writer produces UTF-8 from string inputs"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -365,5 +391,113 @@ mod tests {
         assert!(template.starts_with("email,display_name,password,role"));
         assert!(template.contains("user@example.com"));
         assert!(template.contains("John Doe"));
+    }
+
+    // Added: Tests for generate_users_export (TMAIL-136 export endpoint)
+    use crate::models::mailbox::Mailbox;
+    use chrono::{TimeZone, Utc};
+    use uuid::Uuid;
+
+    fn fixture_user(username: &str, display_name: Option<&str>, is_admin: bool, active: bool) -> Mailbox {
+        Mailbox {
+            id: Uuid::new_v4(),
+            domain_id: Uuid::new_v4(),
+            username: username.to_string(),
+            password_hash: "$argon2id$secret".to_string(),
+            display_name: display_name.map(String::from),
+            quota_bytes: 5_368_709_120,
+            quota_warn_percent: 80,
+            active,
+            is_admin,
+            created_at: Utc.with_ymd_and_hms(2026, 4, 15, 10, 30, 0).unwrap(),
+            updated_at: Utc::now(),
+            totp_secret: Some("SECRETOTP123".to_string()),
+            totp_enabled: true,
+            totp_verified_at: None,
+        }
+    }
+
+    #[test]
+    fn test_generate_users_export_headers_and_rows() {
+        // Added: Verify export produces correct header row and data rows
+        let users = vec![
+            fixture_user("alice@example.com", Some("Alice"), false, true),
+            fixture_user("bob@example.com", Some("Bob Admin"), true, true),
+        ];
+
+        let csv = generate_users_export(&users).expect("export should succeed");
+        let lines: Vec<&str> = csv.lines().collect();
+
+        assert_eq!(lines[0], "email,display_name,role,active,quota_bytes,created_at");
+        assert!(lines[1].starts_with("alice@example.com,Alice,user,true,5368709120,2026-04-15T10:30:00"));
+        assert!(lines[2].starts_with("bob@example.com,Bob Admin,admin,true,5368709120,2026-04-15T10:30:00"));
+    }
+
+    #[test]
+    fn test_generate_users_export_excludes_sensitive_fields() {
+        // Added: HARD security check — password_hash and totp_secret MUST NEVER appear in export
+        let users = vec![fixture_user("alice@example.com", Some("Alice"), false, true)];
+        let csv = generate_users_export(&users).expect("export should succeed");
+
+        assert!(!csv.contains("$argon2id"), "password_hash leaked into CSV export");
+        assert!(!csv.contains("SECRETOTP123"), "totp_secret leaked into CSV export");
+    }
+
+    #[test]
+    fn test_generate_users_export_handles_null_display_name() {
+        // Added: Verify users with no display_name produce empty column
+        let users = vec![fixture_user("noname@example.com", None, false, true)];
+        let csv = generate_users_export(&users).expect("export should succeed");
+
+        let lines: Vec<&str> = csv.lines().collect();
+        assert!(lines[1].starts_with("noname@example.com,,user,true"));
+    }
+
+    #[test]
+    fn test_generate_users_export_handles_inactive_users() {
+        // Added: Verify active column reflects the user's actual state
+        let users = vec![fixture_user("inactive@example.com", Some("Inactive"), false, false)];
+        let csv = generate_users_export(&users).expect("export should succeed");
+
+        let lines: Vec<&str> = csv.lines().collect();
+        assert!(lines[1].contains(",false,"));
+    }
+
+    #[test]
+    fn test_generate_users_export_empty_list() {
+        // Added: Verify empty user list produces only the header row
+        let users: Vec<Mailbox> = vec![];
+        let csv = generate_users_export(&users).expect("export should succeed");
+
+        assert_eq!(csv.trim(), "email,display_name,role,active,quota_bytes,created_at");
+    }
+
+    #[test]
+    fn test_generate_users_export_escapes_commas_in_display_name() {
+        // Added: Verify CSV writer correctly quotes fields containing commas
+        let users = vec![fixture_user("comma@example.com", Some("Doe, John"), false, true)];
+        let csv = generate_users_export(&users).expect("export should succeed");
+
+        // csv crate quotes fields with embedded commas
+        assert!(csv.contains("\"Doe, John\""));
+    }
+
+    #[test]
+    fn test_generate_users_export_roundtrip_parsable() {
+        // Added: Verify exported CSV can be parsed back (round-trip safety)
+        let users = vec![
+            fixture_user("alice@example.com", Some("Alice"), false, true),
+            fixture_user("bob@example.com", Some("Bob Admin"), true, true),
+        ];
+
+        let csv = generate_users_export(&users).expect("export should succeed");
+        let mut reader = csv::Reader::from_reader(csv.as_bytes());
+        let records: Vec<csv::StringRecord> = reader.records().filter_map(Result::ok).collect();
+
+        assert_eq!(records.len(), 2);
+        assert_eq!(&records[0][0], "alice@example.com");
+        assert_eq!(&records[0][2], "user");
+        assert_eq!(&records[1][0], "bob@example.com");
+        assert_eq!(&records[1][2], "admin");
     }
 }

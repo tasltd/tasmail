@@ -156,8 +156,8 @@ export function BulkImportManager() {
         <h2 style={{ margin: 0 }}>Bulk User Import</h2>
       </div>
 
-      {/* Added: Download template button */}
-      <div style={{ marginBottom: '16px' }}>
+      {/* Added: Download template + Export users buttons (TMAIL-136) */}
+      <div style={{ marginBottom: '16px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
         <button
           className="btn btn--secondary"
           onClick={() => bulkImportApi.downloadTemplate()}
@@ -165,6 +165,19 @@ export function BulkImportManager() {
         >
           <Download size={16} />
           Download CSV Template
+        </button>
+        <button
+          className="btn btn--secondary"
+          onClick={() => {
+            bulkImportApi.exportUsers().catch((exportError: Error) => {
+              alert(`Export failed: ${exportError.message}`);
+            });
+          }}
+          style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+          data-testid="export-users-button"
+        >
+          <Download size={16} />
+          Export Users (CSV)
         </button>
       </div>
 

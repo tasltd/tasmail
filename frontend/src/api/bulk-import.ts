@@ -69,4 +69,23 @@ export const bulkImportApi = {
     anchor.click();
     URL.revokeObjectURL(url);
   },
+
+  // Added: Export all users as CSV via GET /api/admin/users/export (TMAIL-136)
+  exportUsers: async (): Promise<void> => {
+    const token = apiClient.getToken();
+    const response = await fetch('/api/admin/users/export', {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!response.ok) {
+      const errorBody = await response.text();
+      throw new Error(`Export failed (${response.status}): ${errorBody}`);
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = 'users-export.csv';
+    anchor.click();
+    URL.revokeObjectURL(url);
+  },
 };

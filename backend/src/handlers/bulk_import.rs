@@ -304,6 +304,39 @@ pub async fn download_template(
     ))
 }
 
+/// PURPOSE: Export ALL users as a CSV download for admin (TMAIL-136 export side).
+/// CONSTRAINTS: Admin only. Never returns password_hash or totp_secret — security boundary
+/// enforced both by the SELECT columns and by csv_processor::generate_users_export.
+/// EXTERNAL: SELECT * FROM mailboxes ordered by username.
+///
+/// GET /api/admin/users/export
+pub async fn export_users_csv(
+    State(state): State<AppState>,
+    axum::Extension(claims): axum::Extension<Claims>,
+) -> Result<(StatusCode, [(axum::http::header::HeaderName, &'static str); 2], String), AppError> {
+    require_admin(&claims)?;
+
+    // Added: Fetch every mailbox; the export helper strips password_hash/totp_secret.
+    let users = sqlx::query_as::<_, Mailbox>("SELECT * FROM mailboxes ORDER BY username")
+        .fetch_all(&state.db)
+        .await?;
+
+    let csv_body = csv_processor::generate_users_export(&users)
+        .map_err(|csv_error| AppError::Internal(anyhow::anyhow!("Failed to render users CSV: {}", csv_error)))?;
+
+    Ok((
+        StatusCode::OK,
+        [
+            (axum::http::header::CONTENT_TYPE, "text/csv; charset=utf-8"),
+            (
+                axum::http::header::CONTENT_DISPOSITION,
+                "attachment; filename=\"users-export.csv\"",
+            ),
+        ],
+        csv_body,
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
