@@ -1,0 +1,26 @@
+# Added: Systemd service unit for TASMail backup verification (TMAIL-42)
+# PURPOSE: Runs backup-verify.sh against the most recent combined backup to
+#          confirm it's restorable (tar OK, gzip OK, pg_dump header OK, and
+#          a sandbox psql restore loads cleanly). Logs go to the journal so
+#          failures show up in `systemctl status` and alerting tooling.
+
+[Unit]
+Description=TASMail Weekly Backup Verification
+Documentation=https://github.com/tasltd/tasmail
+After=tasmail-backup.service
+Wants=tasmail-backup.service
+
+[Service]
+Type=oneshot
+# Run as root so it can read /var/backups/tasmail and use psql.
+User=root
+Group=root
+
+ExecStart=/opt/tasmail/deploy/scripts/backup-verify.sh
+
+# 30 minutes is plenty even for a full sandbox pg_restore on a mid-size DB.
+TimeoutStartSec=1800
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=tasmail-backup-verify

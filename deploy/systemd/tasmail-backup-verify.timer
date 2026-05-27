@@ -1,0 +1,17 @@
+# Added: Systemd timer for weekly TASMail backup verification (TMAIL-42)
+# PURPOSE: Triggers tasmail-backup-verify.service every Sunday at 03:00 local
+#          time (one hour after the daily backup window). Persistent so a
+#          missed run catches up on next boot.
+
+[Unit]
+Description=TASMail Weekly Backup Verification Timer
+
+[Timer]
+# Run every Sunday at 03:00 local time
+OnCalendar=Sun *-*-* 03:00:00
+Persistent=true
+# Stagger start to avoid clashing with the backup window
+RandomizedDelaySec=900
+
+[Install]
+WantedBy=timers.target

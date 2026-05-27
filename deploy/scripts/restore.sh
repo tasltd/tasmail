@@ -75,8 +75,8 @@ fi
 
 log_info "Restore source: ${RESTORE_SUBDIR}"
 
-# Added: Step 1 — Restore PostgreSQL database
-DB_BACKUP=$(find "$RESTORE_SUBDIR" -name "tasmail_db.sql.gz" | head -1)
+# Added: Step 1 — Restore PostgreSQL database (accepts both legacy and timestamped names)
+DB_BACKUP=$(find "$RESTORE_SUBDIR" \( -name "tasmail_db.sql.gz" -o -name "tasmail_db_*.sql.gz" \) | head -1)
 if [[ -n "$DB_BACKUP" ]]; then
     log_info "Restoring PostgreSQL database..."
     # Added: Extract DATABASE_URL components for psql
@@ -94,8 +94,8 @@ else
     log_warn "No database backup found in archive — skipping"
 fi
 
-# Added: Step 2 — Restore config files
-CONFIG_BACKUP=$(find "$RESTORE_SUBDIR" -name "tasmail_config.tar.gz" | head -1)
+# Added: Step 2 — Restore config files (accepts both legacy and timestamped names)
+CONFIG_BACKUP=$(find "$RESTORE_SUBDIR" \( -name "tasmail_config.tar.gz" -o -name "tasmail_config_*.tar.gz" \) | head -1)
 if [[ -n "$CONFIG_BACKUP" ]]; then
     log_info "Restoring configuration files to /etc/tasmail/..."
     tar -xzf "$CONFIG_BACKUP" -C /
@@ -104,11 +104,27 @@ else
     log_warn "No config backup found in archive — skipping"
 fi
 
-# Added: Step 3 — Restore maildir
+# Added: Step 3 — Restore maildir.
+# Combined archives from the incremental backup contain
+#   tasmail_maildir.tar.gz -> YYYY-MM-DD/<maildir contents>
+# Extract into a staging dir, then rsync the dated dir's contents into /var/mail.
 MAIL_BACKUP=$(find "$RESTORE_SUBDIR" -name "tasmail_maildir.tar.gz" | head -1)
 if [[ -n "$MAIL_BACKUP" ]]; then
     log_info "Restoring maildir to /var/mail/..."
-    tar -xzf "$MAIL_BACKUP" -C /
+    MAIL_STAGE=$(mktemp -d /tmp/tasmail-maildir-XXXXXX)
+    tar -xzf "$MAIL_BACKUP" -C "$MAIL_STAGE"
+    SNAPSHOT_DIR=$(find "$MAIL_STAGE" -mindepth 1 -maxdepth 1 -type d | head -1)
+    if [[ -z "$SNAPSHOT_DIR" ]]; then
+        # Added: Fallback for legacy flat archives (tar -czf ... var/mail).
+        SNAPSHOT_DIR="$MAIL_STAGE"
+    fi
+    mkdir -p /var/mail
+    if command -v rsync >/dev/null 2>&1; then
+        rsync -aH --delete "${SNAPSHOT_DIR%/}/" /var/mail/
+    else
+        cp -a "${SNAPSHOT_DIR%/}/." /var/mail/
+    fi
+    rm -rf "$MAIL_STAGE"
     # Added: Fix ownership for Dovecot
     chown -R vmail:vmail /var/mail/ 2>/dev/null || true
     log_info "Maildir restore complete"
@@ -116,14 +132,25 @@ else
     log_warn "No maildir backup found in archive — skipping"
 fi
 
-# Added: Step 4 — Restore attachments
+# Added: Step 4 — Restore attachments (same dated-snapshot layout as maildir).
 ATTACH_BACKUP=$(find "$RESTORE_SUBDIR" -name "tasmail_attachments.tar.gz" | head -1)
 if [[ -n "$ATTACH_BACKUP" ]]; then
     ATTACHMENT_DIR="${ATTACHMENT_DIR:-/var/lib/tasmail/attachments}"
     log_info "Restoring attachments to ${ATTACHMENT_DIR}..."
-    mkdir -p "$(dirname "$ATTACHMENT_DIR")"
-    tar -xzf "$ATTACH_BACKUP" -C "$(dirname "$ATTACHMENT_DIR")"
-    chown -R tasmail:tasmail "$(dirname "$ATTACHMENT_DIR")" 2>/dev/null || true
+    ATTACH_STAGE=$(mktemp -d /tmp/tasmail-attach-XXXXXX)
+    tar -xzf "$ATTACH_BACKUP" -C "$ATTACH_STAGE"
+    SNAPSHOT_DIR=$(find "$ATTACH_STAGE" -mindepth 1 -maxdepth 1 -type d | head -1)
+    if [[ -z "$SNAPSHOT_DIR" ]]; then
+        SNAPSHOT_DIR="$ATTACH_STAGE"
+    fi
+    mkdir -p "$ATTACHMENT_DIR"
+    if command -v rsync >/dev/null 2>&1; then
+        rsync -aH --delete "${SNAPSHOT_DIR%/}/" "${ATTACHMENT_DIR%/}/"
+    else
+        cp -a "${SNAPSHOT_DIR%/}/." "${ATTACHMENT_DIR%/}/"
+    fi
+    rm -rf "$ATTACH_STAGE"
+    chown -R tasmail:tasmail "$ATTACHMENT_DIR" 2>/dev/null || true
     log_info "Attachments restore complete"
 else
     log_warn "No attachments backup found in archive — skipping"
