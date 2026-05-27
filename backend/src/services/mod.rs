@@ -59,3 +59,6 @@ pub mod feature_flags;
 // Added (TMAIL-176/177/180): usage-based billing math + rollup loop.
 pub mod billing_math;
 pub mod billing_rollup;
+// Added (TMAIL-127): Meeting-slot suggester — pure interval math over busy
+// intervals, used by /api/calendar/suggest-slots.
+pub mod slot_suggester;

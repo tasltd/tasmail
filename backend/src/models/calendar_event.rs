@@ -294,6 +294,41 @@ impl CalendarEvent {
         .await?;
         Ok(result.rows_affected() > 0)
     }
+
+    // Added (TMAIL-127): Busy intervals for free-busy and slot suggestion.
+    //
+    // Returns every non-cancelled event start/end pair that overlaps the
+    // [range_start, range_end) window for the given organizer. Only the
+    // boundary timestamps are returned — never titles, attendees, or other
+    // payload — so the response is safe to surface to anyone the organizer
+    // has shared a meeting-request with (the same privacy posture CalDAV
+    // free-busy queries use per RFC 4791 §7.10).
+    //
+    // CONSTRAINTS: range_end must be after range_start; caller is expected
+    // to enforce that. The query relies on the `(organizer_id, start_time)`
+    // index installed by migration 031 — see EXPLAIN if this slows down.
+    pub async fn busy_intervals_for_organizer(
+        pool: &PgPool,
+        organizer_id: Uuid,
+        range_start: DateTime<Utc>,
+        range_end: DateTime<Utc>,
+    ) -> Result<Vec<(DateTime<Utc>, DateTime<Utc>)>, sqlx::Error> {
+        let rows: Vec<(DateTime<Utc>, DateTime<Utc>)> = sqlx::query_as(
+            "SELECT start_time, end_time
+               FROM calendar_events
+              WHERE organizer_id = $1
+                AND status != 'cancelled'
+                AND start_time < $3
+                AND end_time   > $2
+              ORDER BY start_time ASC",
+        )
+        .bind(organizer_id)
+        .bind(range_start)
+        .bind(range_end)
+        .fetch_all(pool)
+        .await?;
+        Ok(rows)
+    }
 }
 
 impl EventAttendee {

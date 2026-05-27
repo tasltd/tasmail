@@ -3,6 +3,9 @@ import { useState, useEffect, useMemo, type FormEvent } from 'react';
 import { X, Plus } from 'lucide-react';
 import { createEvent } from '../../api/calendar';
 import type { CalendarEventWithAttendees } from '../../api/calendar';
+// Added (TMAIL-127): suggest-slots panel — uses the new /api/calendar/free-busy
+// + /api/calendar/suggest-slots endpoints to recommend common free windows.
+import { SuggestSlotsPanel } from './SuggestSlotsPanel';
 
 interface ScheduleMeetingModalProps {
   initialTitle: string;
@@ -61,6 +64,28 @@ export function ScheduleMeetingModal({
   const [attendeeInput, setAttendeeInput] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  // Added (TMAIL-127): collapsed by default to keep the modal tight; expands
+  // when the user wants to lean on the slot suggester.
+  const [showSuggest, setShowSuggest] = useState(false);
+
+  // Added (TMAIL-127): callback wired into <SuggestSlotsPanel onPick>. When
+  // the user clicks a candidate slot we fill the datetime-local inputs (which
+  // expect the value in the user's local timezone, not ISO/UTC).
+  const handlePickSlot = (start: Date, end: Date) => {
+    setStartTime(toLocalInputValue(start));
+    setEndTime(toLocalInputValue(end));
+  };
+
+  // Added (TMAIL-127): derived duration in minutes, fed to SuggestSlotsPanel
+  // so its default matches whatever the user has currently set in the modal.
+  const currentDurationMinutes = useMemo(() => {
+    const s = new Date(startTime);
+    const e = new Date(endTime);
+    if (Number.isNaN(s.getTime()) || Number.isNaN(e.getTime()) || e <= s) {
+      return 30;
+    }
+    return Math.max(5, Math.round((e.getTime() - s.getTime()) / 60000));
+  }, [startTime, endTime]);
 
   // Added: Close on Escape key
   useEffect(() => {
@@ -198,6 +223,36 @@ export function ScheduleMeetingModal({
                 style={{ width: '100%', padding: '6px 10px', border: '1px solid var(--color-border)', borderRadius: '6px' }}
               />
             </div>
+          </div>
+
+          {/* Added (TMAIL-127): collapsible suggest-times helper. Hidden by
+              default so the modal stays compact; expands on demand. */}
+          <div>
+            <button
+              type="button"
+              onClick={() => setShowSuggest((v) => !v)}
+              aria-expanded={showSuggest}
+              aria-controls="suggest-slots-panel"
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: 'var(--color-primary, #4a90d9)',
+                cursor: 'pointer',
+                padding: 0,
+                fontSize: '12px',
+              }}
+            >
+              {showSuggest ? 'Hide suggestions' : 'Suggest times based on availability'}
+            </button>
+            {showSuggest && (
+              <div id="suggest-slots-panel" style={{ marginTop: '8px' }}>
+                <SuggestSlotsPanel
+                  attendees={attendees}
+                  defaultDurationMinutes={currentDurationMinutes}
+                  onPick={handlePickSlot}
+                />
+              </div>
+            )}
           </div>
 
           <div>

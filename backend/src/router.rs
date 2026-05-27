@@ -522,6 +522,20 @@ pub fn create_router(state: AppState) -> Router {
             "/api/calendar/imip/accept",
             post(handlers::calendar::accept_imip),
         )
+        // Added (TMAIL-127): Free-busy lookup for one or more attendees.
+        // Returns the busy windows per attendee; external attendees come
+        // back with status="not_resolved" so the UI can flag them.
+        .route(
+            "/api/calendar/free-busy",
+            post(handlers::calendar::get_free_busy),
+        )
+        // Added (TMAIL-127): Suggest up to N meeting slots where every
+        // resolvable attendee is free, within the supplied working-hours
+        // window and date range.
+        .route(
+            "/api/calendar/suggest-slots",
+            post(handlers::calendar::suggest_meeting_slots),
+        )
         // Added: LDAP/AD configuration management routes for TMAIL-100
         .route(
             "/api/admin/ldap",

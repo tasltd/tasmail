@@ -106,3 +106,60 @@ export async function rsvpEvent(id: string, data: RsvpRequest): Promise<EventAtt
 export async function downloadEventIcs(id: string): Promise<string> {
   return apiClient.get<string>(`/calendar/events/${id}/ics`);
 }
+
+// Added (TMAIL-127): Free-busy + slot-suggestion shapes mirroring the
+// Rust handler. Keep these in sync with handlers/calendar.rs request/response
+// structs; the trace-check CI gate will flag drift.
+export interface FreeBusyRequest {
+  attendees: string[];
+  range_start: string;
+  range_end: string;
+}
+
+export interface BusySpan {
+  start: string;
+  end: string;
+}
+
+export interface AttendeeBusy {
+  email: string;
+  status: 'resolved' | 'not_resolved';
+  busy: BusySpan[];
+}
+
+export interface FreeBusyResponse {
+  attendees: AttendeeBusy[];
+}
+
+export interface SuggestSlotsRequest {
+  attendees: string[];
+  duration_minutes: number;
+  range_start: string;
+  range_end: string;
+  working_start_minute?: number;
+  working_end_minute?: number;
+  include_weekends?: boolean;
+  max_slots?: number;
+  step_minutes?: number;
+}
+
+export interface SuggestedSlot {
+  start: string;
+  end: string;
+}
+
+export interface SuggestSlotsResponse {
+  slots: SuggestedSlot[];
+  unresolved_attendees: string[];
+}
+
+/// PURPOSE: Look up busy intervals for a list of attendees in a date range
+export async function getFreeBusy(req: FreeBusyRequest): Promise<FreeBusyResponse> {
+  return apiClient.post<FreeBusyResponse>('/calendar/free-busy', req);
+}
+
+/// PURPOSE: Ask the backend for candidate meeting slots where every
+/// resolvable attendee is free and the slot falls inside working hours.
+export async function suggestSlots(req: SuggestSlotsRequest): Promise<SuggestSlotsResponse> {
+  return apiClient.post<SuggestSlotsResponse>('/calendar/suggest-slots', req);
+}

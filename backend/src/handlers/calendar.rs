@@ -18,6 +18,9 @@ use crate::services::ics_generator::{
 };
 use crate::services::imap_service::ImapService;
 use crate::services::imip_parser::parse_imip_from_email;
+use crate::services::slot_suggester::{
+    suggest_slots, BusyInterval, SuggestSlotsInput, WorkingHours,
+};
 use crate::services::smtp_service::SmtpService;
 use crate::state::AppState;
 use futures::TryStreamExt;
@@ -545,6 +548,278 @@ async fn send_imip_reply_for_user(
         .await
 }
 
+// ============================================================================
+// Added (TMAIL-127): Free-busy + slot-suggestion endpoints
+// ============================================================================
+//
+// `/api/calendar/free-busy` returns the busy windows for one or more attendees
+// in the requested date range. Internal users (those who exist in the
+// `mailboxes` table) have their actual calendar consulted; external attendees
+// come back with a `not_resolved` status so the UI can grey them out instead
+// of silently treating them as free.
+//
+// `/api/calendar/suggest-slots` layers on top: pull busy intervals for every
+// attendee, hand them to the pure `slot_suggester` algorithm, and return up
+// to `max_slots` candidate windows. This is the dependency surface for the
+// composer's "Suggest Slots" panel — keep the request shape stable.
+
+// NOTE: Maximum date span the suggester is willing to consider in a single
+// request. Caps response time and protects the DB. Two weeks is enough for
+// 95th-percentile scheduling workflows; longer ranges should paginate.
+const MAX_SUGGEST_RANGE_DAYS: i64 = 14;
+
+// NOTE: Maximum attendees in a single free-busy / suggest call. Beyond this
+// the union of busy intervals is so dense that suggestions are useless, and
+// the per-attendee DB lookups become a fan-out hazard.
+const MAX_ATTENDEES_PER_REQUEST: usize = 25;
+
+#[derive(Debug, Deserialize)]
+pub struct FreeBusyRequest {
+    pub attendees: Vec<String>,
+    pub range_start: DateTime<Utc>,
+    pub range_end: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AttendeeBusy {
+    pub email: String,
+    /// One of: "resolved" (busy times populated from DB) | "not_resolved"
+    /// (no matching mailbox — treated as unknown availability, the UI should
+    /// flag this rather than assume they're free).
+    pub status: String,
+    pub busy: Vec<BusySpan>,
+}
+
+#[derive(Debug, Serialize, Clone, Copy)]
+pub struct BusySpan {
+    pub start: DateTime<Utc>,
+    pub end: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct FreeBusyResponse {
+    pub attendees: Vec<AttendeeBusy>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SuggestSlotsRequest {
+    pub attendees: Vec<String>,
+    pub duration_minutes: i64,
+    pub range_start: DateTime<Utc>,
+    pub range_end: DateTime<Utc>,
+    /// Working day window in UTC minutes-from-midnight. Defaults to 09:00–17:00.
+    pub working_start_minute: Option<u32>,
+    pub working_end_minute: Option<u32>,
+    pub include_weekends: Option<bool>,
+    /// Number of slots requested. Server caps at 50.
+    pub max_slots: Option<usize>,
+    /// Slot start alignment in minutes (15, 30, 60). Defaults to 30.
+    pub step_minutes: Option<u32>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SuggestedSlotDto {
+    pub start: DateTime<Utc>,
+    pub end: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SuggestSlotsResponse {
+    pub slots: Vec<SuggestedSlotDto>,
+    /// Attendees whose calendars couldn't be loaded (external recipients).
+    /// They're treated as "always free" during slot search but surfaced
+    /// here so the caller can warn the user.
+    pub unresolved_attendees: Vec<String>,
+}
+
+/// Look up the mailbox id for a (case-insensitive) email address. Returns
+/// None for external attendees so the caller can decide how to handle them.
+async fn resolve_mailbox_id(
+    pool: &sqlx::PgPool,
+    email: &str,
+) -> Result<Option<uuid::Uuid>, AppError> {
+    let row: Option<(uuid::Uuid,)> = sqlx::query_as(
+        "SELECT id FROM mailboxes WHERE LOWER(username) = LOWER($1) AND active = true LIMIT 1",
+    )
+    .bind(email)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(|r| r.0))
+}
+
+/// Shared validation for the date range / attendee list used by both the
+/// free-busy and suggest-slots endpoints.
+fn validate_range(
+    attendees: &[String],
+    range_start: DateTime<Utc>,
+    range_end: DateTime<Utc>,
+) -> Result<(), AppError> {
+    if attendees.is_empty() {
+        return Err(AppError::BadRequest(
+            "At least one attendee is required".to_string(),
+        ));
+    }
+    if attendees.len() > MAX_ATTENDEES_PER_REQUEST {
+        return Err(AppError::BadRequest(format!(
+            "Maximum {MAX_ATTENDEES_PER_REQUEST} attendees per request"
+        )));
+    }
+    if range_end <= range_start {
+        return Err(AppError::BadRequest(
+            "range_end must be after range_start".to_string(),
+        ));
+    }
+    let span = range_end - range_start;
+    if span > chrono::Duration::days(MAX_SUGGEST_RANGE_DAYS) {
+        return Err(AppError::BadRequest(format!(
+            "Date range must be <= {MAX_SUGGEST_RANGE_DAYS} days"
+        )));
+    }
+    Ok(())
+}
+
+/// POST /api/calendar/free-busy — return busy intervals for a list of
+/// attendees inside the given date range. The authenticated user is always
+/// implicitly included if present in the attendees list.
+pub async fn get_free_busy(
+    State(state): State<AppState>,
+    axum::Extension(_claims): axum::Extension<Claims>,
+    Json(body): Json<FreeBusyRequest>,
+) -> Result<Json<FreeBusyResponse>, AppError> {
+    validate_range(&body.attendees, body.range_start, body.range_end)?;
+
+    let mut out: Vec<AttendeeBusy> = Vec::with_capacity(body.attendees.len());
+    // NOTE: Dedupe attendees case-insensitively before hitting the DB —
+    // the composer often passes the current user in both To and Cc.
+    let mut seen = std::collections::HashSet::new();
+    for email in &body.attendees {
+        let trimmed = email.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let key = trimmed.to_lowercase();
+        if !seen.insert(key.clone()) {
+            continue;
+        }
+
+        match resolve_mailbox_id(&state.db, trimmed).await? {
+            Some(mailbox_id) => {
+                let intervals = CalendarEvent::busy_intervals_for_organizer(
+                    &state.db,
+                    mailbox_id,
+                    body.range_start,
+                    body.range_end,
+                )
+                .await?;
+                let busy = intervals
+                    .into_iter()
+                    .map(|(s, e)| BusySpan { start: s, end: e })
+                    .collect();
+                out.push(AttendeeBusy {
+                    email: trimmed.to_string(),
+                    status: "resolved".to_string(),
+                    busy,
+                });
+            }
+            None => {
+                out.push(AttendeeBusy {
+                    email: trimmed.to_string(),
+                    status: "not_resolved".to_string(),
+                    busy: vec![],
+                });
+            }
+        }
+    }
+
+    Ok(Json(FreeBusyResponse { attendees: out }))
+}
+
+/// POST /api/calendar/suggest-slots — return up to N candidate meeting slots
+/// where every internal attendee is free and that fall inside the working
+/// hours window. External attendees are surfaced under `unresolved_attendees`
+/// so the caller can warn the user that their availability is unknown.
+pub async fn suggest_meeting_slots(
+    State(state): State<AppState>,
+    axum::Extension(_claims): axum::Extension<Claims>,
+    Json(body): Json<SuggestSlotsRequest>,
+) -> Result<Json<SuggestSlotsResponse>, AppError> {
+    validate_range(&body.attendees, body.range_start, body.range_end)?;
+
+    if body.duration_minutes <= 0 {
+        return Err(AppError::BadRequest(
+            "duration_minutes must be > 0".to_string(),
+        ));
+    }
+    if body.duration_minutes > 24 * 60 {
+        return Err(AppError::BadRequest(
+            "duration_minutes must be <= 1440 (24 hours)".to_string(),
+        ));
+    }
+
+    // ---- Collect busy intervals across every resolvable attendee --------
+    let mut combined: Vec<BusyInterval> = Vec::new();
+    let mut unresolved: Vec<String> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for email in &body.attendees {
+        let trimmed = email.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let key = trimmed.to_lowercase();
+        if !seen.insert(key) {
+            continue;
+        }
+
+        match resolve_mailbox_id(&state.db, trimmed).await? {
+            Some(mailbox_id) => {
+                let intervals = CalendarEvent::busy_intervals_for_organizer(
+                    &state.db,
+                    mailbox_id,
+                    body.range_start,
+                    body.range_end,
+                )
+                .await?;
+                for (start, end) in intervals {
+                    combined.push(BusyInterval { start, end });
+                }
+            }
+            None => {
+                unresolved.push(trimmed.to_string());
+            }
+        }
+    }
+
+    // ---- Build the input + delegate to the pure suggester --------------
+    let working_hours = WorkingHours {
+        start_minute: body.working_start_minute.unwrap_or(9 * 60),
+        end_minute: body.working_end_minute.unwrap_or(17 * 60),
+        include_weekends: body.include_weekends.unwrap_or(false),
+    };
+    let input = SuggestSlotsInput {
+        busy: combined,
+        range_start: body.range_start,
+        range_end: body.range_end,
+        duration: chrono::Duration::minutes(body.duration_minutes),
+        working_hours,
+        max_slots: body.max_slots.unwrap_or(5),
+        step_minutes: body.step_minutes.unwrap_or(30),
+    };
+
+    let slots = suggest_slots(input).map_err(AppError::BadRequest)?;
+    let dto = slots
+        .into_iter()
+        .map(|s| SuggestedSlotDto {
+            start: s.start,
+            end: s.end,
+        })
+        .collect();
+
+    Ok(Json(SuggestSlotsResponse {
+        slots: dto,
+        unresolved_attendees: unresolved,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -649,5 +924,148 @@ mod tests {
             let req: UpdateEventRequest = serde_json::from_str(&json).unwrap();
             assert_eq!(req.status.as_deref(), Some(*status));
         }
+    }
+
+    // ---- TMAIL-127: free-busy + suggest-slots request shapes -----------
+
+    #[test]
+    fn free_busy_request_deserialization() {
+        let json = r#"{
+            "attendees": ["a@x.com", "b@y.com"],
+            "range_start": "2026-06-01T00:00:00Z",
+            "range_end":   "2026-06-08T00:00:00Z"
+        }"#;
+        let req: FreeBusyRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.attendees.len(), 2);
+    }
+
+    #[test]
+    fn suggest_slots_request_defaults_apply_on_missing_fields() {
+        let json = r#"{
+            "attendees": ["a@x.com"],
+            "duration_minutes": 30,
+            "range_start": "2026-06-01T00:00:00Z",
+            "range_end":   "2026-06-05T00:00:00Z"
+        }"#;
+        let req: SuggestSlotsRequest = serde_json::from_str(json).unwrap();
+        assert!(req.working_start_minute.is_none());
+        assert!(req.working_end_minute.is_none());
+        assert!(req.include_weekends.is_none());
+        assert!(req.max_slots.is_none());
+        assert!(req.step_minutes.is_none());
+        assert_eq!(req.duration_minutes, 30);
+    }
+
+    #[test]
+    fn suggest_slots_request_accepts_all_optional_fields() {
+        let json = r#"{
+            "attendees": ["a@x.com"],
+            "duration_minutes": 45,
+            "range_start": "2026-06-01T00:00:00Z",
+            "range_end":   "2026-06-05T00:00:00Z",
+            "working_start_minute": 480,
+            "working_end_minute":   1020,
+            "include_weekends": true,
+            "max_slots": 10,
+            "step_minutes": 15
+        }"#;
+        let req: SuggestSlotsRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.working_start_minute, Some(480));
+        assert_eq!(req.working_end_minute, Some(1020));
+        assert_eq!(req.include_weekends, Some(true));
+        assert_eq!(req.max_slots, Some(10));
+        assert_eq!(req.step_minutes, Some(15));
+    }
+
+    #[test]
+    fn validate_range_rejects_empty_attendees() {
+        let err = validate_range(
+            &[],
+            Utc::now(),
+            Utc::now() + chrono::Duration::hours(1),
+        )
+        .unwrap_err();
+        assert!(matches!(err, AppError::BadRequest(_)));
+    }
+
+    #[test]
+    fn validate_range_rejects_reversed_range() {
+        let now = Utc::now();
+        let err = validate_range(
+            &["a@x.com".to_string()],
+            now + chrono::Duration::hours(1),
+            now,
+        )
+        .unwrap_err();
+        assert!(matches!(err, AppError::BadRequest(_)));
+    }
+
+    #[test]
+    fn validate_range_rejects_too_long_range() {
+        let now = Utc::now();
+        let err = validate_range(
+            &["a@x.com".to_string()],
+            now,
+            now + chrono::Duration::days(MAX_SUGGEST_RANGE_DAYS + 1),
+        )
+        .unwrap_err();
+        assert!(matches!(err, AppError::BadRequest(_)));
+    }
+
+    #[test]
+    fn validate_range_rejects_too_many_attendees() {
+        let attendees: Vec<String> = (0..MAX_ATTENDEES_PER_REQUEST + 1)
+            .map(|i| format!("user{i}@example.com"))
+            .collect();
+        let now = Utc::now();
+        let err = validate_range(
+            &attendees,
+            now,
+            now + chrono::Duration::days(1),
+        )
+        .unwrap_err();
+        assert!(matches!(err, AppError::BadRequest(_)));
+    }
+
+    #[test]
+    fn validate_range_accepts_valid_input() {
+        let now = Utc::now();
+        assert!(validate_range(
+            &["a@x.com".to_string()],
+            now,
+            now + chrono::Duration::days(7),
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn suggest_slots_response_serializes_fields() {
+        let resp = SuggestSlotsResponse {
+            slots: vec![SuggestedSlotDto {
+                start: Utc::now(),
+                end: Utc::now() + chrono::Duration::minutes(30),
+            }],
+            unresolved_attendees: vec!["external@other.com".to_string()],
+        };
+        let json = serde_json::to_value(&resp).unwrap();
+        assert!(json["slots"].is_array());
+        assert_eq!(json["slots"].as_array().unwrap().len(), 1);
+        assert_eq!(json["unresolved_attendees"][0], "external@other.com");
+    }
+
+    #[test]
+    fn attendee_busy_serializes_status_field() {
+        let ab = AttendeeBusy {
+            email: "a@x.com".into(),
+            status: "resolved".into(),
+            busy: vec![BusySpan {
+                start: Utc::now(),
+                end: Utc::now() + chrono::Duration::hours(1),
+            }],
+        };
+        let json = serde_json::to_value(&ab).unwrap();
+        assert_eq!(json["email"], "a@x.com");
+        assert_eq!(json["status"], "resolved");
+        assert_eq!(json["busy"].as_array().unwrap().len(), 1);
     }
 }
