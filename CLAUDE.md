@@ -48,7 +48,7 @@ npm run build:alt-ui           # Build themes/shadcn-prototype into frontend/pub
 ```
 
 ### Database
-PostgreSQL 16+. Default dev connection: `postgres://tasmail:tasmail@localhost/tasmail`. Migrations run automatically on backend startup via `sqlx::migrate!("./migrations")`. 68 migration files (001–068) covering the full schema; recent additions cover feature flags (`057`), usage-based billing (`058`), enterprise quote requests (`059`), a series of FK-cascade + Postgres ENUM→TEXT-with-CHECK conversions (`060`–`065`) so sqlx can decode the columns as `String` in the Rust models, email-queue priority + bounced state (`066`), push notification quiet-hours + grouping (`067`), and phishing dangerous-attachment tracking (`068`). When adding a status/type column, prefer `TEXT + CHECK` over a Postgres ENUM — see migrations 061/063/065 for the pattern.
+PostgreSQL 16+. Default dev connection: `postgres://tasmail:tasmail@localhost/tasmail`. Migrations run automatically on backend startup via `sqlx::migrate!("./migrations")`. 72 migration files (001–072) covering the full schema; recent additions cover feature flags (`057`), usage-based billing (`058`), enterprise quote requests (`059`), a series of FK-cascade + Postgres ENUM→TEXT-with-CHECK conversions (`060`–`065`) so sqlx can decode the columns as `String` in the Rust models, email-queue priority + bounced state (`066`), push notification quiet-hours + grouping (`067`), phishing dangerous-attachment tracking (`068`), eDiscovery compliance (`069`), email summary cache (`070`), CalDAV public-scheduling tokens (`071`), and per-organizer ICS UID on calendar events (`072`). When adding a status/type column, prefer `TEXT + CHECK` over a Postgres ENUM — see migrations 061/063/065 for the pattern.
 
 ## Architecture
 
@@ -58,7 +58,7 @@ Axum 0.8 web framework with layered architecture:
 - **`main.rs`** — Startup: loads config (TOML file or env vars), connects PgPool, runs migrations, starts email scheduler background task, binds Axum server
 - **`config.rs`** — Deserialized from `config.toml` or env vars (`TASMAIL_HOST`, `DATABASE_URL`, `IMAP_HOST`, `SMTP_HOST`, `JWT_SECRET`, etc.)
 - **`state.rs`** — `AppState { db: PgPool, config: Config }` shared across all handlers
-- **`router.rs`** — All routes defined here (~875 lines). Public routes (health, login, refresh, SAML/OIDC callbacks, branding, billing webhooks, metrics) vs protected routes (everything else behind `auth_middleware`)
+- **`router.rs`** — All routes defined here (~1050 lines). Public routes (health, login, refresh, SAML/OIDC callbacks, branding, billing webhooks, metrics) vs protected routes (everything else behind `auth_middleware`)
 - **`handlers/`** — 60+ route handler modules organized by domain (see API Route Structure below)
 - **`services/`** — Business logic: `imap_service` (async-imap → Dovecot), `smtp_service` (lettre for sending), `auth_service` (JWT RS256 + Argon2id), `totp_service`, `sms_service`, `email_scheduler` (background polling), `push_service`, `webhook_dispatcher`, `payment_service`, `dlp_scanner`, `phishing_scanner`, `ollama_client`, `embedding_service`, `rspamd_client`, and more
 - **`middleware/`** — `auth` (JWT validation + PostgreSQL RLS context), `rate_limit`, `metrics` (Prometheus instrumentation), `security_headers`
@@ -174,6 +174,9 @@ Key route groups:
 - `/api/tasks` — Email-linked to-do items
 - `/api/messages/snooze`, `/api/messages/schedule` — Snooze and scheduled send
 - `/api/calendar/events` — Calendar events with ICS export and RSVP
+- `/api/calendar/free-busy` — Attendee free/busy lookup (GET single, POST batch) + meeting-slot suggestion
+- `/api/calendar/imip/accept` — Inbound iMIP REQUEST handler (auto-sent on event create per TMAIL-127)
+- `/api/caldav/*` — CalDAV/public-scheduling tokens (migration `071`)
 - `/api/attachments` — Attachment storage and download
 - `/api/shared-files` — Large file sharing with token-based download
 - `/api/queue` — Email queue management (list, retry, cancel)
@@ -261,5 +264,6 @@ Detailed docs in `docs/`: `PRD.md`, `ARCHITECTURE.md`, `SSR.md` (SRS), `API-SPEC
 `BACKUP-RESTORE.md` (daily pg_dump + incremental Maildir rsync + off-site + verify — TMAIL-42),
 `IP-WARMUP-RUNBOOK.md` (8-week ramp + Google Postmaster Tools enrollment — TMAIL-17),
 `PAYMENT-PROVIDER-MIGRATION.md` (PayPro → TASMail credential migration runbook — TMAIL-163),
-plus `docs/research/` (raw research notes) and `docs/traceability/` (generated
-DOCX/PDF traceability reports — regenerated, don't hand-edit).
+plus `docs/research/` (raw research notes), `docs/traceability/` (generated
+DOCX/PDF traceability reports — regenerated, don't hand-edit), and
+`docs/assessments/` (point-in-time audits, e.g. `frontend-render-perf-2026-05.md`).
