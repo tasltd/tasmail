@@ -11,6 +11,7 @@ import {
   rsvpEvent,
   getEvent,
   downloadEventIcs,
+  updateEvent,
 } from '../../api/calendar';
 import type {
   CalendarEvent,
@@ -321,6 +322,17 @@ export function CalendarManager() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['calendar-events'] }),
   });
 
+  // Added: Drag-and-drop reschedule handler — invalidates both the list and
+  // the per-range view query so the grid stays in sync (TMAIL-118).
+  const rescheduleMut = useMutation({
+    mutationFn: ({ id, start, end }: { id: string; start: string; end: string }) =>
+      updateEvent(id, { start_time: start, end_time: end }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['calendar-events'] });
+      queryClient.invalidateQueries({ queryKey: ['calendar-events-view'] });
+    },
+  });
+
   if (isLoading) return <LoadingSkeleton rows={6} />;
 
   // Added: Show event detail when an event is selected
@@ -358,6 +370,7 @@ export function CalendarManager() {
           <CalendarView
             onSelectEvent={(eventId) => setSelectedEventId(eventId)}
             onCreateEvent={() => setIsCreating(true)}
+            onRescheduleEvent={(id, start, end) => rescheduleMut.mutate({ id, start, end })}
           />
         </div>
       )}

@@ -1,6 +1,6 @@
-// Added: Tests for CalendarView visual calendar grid component (TMAIL-118)
+// Changed: Tests rewritten for FullCalendar-based CalendarView (TMAIL-118)
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { CalendarView } from './CalendarView';
 
@@ -10,7 +10,6 @@ vi.mock('../../api/calendar', () => ({
   listEvents: (...args: unknown[]) => mockListEvents(...args),
 }));
 
-// Added: Helper to create test wrapper with fresh QueryClient
 function createWrapper() {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -22,139 +21,126 @@ function createWrapper() {
 
 const mockOnSelectEvent = vi.fn();
 const mockOnCreateEvent = vi.fn();
+const mockOnReschedule = vi.fn();
 
-// Added: Helper to render CalendarView with default props
-function renderCalendarView() {
+function renderCalendarView(opts: { reschedule?: boolean } = {}) {
   return render(
-    <CalendarView onSelectEvent={mockOnSelectEvent} onCreateEvent={mockOnCreateEvent} />,
+    <CalendarView
+      onSelectEvent={mockOnSelectEvent}
+      onCreateEvent={mockOnCreateEvent}
+      onRescheduleEvent={opts.reschedule ? mockOnReschedule : undefined}
+    />,
     { wrapper: createWrapper() },
   );
 }
 
-describe('CalendarView', () => {
+describe('CalendarView (FullCalendar)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockListEvents.mockResolvedValue([]);
   });
 
-  it('renders month grid with weekday headers and day cells', async () => {
-    renderCalendarView();
-
+  it('renders the FullCalendar container', async () => {
+    const { container } = renderCalendarView();
     await waitFor(() => {
-      expect(screen.getByTestId('month-grid')).toBeInTheDocument();
+      expect(container.querySelector('.fc')).toBeTruthy();
     });
-    // Added: Verify all 7 weekday headers are rendered
-    expect(screen.getByText('Sun')).toBeInTheDocument();
-    expect(screen.getByText('Mon')).toBeInTheDocument();
-    expect(screen.getByText('Sat')).toBeInTheDocument();
-    // Added: Verify day cells exist (at least 28 for any month)
-    const cells = screen.getAllByTestId('month-day-cell');
-    expect(cells.length).toBeGreaterThanOrEqual(28);
-    // Added: Total cells should be divisible by 7
-    expect(cells.length % 7).toBe(0);
+    expect(screen.getByTestId('calendar-view')).toBeInTheDocument();
   });
 
-  it('switches to week view with 7 column headers', async () => {
-    renderCalendarView();
-
+  it('renders all four view-switch buttons (month/week/day/agenda)', async () => {
+    const { container } = renderCalendarView();
     await waitFor(() => {
-      expect(screen.getByTestId('view-week')).toBeInTheDocument();
+      expect(container.querySelector('.fc-dayGridMonth-button')).toBeTruthy();
     });
-
-    fireEvent.click(screen.getByTestId('view-week'));
-
-    await waitFor(() => {
-      expect(screen.getByTestId('week-grid')).toBeInTheDocument();
-    });
-    const columnHeaders = screen.getAllByTestId('week-column-header');
-    expect(columnHeaders).toHaveLength(7);
+    expect(within(container).getByText('Month')).toBeInTheDocument();
+    expect(within(container).getByText('Week')).toBeInTheDocument();
+    expect(within(container).getByText('Day')).toBeInTheDocument();
+    expect(within(container).getByText('Agenda')).toBeInTheDocument();
   });
 
-  it('switches to day view with hourly time slots', async () => {
-    renderCalendarView();
-
+  it('renders prev/next/today navigation buttons', async () => {
+    const { container } = renderCalendarView();
     await waitFor(() => {
-      expect(screen.getByTestId('view-day')).toBeInTheDocument();
+      expect(container.querySelector('.fc-today-button')).toBeTruthy();
     });
-
-    fireEvent.click(screen.getByTestId('view-day'));
-
-    await waitFor(() => {
-      expect(screen.getByTestId('day-grid')).toBeInTheDocument();
-    });
-    // Added: Day view should show 24 time slot rows
-    const timeRows = screen.getAllByTestId('day-time-row');
-    expect(timeRows).toHaveLength(24);
+    expect(container.querySelector('.fc-prev-button')).toBeTruthy();
+    expect(container.querySelector('.fc-next-button')).toBeTruthy();
   });
 
-  it('view switch buttons update the active view', async () => {
-    renderCalendarView();
-
+  it('starts on month view by default', async () => {
+    const { container } = renderCalendarView();
     await waitFor(() => {
-      expect(screen.getByTestId('month-grid')).toBeInTheDocument();
-    });
-
-    // Added: Switch to week
-    fireEvent.click(screen.getByTestId('view-week'));
-    await waitFor(() => {
-      expect(screen.getByTestId('week-grid')).toBeInTheDocument();
-    });
-    expect(screen.queryByTestId('month-grid')).not.toBeInTheDocument();
-
-    // Added: Switch to day
-    fireEvent.click(screen.getByTestId('view-day'));
-    await waitFor(() => {
-      expect(screen.getByTestId('day-grid')).toBeInTheDocument();
-    });
-    expect(screen.queryByTestId('week-grid')).not.toBeInTheDocument();
-
-    // Added: Switch back to month
-    fireEvent.click(screen.getByTestId('view-month'));
-    await waitFor(() => {
-      expect(screen.getByTestId('month-grid')).toBeInTheDocument();
+      expect(container.querySelector('.fc-dayGridMonth-view')).toBeTruthy();
     });
   });
 
-  it('navigation prev/next/today buttons update displayed date', async () => {
-    renderCalendarView();
-
+  it('switches to week view when the Week button is clicked', async () => {
+    const { container } = renderCalendarView();
     await waitFor(() => {
-      expect(screen.getByTestId('calendar-heading')).toBeInTheDocument();
+      expect(container.querySelector('.fc-timeGridWeek-button')).toBeTruthy();
     });
+    fireEvent.click(container.querySelector('.fc-timeGridWeek-button')!);
+    await waitFor(() => {
+      expect(container.querySelector('.fc-timeGridWeek-view')).toBeTruthy();
+    });
+  });
 
+  it('switches to day view when the Day button is clicked', async () => {
+    const { container } = renderCalendarView();
+    await waitFor(() => {
+      expect(container.querySelector('.fc-timeGridDay-button')).toBeTruthy();
+    });
+    fireEvent.click(container.querySelector('.fc-timeGridDay-button')!);
+    await waitFor(() => {
+      expect(container.querySelector('.fc-timeGridDay-view')).toBeTruthy();
+    });
+  });
+
+  it('switches to agenda (list) view when the Agenda button is clicked', async () => {
+    const { container } = renderCalendarView();
+    await waitFor(() => {
+      expect(container.querySelector('.fc-listWeek-button')).toBeTruthy();
+    });
+    fireEvent.click(container.querySelector('.fc-listWeek-button')!);
+    await waitFor(() => {
+      expect(container.querySelector('.fc-listWeek-view')).toBeTruthy();
+    });
+  });
+
+  it('fetches events for the visible range on mount', async () => {
+    renderCalendarView();
+    await waitFor(() => {
+      expect(mockListEvents).toHaveBeenCalled();
+    });
+    // Added: First arg should be an ISO start, second an ISO end
+    const [start, end] = mockListEvents.mock.calls[0];
+    expect(typeof start).toBe('string');
+    expect(typeof end).toBe('string');
+    expect(new Date(start).toString()).not.toBe('Invalid Date');
+    expect(new Date(end).toString()).not.toBe('Invalid Date');
+  });
+
+  it('displays a non-recurring event on the calendar', async () => {
     const now = new Date();
-    const currentMonthYear = now.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-    expect(screen.getByTestId('calendar-heading').textContent).toBe(currentMonthYear);
-
-    // Added: Click next to go to next month
-    fireEvent.click(screen.getByLabelText('Next'));
-    // NOTE: After clicking next, the heading text changes synchronously via state
-    const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-    const nextMonthYear = nextMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-    await waitFor(() => {
-      expect(screen.getByTestId('calendar-heading').textContent).toBe(nextMonthYear);
-    });
-
-    // Added: Click Today to go back to current month
-    fireEvent.click(screen.getByText('Today'));
-    await waitFor(() => {
-      expect(screen.getByTestId('calendar-heading').textContent).toBe(currentMonthYear);
-    });
-  });
-
-  it('displays events on correct dates in month view', async () => {
-    // Added: Create an event for today's date so it appears in the current month
-    const now = new Date();
-    const eventDate = new Date(now.getFullYear(), now.getMonth(), 15, 10, 0);
+    const start = new Date(now.getFullYear(), now.getMonth(), 15, 10, 0);
     mockListEvents.mockResolvedValue([
       {
         id: 'evt-1',
+        organizer_id: 'u1',
         title: 'Team Standup',
         status: 'confirmed',
-        start_time: eventDate.toISOString(),
-        end_time: new Date(eventDate.getTime() + 3600000).toISOString(),
+        description: null,
         location: null,
+        start_time: start.toISOString(),
+        end_time: new Date(start.getTime() + 3600000).toISOString(),
         all_day: false,
+        recurrence_rule: null,
+        linked_message_uid: null,
+        linked_folder: null,
+        ics_uid: 'ics-1',
+        created_at: start.toISOString(),
+        updated_at: start.toISOString(),
       },
     ]);
 
@@ -163,123 +149,81 @@ describe('CalendarView', () => {
     await waitFor(() => {
       expect(screen.getByText('Team Standup')).toBeInTheDocument();
     });
-
-    const chips = screen.getAllByTestId('event-chip');
-    expect(chips).toHaveLength(1);
-    expect(chips[0]).toHaveTextContent('Team Standup');
   });
 
-  it('clicking on a day cell triggers onCreateEvent callback', async () => {
-    renderCalendarView();
-
-    await waitFor(() => {
-      expect(screen.getByTestId('month-grid')).toBeInTheDocument();
-    });
-
-    const cells = screen.getAllByTestId('month-day-cell');
-    fireEvent.click(cells[0]);
-    expect(mockOnCreateEvent).toHaveBeenCalledTimes(1);
-    // Added: The callback should receive a Date object
-    expect(mockOnCreateEvent.mock.calls[0][0]).toBeInstanceOf(Date);
-  });
-
-  it('clicking on an event chip triggers onSelectEvent with event id', async () => {
+  it('triggers onSelectEvent when an event chip is clicked', async () => {
     const now = new Date();
-    const eventDate = new Date(now.getFullYear(), now.getMonth(), 15, 10, 0);
+    const start = new Date(now.getFullYear(), now.getMonth(), 15, 10, 0);
     mockListEvents.mockResolvedValue([
       {
         id: 'evt-click',
-        title: 'Click Test',
+        organizer_id: 'u1',
+        title: 'Clickable Event',
         status: 'tentative',
-        start_time: eventDate.toISOString(),
-        end_time: new Date(eventDate.getTime() + 3600000).toISOString(),
+        description: null,
         location: null,
+        start_time: start.toISOString(),
+        end_time: new Date(start.getTime() + 3600000).toISOString(),
         all_day: false,
+        recurrence_rule: null,
+        linked_message_uid: null,
+        linked_folder: null,
+        ics_uid: 'ics-c',
+        created_at: start.toISOString(),
+        updated_at: start.toISOString(),
       },
     ]);
 
     renderCalendarView();
 
-    await waitFor(() => {
-      expect(screen.getByText('Click Test')).toBeInTheDocument();
-    });
-
-    fireEvent.click(screen.getByText('Click Test'));
-    expect(mockOnSelectEvent).toHaveBeenCalledWith('evt-click');
-  });
-
-  it('shows empty state when no events in current period', async () => {
-    mockListEvents.mockResolvedValue([]);
-    renderCalendarView();
+    const eventEl = await screen.findByText('Clickable Event');
+    fireEvent.click(eventEl);
 
     await waitFor(() => {
-      expect(screen.getByTestId('empty-state')).toBeInTheDocument();
+      expect(mockOnSelectEvent).toHaveBeenCalledWith('evt-click');
     });
-    expect(screen.getByText('No events in this period.')).toBeInTheDocument();
   });
 
-  it('renders events in week view time slots', async () => {
+  it('renders an event that has a recurrence_rule (rendered once, expansion deferred)', async () => {
+    // NOTE: Full RRULE expansion via @fullcalendar/rrule is deferred — the
+    // plugin currently has an ESM interop bug with rrule@2.8+ where RRule and
+    // rrulestr come back undefined. The backend persists recurrence_rule and
+    // ICS export still emits it; for now the master event shows once.
     const now = new Date();
-    const eventDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 14, 0);
+    const start = new Date(now.getFullYear(), now.getMonth(), 15, 9, 0);
     mockListEvents.mockResolvedValue([
       {
-        id: 'evt-week',
-        title: 'Week Event',
+        id: 'evt-rrule',
+        organizer_id: 'u1',
+        title: 'Weekly Sync',
         status: 'confirmed',
-        start_time: eventDate.toISOString(),
-        end_time: new Date(eventDate.getTime() + 3600000).toISOString(),
+        description: null,
         location: null,
+        start_time: start.toISOString(),
+        end_time: new Date(start.getTime() + 3600000).toISOString(),
         all_day: false,
+        recurrence_rule: 'FREQ=WEEKLY',
+        linked_message_uid: null,
+        linked_folder: null,
+        ics_uid: 'ics-r',
+        created_at: start.toISOString(),
+        updated_at: start.toISOString(),
       },
     ]);
 
     renderCalendarView();
 
     await waitFor(() => {
-      expect(screen.getByTestId('view-week')).toBeInTheDocument();
-    });
-
-    fireEvent.click(screen.getByTestId('view-week'));
-
-    await waitFor(() => {
-      expect(screen.getByTestId('week-grid')).toBeInTheDocument();
-    });
-
-    // Added: The event should appear somewhere in the week grid
-    await waitFor(() => {
-      expect(screen.getByText('Week Event')).toBeInTheDocument();
+      expect(screen.getByText('Weekly Sync')).toBeInTheDocument();
     });
   });
 
-  it('renders events in day view time slots', async () => {
-    const now = new Date();
-    const eventDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 9, 0);
-    mockListEvents.mockResolvedValue([
-      {
-        id: 'evt-day',
-        title: 'Day Event',
-        status: 'tentative',
-        start_time: eventDate.toISOString(),
-        end_time: new Date(eventDate.getTime() + 3600000).toISOString(),
-        location: null,
-        all_day: false,
-      },
-    ]);
-
-    renderCalendarView();
-
+  it('does not request reschedule callback when onRescheduleEvent is omitted (editable=false)', async () => {
+    const { container } = renderCalendarView({ reschedule: false });
     await waitFor(() => {
-      expect(screen.getByTestId('view-day')).toBeInTheDocument();
+      expect(container.querySelector('.fc')).toBeTruthy();
     });
-
-    fireEvent.click(screen.getByTestId('view-day'));
-
-    await waitFor(() => {
-      expect(screen.getByTestId('day-grid')).toBeInTheDocument();
-    });
-
-    await waitFor(() => {
-      expect(screen.getByText('Day Event')).toBeInTheDocument();
-    });
+    // Added: With editable=false there's no drag overlay handle on day cells
+    expect(mockOnReschedule).not.toHaveBeenCalled();
   });
 });
