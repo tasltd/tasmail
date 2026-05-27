@@ -257,5 +257,6 @@ Detailed docs in `docs/`: `PRD.md`, `ARCHITECTURE.md`, `SSR.md` (SRS), `API-SPEC
 `DEVELOPMENT-SETUP.md`, `DEPLOYMENT-GUIDE.md`, `SECURITY.md`, `PROJECT-MANAGEMENT-PLAN.md`,
 `PROJECT-MEMBERS.md`, `BUSINESS-VALIDATION-GHANA.md`, `DNS-MX-ONBOARDING.md`,
 `GAP-ANALYSIS.md`, `SELF-HOST-MAIL-SERVERS.md` (optional Postfix/Dovecot install path),
+`MOBILE-PLATFORM-DECISION.md` (ADR: Flutter for the Ghana market — TMAIL-49),
 plus `docs/research/` (raw research notes) and `docs/traceability/` (generated
 DOCX/PDF traceability reports — regenerated, don't hand-edit).

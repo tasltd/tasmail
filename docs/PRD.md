@@ -78,7 +78,7 @@ A fast, secure, and extensible self-hosted email service that feels like a moder
 | # | Non-Goal | Rationale |
 |---|----------|-----------|
 | NG1 | CalDAV/CardDAV (calendar/contacts) | Separate concern; users can run Radicale/Nextcloud alongside |
-| NG2 | Mobile native apps | React PWA covers mobile; native apps are v2.0+ |
+| NG2 | Mobile native apps (v1) | React PWA covers mobile in v1. Native apps land in v2.0 on **Flutter** — see `MOBILE-PLATFORM-DECISION.md` (TMAIL-49). |
 | NG3 | Built-in spam filter | Rspamd runs as a separate milter; not embedded in the Rust backend |
 | NG4 | POP3 support | IMAP is the modern standard; POP3 is legacy |
 | NG5 | Replace Postfix/Dovecot | We proxy to them, not replace them |
