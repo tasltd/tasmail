@@ -62,3 +62,7 @@ pub mod billing_rollup;
 // Added (TMAIL-127): Meeting-slot suggester — pure interval math over busy
 // intervals, used by /api/calendar/suggest-slots.
 pub mod slot_suggester;
+// Added (TMAIL-266 / TMAIL-127): CalDAV REPORT / free-busy-query client used
+// by GET /api/calendar/free-busy to merge external calendars into the local
+// busy view.
+pub mod caldav_freebusy;

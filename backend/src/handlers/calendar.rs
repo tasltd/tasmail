@@ -820,6 +820,188 @@ pub async fn suggest_meeting_slots(
     }))
 }
 
+// ============================================================================
+// Added (TMAIL-266 / TMAIL-127): GET /api/calendar/free-busy
+// ============================================================================
+//
+// CalDAV-aware variant of the POST free-busy endpoint above. Accepts the same
+// inputs as query parameters (so the composer can hit it from a TanStack
+// Query hook keyed by URL) and additionally fans out to the authenticated
+// user's configured CalDAV servers (`dav_configurations`, TMAIL-117) — their
+// busy windows are unioned with the local `calendar_events` data for every
+// attendee that matches the auth user's email.
+//
+// Why limit external fan-out to the auth user only:
+//   * The DAV credentials stored in dav_configurations belong to a single
+//     mailbox and may include user-specific scopes (e.g. an app password
+//     issued to "Dominic on TASMail"). Re-using one user's creds to query
+//     another user's external calendar would be a privacy violation.
+//   * For *internal* attendees we already have the source of truth — the
+//     calendar_events table holds every event they organize or accept.
+//
+// The endpoint degrades gracefully: if a DAV server is down or returns a
+// non-2xx the failure is logged and the response falls back to local-only
+// for the affected attendee. We never bubble external errors up to the
+// caller because the composer must stay responsive.
+
+/// Query string for GET /api/calendar/free-busy.
+///
+/// Example: `?emails=a@x.com,b@y.com&start=...&end=...`
+#[derive(Debug, Deserialize)]
+pub struct FreeBusyQuery {
+    /// Comma-separated attendee emails. Empty/whitespace entries are
+    /// silently dropped before validation.
+    pub emails: String,
+    pub start: DateTime<Utc>,
+    pub end: DateTime<Utc>,
+}
+
+/// GET /api/calendar/free-busy?emails=...&start=...&end=...
+///
+/// Returns merged busy windows per attendee. Local `calendar_events`
+/// always contribute; the authenticated user's CalDAV servers contribute
+/// to the auth user's own attendee row when their email is in the list.
+pub async fn get_free_busy_query(
+    State(state): State<AppState>,
+    axum::Extension(claims): axum::Extension<Claims>,
+    Query(params): Query<FreeBusyQuery>,
+) -> Result<Json<FreeBusyResponse>, AppError> {
+    let emails: Vec<String> = params
+        .emails
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    validate_range(&emails, params.start, params.end)?;
+
+    // Pre-fetch the auth user's CalDAV busy intervals once — the same
+    // payload feeds every attendee row that matches their email.
+    let auth_user_id = parse_user_id(&claims)?;
+    let auth_dav_busy =
+        fetch_user_caldav_busy(&state, auth_user_id, params.start, params.end).await;
+    let auth_email_lc = claims.username.trim().to_lowercase();
+
+    let mut out: Vec<AttendeeBusy> = Vec::with_capacity(emails.len());
+    let mut seen = std::collections::HashSet::new();
+    for email in &emails {
+        let trimmed = email.trim();
+        let key = trimmed.to_lowercase();
+        if !seen.insert(key.clone()) {
+            continue;
+        }
+
+        match resolve_mailbox_id(&state.db, trimmed).await? {
+            Some(mailbox_id) => {
+                let local = CalendarEvent::busy_intervals_for_organizer(
+                    &state.db,
+                    mailbox_id,
+                    params.start,
+                    params.end,
+                )
+                .await?;
+                let mut all: Vec<BusyInterval> = local
+                    .into_iter()
+                    .map(|(s, e)| BusyInterval { start: s, end: e })
+                    .collect();
+                if !auth_dav_busy.is_empty() && key == auth_email_lc {
+                    all.extend(auth_dav_busy.iter().copied());
+                }
+                let merged = crate::services::slot_suggester::merge_busy(all);
+                let busy = merged
+                    .into_iter()
+                    .map(|i| BusySpan {
+                        start: i.start,
+                        end: i.end,
+                    })
+                    .collect();
+                out.push(AttendeeBusy {
+                    email: trimmed.to_string(),
+                    status: "resolved".to_string(),
+                    busy,
+                });
+            }
+            None => {
+                out.push(AttendeeBusy {
+                    email: trimmed.to_string(),
+                    status: "not_resolved".to_string(),
+                    busy: vec![],
+                });
+            }
+        }
+    }
+
+    Ok(Json(FreeBusyResponse { attendees: out }))
+}
+
+/// Fetch every enabled CalDAV server configured for `user_id` and union
+/// their FREEBUSY responses into a single Vec<BusyInterval>.
+///
+/// All errors (HTTP failure, decrypt failure, unparseable VFREEBUSY) are
+/// logged and swallowed — see the module-level comment for the rationale.
+async fn fetch_user_caldav_busy(
+    state: &AppState,
+    user_id: uuid::Uuid,
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
+) -> Vec<BusyInterval> {
+    use crate::models::ai_config::{decrypt_api_key, derive_encryption_key};
+    use crate::models::dav_config::DavConfiguration;
+    use crate::services::caldav_freebusy::query_caldav_freebusy;
+
+    let configs = match DavConfiguration::find_by_user(&state.db, user_id).await {
+        Ok(c) => c,
+        Err(err) => {
+            tracing::warn!(error = ?err, user_id = %user_id, "free-busy: failed to load dav_configurations");
+            return Vec::new();
+        }
+    };
+    if configs.is_empty() {
+        return Vec::new();
+    }
+    let key = derive_encryption_key(&state.config.jwt.secret);
+    let mut out: Vec<BusyInterval> = Vec::new();
+    for cfg in configs {
+        if !cfg.enabled {
+            continue;
+        }
+        // Only CalDAV (or "both") configs participate — CardDAV-only ones
+        // hold contacts, not calendars.
+        if cfg.dav_type == "carddav" {
+            continue;
+        }
+        let password = match decrypt_api_key(&cfg.encrypted_password, &key) {
+            Ok(p) => p,
+            Err(err) => {
+                tracing::warn!(
+                    error = ?err,
+                    dav_config = %cfg.id,
+                    "free-busy: failed to decrypt CalDAV password — skipping"
+                );
+                continue;
+            }
+        };
+        match query_caldav_freebusy(&cfg.server_url, &cfg.username, &password, start, end).await {
+            Ok(windows) => {
+                for w in windows {
+                    out.push(BusyInterval {
+                        start: w.start,
+                        end: w.end,
+                    });
+                }
+            }
+            Err(err) => {
+                tracing::warn!(
+                    error = %err,
+                    dav_config = %cfg.id,
+                    server = %cfg.server_url,
+                    "free-busy: CalDAV REPORT failed — falling back to local events only"
+                );
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1067,5 +1249,48 @@ mod tests {
         assert_eq!(json["email"], "a@x.com");
         assert_eq!(json["status"], "resolved");
         assert_eq!(json["busy"].as_array().unwrap().len(), 1);
+    }
+
+    // ---- TMAIL-266: GET /api/calendar/free-busy query-string shape ------
+
+    #[test]
+    fn free_busy_query_deserializes_from_querystring() {
+        // axum::extract::Query uses serde_urlencoded, so the canonical
+        // querystring shape must round-trip through that codec.
+        let qs = "emails=a%40x.com%2Cb%40y.com&start=2026-06-01T00:00:00Z&end=2026-06-08T00:00:00Z";
+        let q: FreeBusyQuery = serde_urlencoded::from_str(qs).unwrap();
+        assert_eq!(q.emails, "a@x.com,b@y.com");
+        assert_eq!(q.start.to_rfc3339(), "2026-06-01T00:00:00+00:00");
+        assert_eq!(q.end.to_rfc3339(), "2026-06-08T00:00:00+00:00");
+    }
+
+    #[test]
+    fn free_busy_query_splits_and_trims_emails() {
+        let q = FreeBusyQuery {
+            emails: " a@x.com , , b@y.com,  ".to_string(),
+            start: Utc::now(),
+            end: Utc::now() + chrono::Duration::hours(1),
+        };
+        let parsed: Vec<String> = q
+            .emails
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        assert_eq!(parsed, vec!["a@x.com".to_string(), "b@y.com".to_string()]);
+    }
+
+    #[test]
+    fn free_busy_query_rejects_missing_required_fields() {
+        // Missing start
+        let err = serde_urlencoded::from_str::<FreeBusyQuery>(
+            "emails=a%40x.com&end=2026-06-08T00:00:00Z",
+        );
+        assert!(err.is_err());
+        // Missing emails
+        let err = serde_urlencoded::from_str::<FreeBusyQuery>(
+            "start=2026-06-01T00:00:00Z&end=2026-06-08T00:00:00Z",
+        );
+        assert!(err.is_err());
     }
 }

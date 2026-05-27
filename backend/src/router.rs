@@ -525,9 +525,14 @@ pub fn create_router(state: AppState) -> Router {
         // Added (TMAIL-127): Free-busy lookup for one or more attendees.
         // Returns the busy windows per attendee; external attendees come
         // back with status="not_resolved" so the UI can flag them.
+        //
+        // POST takes a JSON body (legacy composer code path); GET takes the
+        // same fields as query parameters and additionally unions the auth
+        // user's CalDAV servers (TMAIL-266 / TMAIL-117) into the response.
         .route(
             "/api/calendar/free-busy",
-            post(handlers::calendar::get_free_busy),
+            get(handlers::calendar::get_free_busy_query)
+                .post(handlers::calendar::get_free_busy),
         )
         // Added (TMAIL-127): Suggest up to N meeting slots where every
         // resolvable attendee is free, within the supplied working-hours
