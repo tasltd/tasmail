@@ -98,13 +98,17 @@ info "Installing Dovecot packages..."
 
 if command -v apt-get &>/dev/null; then
     apt-get update -qq
-    apt-get install -y -qq dovecot-core dovecot-imapd dovecot-lmtpd dovecot-pgsql
+    # Added: dovecot-sieve runs Sieve filters at LMTP delivery time;
+    # dovecot-managesieved exposes port 4190 so SPA clients can upload rules.
+    apt-get install -y -qq dovecot-core dovecot-imapd dovecot-lmtpd dovecot-pgsql \
+        dovecot-sieve dovecot-managesieved
 elif command -v dnf &>/dev/null; then
-    dnf install -y dovecot dovecot-pgsql
+    # Added: On RHEL/Fedora the Sieve runtime ships in dovecot-pigeonhole
+    dnf install -y dovecot dovecot-pgsql dovecot-pigeonhole
 elif command -v yum &>/dev/null; then
-    yum install -y dovecot dovecot-pgsql
+    yum install -y dovecot dovecot-pgsql dovecot-pigeonhole
 else
-    error "Unsupported package manager. Install dovecot-core, dovecot-imapd, dovecot-lmtpd, dovecot-pgsql manually."
+    error "Unsupported package manager. Install dovecot-core, dovecot-imapd, dovecot-lmtpd, dovecot-pgsql, dovecot-sieve, dovecot-managesieved manually."
     exit 1
 fi
 
@@ -275,7 +279,8 @@ echo -e "${BOLD}Dovecot Setup Complete${RESET}"
 echo "========================================="
 echo "  Domain:         ${DOMAIN}"
 echo "  Hostname:       ${HOSTNAME}"
-echo "  Protocols:      IMAP (993/TLS), LMTP (socket)"
+echo "  Protocols:      IMAP (993/TLS), LMTP (socket), ManageSieve (4190/STARTTLS)"
+echo "  Sieve:          Server-side filters at LMTP delivery, vacation responder ready"
 echo "  Mail storage:   /var/mail/vhosts/${DOMAIN}/"
 echo "  Auth backend:   PostgreSQL (${DB_HOST}/${DB_NAME})"
 echo "  Pass scheme:    Argon2id"
@@ -288,4 +293,5 @@ info "Next steps:"
 echo "  1. Restart Postfix to pick up SASL/LMTP sockets: systemctl restart postfix"
 echo "  2. Run setup-tls.sh to obtain TLS certificates"
 echo "  3. Test IMAP login: openssl s_client -connect ${HOSTNAME}:993"
-echo "  4. Test LMTP delivery: doveadm user '*'"
+echo "  4. Test ManageSieve: openssl s_client -starttls sieve -connect ${HOSTNAME}:4190"
+echo "  5. Test LMTP delivery: doveadm user '*'"

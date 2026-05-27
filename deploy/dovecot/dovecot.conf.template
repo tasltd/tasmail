@@ -10,8 +10,9 @@
 # Protocols
 # --------------------------------------------------------------------------
 
-# Added: Enable IMAP for client access and LMTP for Postfix mail delivery
-protocols = imap lmtp
+# Added: Enable IMAP for client access, LMTP for Postfix mail delivery,
+# and ManageSieve (port 4190) for clients to upload/edit Sieve filter scripts
+protocols = imap lmtp sieve
 
 # --------------------------------------------------------------------------
 # TLS Settings (Let's Encrypt certificates)
@@ -144,6 +145,12 @@ service lmtp {
     }
 }
 
+# Added: Run user Sieve filter scripts at delivery time. Without this,
+# Sieve rules uploaded via ManageSieve would never fire on incoming mail.
+protocol lmtp {
+    mail_plugins = $mail_plugins sieve
+}
+
 # --------------------------------------------------------------------------
 # SASL Authentication Service (for Postfix SMTP AUTH)
 # --------------------------------------------------------------------------
@@ -208,6 +215,44 @@ protocol imap {
 
     # Added: IMAP IDLE for push notifications (real-time new mail)
     imap_idle_notify_interval = 2 mins
+}
+
+# --------------------------------------------------------------------------
+# ManageSieve (RFC 5804) — client protocol for uploading/editing Sieve scripts
+# --------------------------------------------------------------------------
+
+# Added: ManageSieve listens on 4190/STARTTLS. The TASMail SPA filters
+# manager (`handlers/filters.rs`) talks to this socket to persist user rules.
+protocol sieve {
+    # Added: Reuse the IMAP TLS material — same hostname, same cert
+    managesieve_max_line_length = 65536
+    mail_max_userip_connections = 10
+}
+
+# --------------------------------------------------------------------------
+# Sieve Plugin (server-side filter execution at LMTP delivery)
+# --------------------------------------------------------------------------
+
+plugin {
+    # Added: Active script — symlink/copy of the user's currently-enabled script
+    sieve = file:/var/mail/vhosts/%d/%n/sieve;active=/var/mail/vhosts/%d/%n/.dovecot.sieve
+
+    # Added: ManageSieve script storage — one user can save multiple scripts
+    # and switch between them (vacation responder, work filters, etc.)
+    sieve_dir = /var/mail/vhosts/%d/%n/sieve
+
+    # Added: Default script executed when the user has no personal script.
+    # Empty path means "no default" — uploaded scripts are the only filters.
+    sieve_default = /var/lib/dovecot/sieve/default.sieve
+    sieve_default_name = default
+
+    # Added: Limits keep a runaway script from monopolising the delivery worker
+    sieve_max_script_size = 1M
+    sieve_max_actions = 32
+    sieve_max_redirects = 4
+
+    # Added: Extensions — vacation needs explicit enable; others are RFC defaults
+    sieve_extensions = +vacation +imap4flags +include +variables +relational +regex +subaddress +envelope
 }
 
 # --------------------------------------------------------------------------
