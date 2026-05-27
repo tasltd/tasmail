@@ -23,6 +23,14 @@ pub struct DeviceQuery {
     pub device_id: Option<uuid::Uuid>,
 }
 
+/// Added: Response envelope for list_checkpoints — bundles all folder checkpoints in one call
+/// PURPOSE: Lets mobile clients fetch every folder's sync state in a single round-trip on app launch
+#[derive(Debug, serde::Serialize)]
+pub struct ListCheckpointsResponse {
+    pub checkpoints: Vec<SyncCheckpoint>,
+    pub count: usize,
+}
+
 /// GET /api/sync/checkpoint/{folder} — Get current sync state for a folder
 /// PURPOSE: Client calls this before syncing to determine what's changed
 pub async fn get_checkpoint(
@@ -154,6 +162,19 @@ pub async fn resolve_conflict(
     }))
 }
 
+/// GET /api/sync/checkpoints — List all sync checkpoints for the current user
+/// PURPOSE: Mobile clients fetch every folder's checkpoint in one call on app launch / wake
+/// NOTE: Returns checkpoints across all devices the user owns — clients filter client-side
+pub async fn list_checkpoints(
+    State(state): State<AppState>,
+    axum::Extension(claims): axum::Extension<Claims>,
+) -> Result<Json<ListCheckpointsResponse>, AppError> {
+    let user_id = parse_user_id(&claims)?;
+    let checkpoints = SyncCheckpoint::list_by_user(&state.db, user_id).await?;
+    let count = checkpoints.len();
+    Ok(Json(ListCheckpointsResponse { checkpoints, count }))
+}
+
 // Added: Parse user UUID from JWT claims
 fn parse_user_id(claims: &Claims) -> Result<uuid::Uuid, AppError> {
     claims
@@ -239,6 +260,42 @@ mod tests {
         let json = serde_json::to_value(&resp).unwrap();
         assert_eq!(json["resolution"], "server_wins");
         assert_eq!(json["applied"], true);
+    }
+
+    #[test]
+    fn test_list_checkpoints_response_shape() {
+        // Added: Verify list endpoint envelope serializes count + checkpoints together
+        let resp = ListCheckpointsResponse {
+            checkpoints: vec![],
+            count: 0,
+        };
+        let json = serde_json::to_value(&resp).unwrap();
+        assert_eq!(json["count"], 0);
+        assert!(json["checkpoints"].is_array());
+        assert_eq!(json["checkpoints"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn test_list_checkpoints_response_with_data() {
+        let checkpoint = SyncCheckpoint {
+            id: uuid::Uuid::new_v4(),
+            user_id: uuid::Uuid::new_v4(),
+            device_id: None,
+            folder_name: "INBOX".to_string(),
+            last_uid: Some(42),
+            last_modseq: Some(1000),
+            uidvalidity: Some(1),
+            last_synced_at: Some(chrono::Utc::now()),
+            created_at: Some(chrono::Utc::now()),
+        };
+        let resp = ListCheckpointsResponse {
+            checkpoints: vec![checkpoint],
+            count: 1,
+        };
+        let json = serde_json::to_value(&resp).unwrap();
+        assert_eq!(json["count"], 1);
+        assert_eq!(json["checkpoints"][0]["folder_name"], "INBOX");
+        assert_eq!(json["checkpoints"][0]["last_uid"], 42);
     }
 
     #[test]

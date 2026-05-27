@@ -900,6 +900,10 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/push/test", post(handlers::push::test_notification))
         // Added: Sync checkpoint routes for offline-first delta sync (TMAIL-51)
         .route(
+            "/api/sync/checkpoints",
+            get(handlers::sync::list_checkpoints),
+        )
+        .route(
             "/api/sync/checkpoint/{folder}",
             get(handlers::sync::get_checkpoint).post(handlers::sync::update_checkpoint),
         )

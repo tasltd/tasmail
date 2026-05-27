@@ -1,8 +1,14 @@
-// Added: Offline sync service for TMAIL-151
-// PURPOSE: Delta sync with backend, checkpoint management, and offline queue
-// EXTERNAL: Uses /api/mobile/sync and /api/sync/checkpoint endpoints
+// Added: Offline sync service for TMAIL-51 offline-first protocol
+// PURPOSE: Delta sync with backend + per-folder checkpoint management + conflict
+//          resolution. Wraps the /api/sync/* endpoints (checkpoints, resolve-conflict)
+//          and the /api/mobile/sync delta endpoint.
+// EXTERNAL: Uses /api/mobile/sync, /api/sync/checkpoints, /api/sync/checkpoint/{folder},
+//           /api/sync/resolve-conflict — see backend/src/handlers/sync.rs.
 
 import '../api/api_client.dart';
+import '../models/sync_checkpoint.dart';
+import 'offline_draft_queue.dart';
+import 'sync_preferences.dart';
 
 // Added: Represents a single sync change from the backend
 class SyncChange {
@@ -52,9 +58,22 @@ class SyncDelta {
 }
 
 class SyncService {
-  final ApiClient _api = ApiClient();
+  // PURPOSE: Defaults preserve the original singleton-style call sites.
+  final ApiClient _api;
+  // PURPOSE: User-tunable sync mode + retention; settable from the settings UI.
+  SyncPreferences preferences;
+  // PURPOSE: Offline drafts composed while the device cannot reach the backend.
+  final OfflineDraftQueue draftQueue;
 
-  // PURPOSE: Fetch changes since a given timestamp
+  SyncService({
+    ApiClient? api,
+    SyncPreferences? preferences,
+    OfflineDraftQueue? draftQueue,
+  })  : _api = api ?? ApiClient(),
+        preferences = preferences ?? const SyncPreferences(),
+        draftQueue = draftQueue ?? OfflineDraftQueue();
+
+  // PURPOSE: Fetch changes since a given timestamp (legacy delta endpoint).
   Future<SyncDelta?> fetchDelta(String since) async {
     try {
       final response = await _api.get('/mobile/sync', queryParams: {
@@ -66,7 +85,59 @@ class SyncService {
     }
   }
 
-  // PURPOSE: Get sync checkpoint for a folder
+  // PURPOSE: Fetch every folder's checkpoint in one round-trip on app launch / wake.
+  //          Backed by GET /api/sync/checkpoints.
+  Future<List<SyncCheckpoint>> listCheckpoints() async {
+    try {
+      final response = await _api.get('/sync/checkpoints');
+      final data = response.data as Map<String, dynamic>;
+      final raw = data['checkpoints'] as List<dynamic>? ?? const [];
+      return raw
+          .map((c) => SyncCheckpoint.fromJson(c as Map<String, dynamic>))
+          .toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  // PURPOSE: Fetch a single folder's full checkpoint (returns needs_full_sync=true on
+  //          first sync). Backed by GET /api/sync/checkpoint/{folder}.
+  Future<SyncCheckpoint?> getFolderCheckpoint(String folder, {String? deviceId}) async {
+    try {
+      final response = await _api.get(
+        '/sync/checkpoint/$folder',
+        queryParams: deviceId != null ? {'device_id': deviceId} : null,
+      );
+      return SyncCheckpoint.fromJson(response.data as Map<String, dynamic>);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // PURPOSE: Push a fresh sync state to the backend after the client has applied
+  //          the latest IMAP changes for a folder. Backed by POST
+  //          /api/sync/checkpoint/{folder}.
+  Future<bool> updateFolderCheckpoint({
+    required String folder,
+    required int lastUid,
+    required int lastModseq,
+    required int uidvalidity,
+    String? deviceId,
+  }) async {
+    try {
+      await _api.post('/sync/checkpoint/$folder', data: {
+        if (deviceId != null) 'device_id': deviceId,
+        'last_uid': lastUid,
+        'last_modseq': lastModseq,
+        'uidvalidity': uidvalidity,
+      });
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  // PURPOSE: Legacy single-string checkpoint accessor — kept for prior call sites.
   Future<String?> getCheckpoint(String folder) async {
     try {
       final response = await _api.get('/sync/checkpoint/$folder');
@@ -76,21 +147,49 @@ class SyncService {
     }
   }
 
-  // PURPOSE: Resolve a sync conflict
+  // PURPOSE: Resolve a sync conflict — flag/state mismatch between client and server.
+  //          Mirrors backend ConflictResolution (server_wins / client_wins / merge).
   Future<bool> resolveConflict({
     required String folder,
     required int uid,
-    required String resolution, // 'local', 'remote', 'merge'
+    required String resolution,
+    List<String>? clientFlags,
   }) async {
     try {
       await _api.post('/sync/resolve-conflict', data: {
         'folder': folder,
         'uid': uid,
         'resolution': resolution,
+        if (clientFlags != null) 'client_flags': clientFlags,
       });
       return true;
     } catch (_) {
       return false;
     }
+  }
+
+  // PURPOSE: Drain the offline draft queue using the standard send endpoint. Caller
+  //          should invoke this from a connectivity listener or background task.
+  Future<int> flushDraftQueue() async {
+    return draftQueue.flush((draft) async {
+      try {
+        await _api.post('/messages/send', data: {
+          if (draft.to != null) 'to': draft.to,
+          if (draft.cc != null) 'cc': draft.cc,
+          if (draft.bcc != null) 'bcc': draft.bcc,
+          if (draft.subject != null) 'subject': draft.subject,
+          if (draft.body != null) 'body': draft.body,
+        });
+        return true;
+      } catch (_) {
+        return false;
+      }
+    });
+  }
+
+  // PURPOSE: Single decision point for background workers (WorkManager / BGTaskScheduler)
+  //          asking "should I sync now?". Combines user prefs with network state.
+  bool shouldSyncNow({required bool onWifi}) {
+    return preferences.canSyncOnNetwork(onWifi: onWifi);
   }
 }
