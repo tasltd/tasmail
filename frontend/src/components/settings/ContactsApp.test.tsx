@@ -133,12 +133,35 @@ describe('ContactsApp', () => {
     render(<ContactsApp />, { wrapper: createWrapper() });
 
     await waitFor(() => {
-      expect(screen.getByText('Import')).toBeInTheDocument();
+      // NOTE: there are two "Import" labels once the dialog opens (sidebar button + submit
+      // button), so guard the click on the sidebar button by looking at all matches.
+      expect(screen.getAllByText('Import').length).toBeGreaterThan(0);
     });
 
-    fireEvent.click(screen.getByText('Import'));
-    expect(screen.getByText('Import vCard')).toBeInTheDocument();
+    fireEvent.click(screen.getAllByText('Import')[0]);
+    // TMAIL-119: dialog now hosts both vCard and CSV tabs, default tab is vCard.
+    expect(screen.getByText('Import Contacts')).toBeInTheDocument();
     expect(screen.getByPlaceholderText('Paste vCard text here (BEGIN:VCARD ... END:VCARD)')).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: /vCard/ })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'CSV' })).toHaveAttribute('aria-selected', 'false');
+  });
+
+  // Added: TMAIL-119 — switching to CSV swaps the textarea hint to match the format.
+  it('switches placeholder when CSV tab is selected', async () => {
+    mockFetchContacts.mockResolvedValue([]);
+    mockListGroups.mockResolvedValue([]);
+    render(<ContactsApp />, { wrapper: createWrapper() });
+
+    await waitFor(() => {
+      expect(screen.getAllByText('Import').length).toBeGreaterThan(0);
+    });
+
+    fireEvent.click(screen.getAllByText('Import')[0]);
+    fireEvent.click(screen.getByRole('tab', { name: 'CSV' }));
+    expect(screen.getByRole('tab', { name: 'CSV' })).toHaveAttribute('aria-selected', 'true');
+    expect(
+      screen.getByPlaceholderText('Paste CSV here. First row: email,display_name,company,phone,notes'),
+    ).toBeInTheDocument();
   });
 
   it('filters contacts with search input', async () => {

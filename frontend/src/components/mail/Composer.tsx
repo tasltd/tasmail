@@ -11,6 +11,8 @@ import { useMailStore } from '../../stores/mailStore';
 import { AiComposePanel } from './AiComposePanel';
 // Added: Large file auto-upload widget (TMAIL-138)
 import { LargeFileAttacher } from './LargeFileAttacher';
+// Added: Recipient autocomplete from contacts (TMAIL-119)
+import { RecipientAutocomplete } from './RecipientAutocomplete';
 
 export function Composer() {
   const setViewMode = useMailStore((s) => s.setViewMode);
@@ -215,20 +217,20 @@ export function Composer() {
 
       <div className="composer__fields">
         <div className="composer__field">
-          <label>To:</label>
-          <input
-            type="text"
+          <label htmlFor="composer-to">To:</label>
+          <RecipientAutocomplete
+            inputId="composer-to"
             value={to}
-            onChange={(e) => setTo(e.target.value)}
+            onChange={setTo}
             placeholder="recipient@example.com"
           />
         </div>
         <div className="composer__field">
-          <label>Cc:</label>
-          <input
-            type="text"
+          <label htmlFor="composer-cc">Cc:</label>
+          <RecipientAutocomplete
+            inputId="composer-cc"
             value={cc}
-            onChange={(e) => setCc(e.target.value)}
+            onChange={setCc}
             placeholder="cc@example.com"
           />
         </div>

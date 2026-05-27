@@ -108,6 +108,49 @@ impl Contact {
             .await?;
         Ok(result.rows_affected() > 0)
     }
+
+    // Added: TMAIL-119 — auto-collect helper. Insert if new, leave existing rows alone so we
+    // don't overwrite a hand-curated display name with whatever the user typed in the To: field.
+    pub async fn upsert_from_send(
+        pool: &PgPool,
+        mailbox_id: Uuid,
+        email: &str,
+        display_name: Option<&str>,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "INSERT INTO contacts (mailbox_id, email, display_name) VALUES ($1, $2, $3)
+             ON CONFLICT (mailbox_id, email) DO NOTHING",
+        )
+        .bind(mailbox_id)
+        .bind(email)
+        .bind(display_name)
+        .execute(pool)
+        .await?;
+        Ok(())
+    }
+}
+
+// Added: TMAIL-119 — parse "Display Name <email@host>" or bare "email@host" into (name, email).
+// Returns None if the input has no recognisable address part. Used by auto-collect and CSV import.
+pub fn parse_recipient(input: &str) -> Option<(Option<String>, String)> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let (Some(lt), Some(gt)) = (trimmed.rfind('<'), trimmed.rfind('>')) {
+        if gt > lt {
+            let email = trimmed[lt + 1..gt].trim();
+            if email.contains('@') && !email.contains(' ') {
+                let name = trimmed[..lt].trim().trim_matches('"').trim();
+                let name = if name.is_empty() { None } else { Some(name.to_string()) };
+                return Some((name, email.to_string()));
+            }
+        }
+    }
+    if trimmed.contains('@') && !trimmed.contains(' ') {
+        return Some((None, trimmed.to_string()));
+    }
+    None
 }
 
 #[cfg(test)]
@@ -221,5 +264,54 @@ mod tests {
         assert!(update.company.is_none());
         assert!(update.phone.is_none());
         assert!(update.notes.is_none());
+    }
+
+    // Added: TMAIL-119 — parse_recipient covers the formats auto-collect and CSV import see.
+    #[test]
+    fn test_parse_recipient_bare_email() {
+        let (name, email) = super::parse_recipient("alice@example.com").unwrap();
+        assert!(name.is_none());
+        assert_eq!(email, "alice@example.com");
+    }
+
+    #[test]
+    fn test_parse_recipient_named() {
+        let (name, email) = super::parse_recipient("Alice Smith <alice@example.com>").unwrap();
+        assert_eq!(name.as_deref(), Some("Alice Smith"));
+        assert_eq!(email, "alice@example.com");
+    }
+
+    #[test]
+    fn test_parse_recipient_quoted_name() {
+        let (name, email) = super::parse_recipient("\"Alice, Smith\" <alice@example.com>").unwrap();
+        assert_eq!(name.as_deref(), Some("Alice, Smith"));
+        assert_eq!(email, "alice@example.com");
+    }
+
+    #[test]
+    fn test_parse_recipient_whitespace() {
+        let (name, email) = super::parse_recipient("   bob@example.com   ").unwrap();
+        assert!(name.is_none());
+        assert_eq!(email, "bob@example.com");
+    }
+
+    #[test]
+    fn test_parse_recipient_empty() {
+        assert!(super::parse_recipient("").is_none());
+        assert!(super::parse_recipient("   ").is_none());
+    }
+
+    #[test]
+    fn test_parse_recipient_no_at_sign() {
+        assert!(super::parse_recipient("not an email").is_none());
+        assert!(super::parse_recipient("Alice <not an email>").is_none());
+    }
+
+    #[test]
+    fn test_parse_recipient_empty_display_name() {
+        // "  <foo@bar>" should yield None for name, valid email
+        let (name, email) = super::parse_recipient(" <foo@bar.com>").unwrap();
+        assert!(name.is_none());
+        assert_eq!(email, "foo@bar.com");
     }
 }

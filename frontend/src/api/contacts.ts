@@ -44,3 +44,14 @@ export async function updateContact(id: string, data: UpdateContactRequest): Pro
 export async function deleteContact(id: string): Promise<void> {
   await apiClient.delete(`/contacts/${id}`);
 }
+
+// Added: TMAIL-119 — CSV bulk import response shape
+export interface ImportCsvResponse {
+  imported: Contact[];
+  skipped: number;
+}
+
+// Added: TMAIL-119 — Upload a CSV blob to /api/contacts/import-csv
+export async function importContactsCsv(csvText: string): Promise<ImportCsvResponse> {
+  return apiClient.post<ImportCsvResponse>('/contacts/import-csv', { csv_text: csvText });
+}

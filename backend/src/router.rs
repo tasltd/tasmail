@@ -753,6 +753,11 @@ pub fn create_router(state: AppState) -> Router {
             "/api/contacts/merge",
             post(handlers::contact_groups::merge_contacts),
         )
+        // Added: TMAIL-119 — CSV bulk import for contacts
+        .route(
+            "/api/contacts/import-csv",
+            post(handlers::contact_groups::import_csv),
+        )
         // Added: POP3 configuration management routes for Dovecot POP3 access (TMAIL-133)
         .route(
             "/api/pop3/config",

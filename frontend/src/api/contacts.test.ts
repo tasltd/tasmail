@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { fetchContacts, createContact, updateContact, deleteContact } from './contacts';
+import { fetchContacts, createContact, updateContact, deleteContact, importContactsCsv } from './contacts';
 import { apiClient } from './client';
 
 vi.mock('./client', () => ({
@@ -71,6 +71,25 @@ describe('contacts API', () => {
       vi.mocked(apiClient.delete).mockResolvedValue(undefined);
       await deleteContact('abc');
       expect(apiClient.delete).toHaveBeenCalledWith('/contacts/abc');
+    });
+  });
+
+  // Added: TMAIL-119 — CSV import client wrapper
+  describe('importContactsCsv', () => {
+    it('posts CSV text to /contacts/import-csv', async () => {
+      const csv = 'email,name\nalice@example.com,Alice\n';
+      vi.mocked(apiClient.post).mockResolvedValue({ imported: [], skipped: 0 });
+      await importContactsCsv(csv);
+      expect(apiClient.post).toHaveBeenCalledWith('/contacts/import-csv', { csv_text: csv });
+    });
+
+    it('returns imported contacts and skipped count', async () => {
+      const mockContact = { id: '1', email: 'alice@example.com', display_name: 'Alice', mailbox_id: 'x', company: null, phone: null, notes: null, created_at: '', updated_at: '' };
+      vi.mocked(apiClient.post).mockResolvedValue({ imported: [mockContact], skipped: 2 });
+      const res = await importContactsCsv('email\nalice@example.com\n');
+      expect(res.imported).toHaveLength(1);
+      expect(res.skipped).toBe(2);
+      expect(res.imported[0].email).toBe('alice@example.com');
     });
   });
 });

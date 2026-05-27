@@ -5,7 +5,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   BookUser, Plus, Trash2, Upload, Download, Merge, Tag, X, Search,
 } from 'lucide-react';
-import { fetchContacts } from '../../api/contacts';
+import { fetchContacts, importContactsCsv } from '../../api/contacts';
 import type { Contact } from '../../api/contacts';
 import {
   listContactGroups,
@@ -30,6 +30,9 @@ export function ContactsApp() {
   const [newGroupColor, setNewGroupColor] = useState('#3b82f6');
   const [showImport, setShowImport] = useState(false);
   const [importText, setImportText] = useState('');
+  // Added: TMAIL-119 — import format toggle (vCard or CSV)
+  const [importFormat, setImportFormat] = useState<'vcard' | 'csv'>('vcard');
+  const [importSummary, setImportSummary] = useState<string | null>(null);
 
   // PURPOSE: Fetch all contacts
   const { data: allContacts = [], isLoading: loadingContacts } = useQuery({
@@ -85,10 +88,24 @@ export function ContactsApp() {
   // PURPOSE: Import vCard mutation
   const importMutation = useMutation({
     mutationFn: () => importVcard(importText),
-    onSuccess: () => {
+    onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ['contacts-app-contacts'] });
       setShowImport(false);
       setImportText('');
+      setImportSummary(`Imported ${result.length} contact${result.length === 1 ? '' : 's'} from vCard`);
+    },
+  });
+
+  // Added: TMAIL-119 — CSV import mutation
+  const csvImportMutation = useMutation({
+    mutationFn: () => importContactsCsv(importText),
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ['contacts-app-contacts'] });
+      setShowImport(false);
+      setImportText('');
+      const parts = [`Imported ${res.imported.length}`];
+      if (res.skipped > 0) parts.push(`skipped ${res.skipped} duplicate${res.skipped === 1 ? '' : 's'}`);
+      setImportSummary(parts.join(', '));
     },
   });
 
@@ -143,7 +160,12 @@ export function ContactsApp() {
   const handleImport = (e: FormEvent) => {
     e.preventDefault();
     if (!importText.trim()) return;
-    importMutation.mutate();
+    // Added: TMAIL-119 — dispatch to vCard or CSV import based on selected format
+    if (importFormat === 'csv') {
+      csvImportMutation.mutate();
+    } else {
+      importMutation.mutate();
+    }
   };
 
   const handleMergeAll = () => {
@@ -269,28 +291,60 @@ export function ContactsApp() {
           />
         </div>
 
-        {/* Import vCard dialog */}
+        {/* Import dialog — vCard or CSV (TMAIL-119) */}
         {showImport && (
           <div style={{ marginBottom: '12px', padding: '12px', border: '1px solid var(--color-border)', borderRadius: '6px' }}>
-            <h4 style={{ margin: '0 0 8px' }}>Import vCard</h4>
+            <h4 style={{ margin: '0 0 8px' }}>Import Contacts</h4>
+            <div role="tablist" aria-label="Import format" style={{ display: 'flex', gap: '4px', marginBottom: '8px' }}>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={importFormat === 'vcard'}
+                className={`btn btn--sm ${importFormat === 'vcard' ? 'btn--primary' : ''}`}
+                onClick={() => setImportFormat('vcard')}
+              >
+                vCard (.vcf)
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={importFormat === 'csv'}
+                className={`btn btn--sm ${importFormat === 'csv' ? 'btn--primary' : ''}`}
+                onClick={() => setImportFormat('csv')}
+              >
+                CSV
+              </button>
+            </div>
             <form onSubmit={handleImport}>
               <textarea
                 className="input"
-                placeholder="Paste vCard text here (BEGIN:VCARD ... END:VCARD)"
+                placeholder={importFormat === 'csv'
+                  ? 'Paste CSV here. First row: email,display_name,company,phone,notes'
+                  : 'Paste vCard text here (BEGIN:VCARD ... END:VCARD)'}
                 value={importText}
                 onChange={(e) => setImportText(e.target.value)}
                 rows={6}
                 style={{ width: '100%', marginBottom: '8px' }}
+                data-testid="contacts-import-textarea"
               />
               <div style={{ display: 'flex', gap: '8px' }}>
-                <button type="submit" className="btn btn--primary btn--sm" disabled={importMutation.isPending}>
-                  {importMutation.isPending ? 'Importing...' : 'Import'}
+                <button
+                  type="submit"
+                  className="btn btn--primary btn--sm"
+                  disabled={importMutation.isPending || csvImportMutation.isPending}
+                >
+                  {(importMutation.isPending || csvImportMutation.isPending) ? 'Importing...' : 'Import'}
                 </button>
                 <button type="button" className="btn btn--sm" onClick={() => setShowImport(false)}>
                   Cancel
                 </button>
               </div>
             </form>
+          </div>
+        )}
+        {importSummary && !showImport && (
+          <div role="status" style={{ marginBottom: '8px', color: 'var(--color-text-secondary)', fontSize: '0.9em' }}>
+            {importSummary}
           </div>
         )}
 

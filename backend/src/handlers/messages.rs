@@ -194,6 +194,33 @@ pub async fn send_message(
     let smtp_service = SmtpService::new(smtp_runtime_cfg);
     smtp_service.send(&smtp_from, &smtp_password, &body).await?;
 
+    // Added: TMAIL-119 — auto-collect contacts from outgoing recipients. Fire-and-forget so a
+    // contacts DB hiccup never blocks send. Existing rows are left alone (display name we
+    // already chose wins over whatever was typed in this compose).
+    {
+        let db = state.db.clone();
+        let to = body.to.clone();
+        let cc = body.cc.clone().unwrap_or_default();
+        let bcc = body.bcc.clone().unwrap_or_default();
+        let mailbox_id = mailbox.id;
+        tokio::spawn(async move {
+            for raw in to.iter().chain(cc.iter()).chain(bcc.iter()) {
+                if let Some((name, email)) = crate::models::contact::parse_recipient(raw) {
+                    if let Err(e) = crate::models::contact::Contact::upsert_from_send(
+                        &db,
+                        mailbox_id,
+                        &email,
+                        name.as_deref(),
+                    )
+                    .await
+                    {
+                        tracing::warn!(error = ?e, email = %email, "auto-collect contact upsert failed");
+                    }
+                }
+            }
+        });
+    }
+
     // Added: TMAIL-131 — fire email.sent webhook with envelope including recipients and subject
     fire_webhook(
         &state,

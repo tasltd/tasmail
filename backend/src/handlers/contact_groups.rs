@@ -210,6 +210,135 @@ pub async fn export_vcard(
     ))
 }
 
+// Added: TMAIL-119 — CSV bulk import. Accepts a CSV blob whose header row maps to contact fields.
+// Required column: email. Optional: display_name (or "name"), company (or "organization"), phone, notes.
+// Falls back to positional parsing (email in column 1) if no recognisable header is present.
+#[derive(Debug, Deserialize)]
+pub struct ImportCsvRequest {
+    pub csv_text: String,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct ImportCsvResponse {
+    pub imported: Vec<Contact>,
+    pub skipped: usize,
+}
+
+/// POST /api/contacts/import-csv — Import contacts from CSV text (TMAIL-119)
+pub async fn import_csv(
+    State(state): State<AppState>,
+    axum::Extension(claims): axum::Extension<Claims>,
+    Json(body): Json<ImportCsvRequest>,
+) -> Result<(StatusCode, Json<ImportCsvResponse>), AppError> {
+    let mailbox_id = parse_user_id(&claims)?;
+
+    if body.csv_text.trim().is_empty() {
+        return Err(AppError::BadRequest("CSV text is empty".to_string()));
+    }
+
+    let rows = parse_contacts_csv(&body.csv_text)?;
+    if rows.is_empty() {
+        return Err(AppError::BadRequest("No valid contact rows found in CSV".to_string()));
+    }
+
+    let mut imported = Vec::new();
+    let mut skipped = 0usize;
+    for row in rows {
+        match Contact::create(&state.db, mailbox_id, &row).await {
+            Ok(contact) => imported.push(contact),
+            // NOTE: duplicate email for the same mailbox hits the unique index; treat as skip not error.
+            Err(_) => skipped += 1,
+        }
+    }
+
+    Ok((StatusCode::CREATED, Json(ImportCsvResponse { imported, skipped })))
+}
+
+// Added: TMAIL-119 — pure CSV→CreateContact parser, extracted so it's unit-testable without a DB.
+pub(crate) fn parse_contacts_csv(text: &str) -> Result<Vec<crate::models::contact::CreateContact>, AppError> {
+    let mut rdr = csv::ReaderBuilder::new()
+        .has_headers(true)
+        .flexible(true)
+        .trim(csv::Trim::All)
+        .from_reader(text.as_bytes());
+
+    let headers = rdr
+        .headers()
+        .map_err(|e| AppError::BadRequest(format!("Failed to parse CSV header: {}", e)))?
+        .clone();
+
+    // Map of canonical field → column index in this CSV.
+    let mut col_email: Option<usize> = None;
+    let mut col_name: Option<usize> = None;
+    let mut col_company: Option<usize> = None;
+    let mut col_phone: Option<usize> = None;
+    let mut col_notes: Option<usize> = None;
+
+    for (i, h) in headers.iter().enumerate() {
+        match h.trim().to_ascii_lowercase().as_str() {
+            "email" | "e-mail" | "email address" => col_email = Some(i),
+            "display_name" | "display name" | "name" | "full name" | "fn" => col_name = Some(i),
+            "company" | "organization" | "organisation" | "org" => col_company = Some(i),
+            "phone" | "phone number" | "tel" | "telephone" => col_phone = Some(i),
+            "notes" | "note" | "comment" => col_notes = Some(i),
+            _ => {}
+        }
+    }
+
+    // Header-less CSV fallback: if the first row looks like data (column 0 contains @),
+    // restart the reader with has_headers=false and treat columns positionally.
+    let no_headers_detected = col_email.is_none() && headers.iter().next().map(|h| h.contains('@')).unwrap_or(false);
+
+    let mut out = Vec::new();
+    if no_headers_detected {
+        let mut rdr = csv::ReaderBuilder::new()
+            .has_headers(false)
+            .flexible(true)
+            .trim(csv::Trim::All)
+            .from_reader(text.as_bytes());
+        for rec in rdr.records().flatten() {
+            if let Some(create) = build_contact_positional(&rec) {
+                out.push(create);
+            }
+        }
+        return Ok(out);
+    }
+
+    let col_email = col_email
+        .ok_or_else(|| AppError::BadRequest("CSV must include an 'email' column".to_string()))?;
+
+    for rec in rdr.records().flatten() {
+        let email = rec.get(col_email).map(|s| s.trim()).unwrap_or("");
+        if email.is_empty() || !email.contains('@') {
+            continue;
+        }
+        let pick = |c: Option<usize>| c.and_then(|i| rec.get(i)).map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+        out.push(crate::models::contact::CreateContact {
+            email: email.to_string(),
+            display_name: pick(col_name),
+            company: pick(col_company),
+            phone: pick(col_phone),
+            notes: pick(col_notes),
+        });
+    }
+    Ok(out)
+}
+
+fn build_contact_positional(rec: &csv::StringRecord) -> Option<crate::models::contact::CreateContact> {
+    let email = rec.get(0).map(|s| s.trim()).unwrap_or("");
+    if email.is_empty() || !email.contains('@') {
+        return None;
+    }
+    let pick = |i: usize| rec.get(i).map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    Some(crate::models::contact::CreateContact {
+        email: email.to_string(),
+        display_name: pick(1),
+        company: pick(2),
+        phone: pick(3),
+        notes: pick(4),
+    })
+}
+
 // PURPOSE: Request body for merging duplicate contacts
 #[derive(Debug, Deserialize)]
 pub struct MergeContactsRequest {
@@ -289,5 +418,69 @@ mod tests {
 
         let req: ImportVcardRequest = serde_json::from_value(json).unwrap();
         assert!(req.vcard_text.is_empty());
+    }
+
+    // Added: TMAIL-119 — parse_contacts_csv covers the typical CSV shapes a user uploads.
+    #[test]
+    fn test_parse_csv_full_header() {
+        let csv = "email,display_name,company,phone,notes\n\
+                   alice@example.com,Alice Smith,Acme,+1 555,VIP\n\
+                   bob@example.com,Bob,,+44 7,\n";
+        let rows = super::parse_contacts_csv(csv).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].email, "alice@example.com");
+        assert_eq!(rows[0].display_name.as_deref(), Some("Alice Smith"));
+        assert_eq!(rows[0].company.as_deref(), Some("Acme"));
+        assert_eq!(rows[0].phone.as_deref(), Some("+1 555"));
+        assert_eq!(rows[0].notes.as_deref(), Some("VIP"));
+        assert_eq!(rows[1].email, "bob@example.com");
+        assert!(rows[1].company.is_none());
+        assert!(rows[1].notes.is_none());
+    }
+
+    #[test]
+    fn test_parse_csv_alternate_header_names() {
+        // "name", "organization", "tel" are accepted aliases.
+        let csv = "Name,Email,Organization,Tel\n\
+                   Carol,carol@example.com,TechCo,+233 20\n";
+        let rows = super::parse_contacts_csv(csv).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].email, "carol@example.com");
+        assert_eq!(rows[0].display_name.as_deref(), Some("Carol"));
+        assert_eq!(rows[0].company.as_deref(), Some("TechCo"));
+        assert_eq!(rows[0].phone.as_deref(), Some("+233 20"));
+    }
+
+    #[test]
+    fn test_parse_csv_skips_invalid_rows() {
+        let csv = "email,name\n\
+                   ,Empty Email\n\
+                   not-an-email,Missing At\n\
+                   dave@example.com,Dave\n";
+        let rows = super::parse_contacts_csv(csv).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].email, "dave@example.com");
+    }
+
+    #[test]
+    fn test_parse_csv_no_header_positional() {
+        // Header row contains @ → treated as data, columns parsed positionally.
+        let csv = "eve@example.com,Eve,FinTech,+233 24,extra notes\n\
+                   frank@example.com,Frank\n";
+        let rows = super::parse_contacts_csv(csv).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].email, "eve@example.com");
+        assert_eq!(rows[0].display_name.as_deref(), Some("Eve"));
+        assert_eq!(rows[0].company.as_deref(), Some("FinTech"));
+        assert_eq!(rows[1].email, "frank@example.com");
+        assert_eq!(rows[1].display_name.as_deref(), Some("Frank"));
+        assert!(rows[1].company.is_none());
+    }
+
+    #[test]
+    fn test_parse_csv_missing_email_column_errors() {
+        let csv = "name,company\nAlice,Acme\n";
+        let err = super::parse_contacts_csv(csv).unwrap_err();
+        assert!(format!("{}", err).contains("email"));
     }
 }
