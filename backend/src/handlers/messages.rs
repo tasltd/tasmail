@@ -149,11 +149,24 @@ pub async fn send_message(
 
     // BYOK send: load the user's default SMTP server from smtp_configurations + decrypt the password.
     // The IMAP credentials we loaded above are the wrong key for SMTP — they likely won't even authenticate.
-    let smtp_cfg = crate::models::smtp_config::SmtpConfiguration::find_default(&state.db, mailbox.id)
-        .await?
-        .ok_or_else(|| AppError::ServiceUnavailable(
-            "No SMTP server configured. Complete the onboarding wizard at /onboarding.".into()
-        ))?;
+    // TMAIL-158: try Redis first; cache holds the encrypted ciphertext, never plaintext.
+    let cache_key = mailbox.id.to_string();
+    let smtp_cfg: crate::models::smtp_config::SmtpConfiguration = match state
+        .cache
+        .get_user_smtp_config::<crate::models::smtp_config::SmtpConfiguration>(&cache_key)
+        .await
+    {
+        Some(hit) => hit,
+        None => {
+            let row = crate::models::smtp_config::SmtpConfiguration::find_default(&state.db, mailbox.id)
+                .await?
+                .ok_or_else(|| AppError::ServiceUnavailable(
+                    "No SMTP server configured. Complete the onboarding wizard at /onboarding.".into()
+                ))?;
+            let _ = state.cache.set_user_smtp_config(&cache_key, &row).await;
+            row
+        }
+    };
     let enc_key = crate::models::ai_config::derive_encryption_key(&state.config.jwt.secret);
     let smtp_password = smtp_cfg.decrypted_password(&enc_key)
         .map_err(|e| AppError::Internal(anyhow::anyhow!("Failed to decrypt SMTP password: {}", e)))?;

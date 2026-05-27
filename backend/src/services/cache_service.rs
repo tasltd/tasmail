@@ -367,6 +367,47 @@ mod tests {
         assert!(PREFIX_RATE_LIMIT.starts_with("tasmail:"));
         assert!(PREFIX_SESSION.starts_with("tasmail:"));
         assert!(PREFIX_BLACKLIST.starts_with("tasmail:"));
+        // TMAIL-158: per-user mail-server cache prefixes share the tasmail: namespace.
+        assert!(PREFIX_IMAP_CFG.starts_with("tasmail:"));
+        assert!(PREFIX_SMTP_CFG.starts_with("tasmail:"));
+        // IMAP and SMTP must live in distinct keyspaces or they would collide on user_id.
+        assert_ne!(PREFIX_IMAP_CFG, PREFIX_SMTP_CFG);
+    }
+
+    // TMAIL-158: 5-minute TTL chosen to match the branding cache convention.
+    // If this changes, the issue rationale ("matches existing branding TTL convention")
+    // must be revisited — that's why it's locked in by a test.
+    #[test]
+    fn test_user_cfg_ttl_matches_branding_convention() {
+        assert_eq!(TTL_USER_CFG_SECS, 300);
+        assert_eq!(TTL_USER_CFG_SECS, RedisConfig::default().branding_ttl_secs);
+    }
+
+    // TMAIL-158: in passthrough mode the user-config get/set/invalidate ops must
+    // never panic and must signal "no cache" — the queue processor and send handler
+    // rely on this to fall through to the DB.
+    #[test]
+    fn test_user_config_cache_passthrough_when_disabled() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let cache = CacheService::disabled();
+            let mailbox_id = "11111111-1111-1111-1111-111111111111";
+
+            // get returns None
+            let imap_hit: Option<serde_json::Value> = cache.get_user_imap_config(mailbox_id).await;
+            assert!(imap_hit.is_none());
+            let smtp_hit: Option<serde_json::Value> = cache.get_user_smtp_config(mailbox_id).await;
+            assert!(smtp_hit.is_none());
+
+            // set returns false (no-op in passthrough) — caller must not rely on it succeeding
+            let payload = serde_json::json!({"host": "smtp.example.com", "port": 587});
+            assert!(!cache.set_user_imap_config(mailbox_id, &payload).await);
+            assert!(!cache.set_user_smtp_config(mailbox_id, &payload).await);
+
+            // invalidate returns false (no-op) without panicking — handlers ignore the return value
+            assert!(!cache.invalidate_user_imap_config(mailbox_id).await);
+            assert!(!cache.invalidate_user_smtp_config(mailbox_id).await);
+        });
     }
 
     #[test]

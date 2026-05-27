@@ -22,6 +22,7 @@ use crate::config::JwtConfig;
 use crate::models::ai_config::derive_encryption_key;
 use crate::models::email_queue::EmailQueueItem;
 use crate::models::smtp_config::SmtpConfiguration;
+use crate::services::cache_service::CacheService;
 use crate::services::smtp_service::{SendRequest, SmtpService};
 
 const METRIC_QUEUE_DEPTH: &str = "tasmail_queue_depth";
@@ -81,6 +82,10 @@ pub fn is_hard_bounce(error_message: &str) -> bool {
 pub struct QueueProcessor {
     pool: Arc<PgPool>,
     jwt_config: JwtConfig,
+    // TMAIL-158: Redis cache for the per-user default SMTP config row.
+    // Cuts the DB+decrypt round trip on each send (poll_interval_secs cadence × N items).
+    // Degrades to direct DB access when Redis is unavailable (CacheService::disabled()).
+    cache: CacheService,
     poll_interval_secs: u64,
     batch_size: i64,
     worker_concurrency: usize,
@@ -91,11 +96,13 @@ impl QueueProcessor {
     pub fn new(
         pool: Arc<PgPool>,
         jwt_config: JwtConfig,
+        cache: CacheService,
         poll_interval_secs: u64,
     ) -> Self {
         Self {
             pool,
             jwt_config,
+            cache,
             poll_interval_secs,
             // Conservative defaults; can be tuned via env later.
             batch_size: 50,
@@ -168,7 +175,8 @@ impl QueueProcessor {
             .map(|item| {
                 let pool = self.pool.clone();
                 let key = derive_encryption_key(&self.jwt_config.secret);
-                async move { process_item(pool, key, item).await }
+                let cache = self.cache.clone();
+                async move { process_item(pool, cache, key, item).await }
             })
             .collect();
 
@@ -190,18 +198,32 @@ impl QueueProcessor {
 
 async fn process_item(
     pool: Arc<PgPool>,
+    cache: CacheService,
     encryption_key: [u8; 32],
     item: EmailQueueItem,
 ) -> () {
     let start = std::time::Instant::now();
     let result: Result<(), anyhow::Error> = (async {
         // BYOK: load the user's default SMTP config + decrypt the password.
-        let smtp_cfg = SmtpConfiguration::find_default(&pool, item.mailbox_id)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!(
-                "Mailbox {} has no default SMTP configuration — user must complete onboarding",
-                item.mailbox_id
-            ))?;
+        // TMAIL-158: try Redis first. The cached row carries the encrypted password
+        // ciphertext (never plaintext) — decryption still happens below per request.
+        let cache_key = item.mailbox_id.to_string();
+        let smtp_cfg: SmtpConfiguration = match cache
+            .get_user_smtp_config::<SmtpConfiguration>(&cache_key)
+            .await
+        {
+            Some(hit) => hit,
+            None => {
+                let row = SmtpConfiguration::find_default(&pool, item.mailbox_id)
+                    .await?
+                    .ok_or_else(|| anyhow::anyhow!(
+                        "Mailbox {} has no default SMTP configuration — user must complete onboarding",
+                        item.mailbox_id
+                    ))?;
+                let _ = cache.set_user_smtp_config(&cache_key, &row).await;
+                row
+            }
+        };
         let password = smtp_cfg
             .decrypted_password(&encryption_key)
             .map_err(|e| anyhow::anyhow!("Failed to decrypt SMTP password: {}", e))?;
@@ -300,7 +322,10 @@ mod tests {
             access_token_expiry_secs: 60,
             refresh_token_expiry_secs: 60,
         };
-        let p = QueueProcessor::new(Arc::new(pool), cfg, 5)
+        // TMAIL-158: cache is a required collaborator now. Disabled cache lets the
+        // processor build without Redis — falls through to the DB on every read.
+        let cache = CacheService::disabled();
+        let p = QueueProcessor::new(Arc::new(pool), cfg, cache, 5)
             .with_batch_size(100)
             .with_worker_concurrency(8);
         assert_eq!(p.batch_size, 100);

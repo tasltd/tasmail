@@ -200,6 +200,9 @@ pub async fn set_default_smtp(
         .await?
         .ok_or_else(|| AppError::NotFound("SMTP configuration not found".to_string()))?;
 
+    // TMAIL-158: switching which row is_default changes what find_default() returns,
+    // so the cached row would be stale until TTL expiry — invalidate immediately.
+    let _ = state.cache.invalidate_user_smtp_config(&user_id.to_string()).await;
     Ok(Json(config.to_response(&encryption_key)))
 }
 

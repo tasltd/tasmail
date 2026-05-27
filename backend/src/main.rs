@@ -75,13 +75,21 @@ async fn main() -> anyhow::Result<()> {
     );
     scheduler.start();
 
+    // TMAIL-158: Initialize Redis cache up-front so the queue processor can share it
+    // with the HTTP handlers — both read per-user SMTP config and we want a single
+    // cache namespace so invalidations from the API immediately invalidate the queue's view.
+    // Degrades gracefully (passthrough mode) when Redis is unreachable.
+    let cache = services::cache_service::CacheService::new(&config.redis).await;
+
     // Changed: Queue processor is now BYOK — it loads each item's per-user SMTP config from
     // smtp_configurations and decrypts the password using the JWT-derived AES key.
     // Production-grade: FOR UPDATE SKIP LOCKED via EmailQueueItem::claim_batch lets multiple
     // worker processes run safely; Prometheus metrics are emitted on every cycle.
+    // TMAIL-158: pass the shared CacheService so per-user SMTP rows are cached for 5 min.
     let queue_processor = services::queue_processor::QueueProcessor::new(
         std::sync::Arc::new(pool.clone()),
         config.jwt.clone(),
+        cache.clone(),
         5,
     )
     .with_batch_size(50)
@@ -103,8 +111,7 @@ async fn main() -> anyhow::Result<()> {
     process_collector.describe();
     process_collector.collect();
 
-    // Added: Initialize Redis cache service (degrades gracefully if Redis unavailable)
-    let cache = services::cache_service::CacheService::new(&config.redis).await;
+    // Changed (TMAIL-158): cache is initialized earlier so the queue processor can share it.
     // Added: Encryption service derived from JWT secret — used for DB-stored credentials
     let encryption = services::encryption::EncryptionService::from_jwt_secret(&config.jwt.secret);
 
