@@ -39,6 +39,12 @@ vi.mock('../../stores/mailStore', () => ({
     selector({ setViewMode: mockSetViewMode }),
 }));
 
+// Added: Mock calendar API for the Schedule Meeting modal flow (TMAIL-127)
+const mockCreateEvent = vi.fn();
+vi.mock('../../api/calendar', () => ({
+  createEvent: (...args: unknown[]) => mockCreateEvent(...args),
+}));
+
 function wrapper({ children }: { children: React.ReactNode }) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return <QueryClientProvider client={qc}>{children}</QueryClientProvider>;
@@ -182,6 +188,70 @@ describe('Composer', () => {
         to: ['a@test.com', 'b@test.com', 'c@test.com'],
       }),
     );
+  });
+
+  // Added: Schedule Meeting button + modal flow (TMAIL-127)
+  it('opens Schedule Meeting modal pre-populated with To/Cc recipients and subject as title', async () => {
+    mockCreateEvent.mockResolvedValue({
+      event: {
+        id: 'evt-1',
+        title: 'Project sync',
+        ics_uid: 'ics-1',
+      },
+      attendees: [],
+    });
+
+    render(<Composer />, { wrapper });
+
+    fireEvent.change(screen.getByPlaceholderText('recipient@example.com'), {
+      target: { value: 'alice@example.com, bob@example.com' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('cc@example.com'), {
+      target: { value: 'carol@example.com' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('Subject'), {
+      target: { value: 'Project sync' },
+    });
+
+    fireEvent.click(screen.getByTestId('schedule-meeting-toggle'));
+
+    // Modal should be present with subject as initial title
+    const dialog = screen.getByRole('dialog', { name: /schedule meeting/i });
+    expect(dialog).toBeInTheDocument();
+    const titleInput = screen.getByLabelText('Title') as HTMLInputElement;
+    expect(titleInput.value).toBe('Project sync');
+
+    // Initial attendees from To + Cc should be listed
+    const attendeesList = screen.getByLabelText('Attendees', { selector: 'ul' });
+    expect(attendeesList).toHaveTextContent('alice@example.com');
+    expect(attendeesList).toHaveTextContent('bob@example.com');
+    expect(attendeesList).toHaveTextContent('carol@example.com');
+
+    // Fill required start/end times
+    fireEvent.change(screen.getByLabelText('Start'), {
+      target: { value: '2026-06-10T10:00' },
+    });
+    fireEvent.change(screen.getByLabelText('End'), {
+      target: { value: '2026-06-10T11:00' },
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /create event/i }));
+    });
+
+    expect(mockCreateEvent).toHaveBeenCalledTimes(1);
+    const payload = mockCreateEvent.mock.calls[0][0];
+    expect(payload.title).toBe('Project sync');
+    expect(payload.start_time).toBe(new Date('2026-06-10T10:00').toISOString());
+    expect(payload.end_time).toBe(new Date('2026-06-10T11:00').toISOString());
+    expect(payload.attendees).toEqual([
+      { email: 'alice@example.com' },
+      { email: 'bob@example.com' },
+      { email: 'carol@example.com' },
+    ]);
+
+    // Modal should close on success
+    expect(screen.queryByRole('dialog', { name: /schedule meeting/i })).not.toBeInTheDocument();
   });
 
   it('handles CC recipients', async () => {

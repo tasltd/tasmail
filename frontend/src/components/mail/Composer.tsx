@@ -3,7 +3,7 @@ import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Link from '@tiptap/extension-link';
 import Placeholder from '@tiptap/extension-placeholder';
-import { Send, X, Save, Clock, Undo2, Sparkles, Paperclip } from 'lucide-react';
+import { Send, X, Save, Clock, Undo2, Sparkles, Paperclip, CalendarPlus } from 'lucide-react';
 import { saveDraft } from '../../api/messages';
 import { scheduledApi } from '../../api/scheduled';
 import { useMailStore } from '../../stores/mailStore';
@@ -13,6 +13,8 @@ import { AiComposePanel } from './AiComposePanel';
 import { LargeFileAttacher } from './LargeFileAttacher';
 // Added: Recipient autocomplete from contacts (TMAIL-119)
 import { RecipientAutocomplete } from './RecipientAutocomplete';
+// Added: Schedule Meeting modal launched from the composer toolbar (TMAIL-127)
+import { ScheduleMeetingModal } from './ScheduleMeetingModal';
 
 export function Composer() {
   const setViewMode = useMailStore((s) => s.setViewMode);
@@ -29,6 +31,8 @@ export function Composer() {
   const [showAiCompose, setShowAiCompose] = useState(false);
   // Added: Large file attacher toggle state (TMAIL-138)
   const [showLargeFile, setShowLargeFile] = useState(false);
+  // Added: Schedule Meeting modal toggle state (TMAIL-127)
+  const [showMeetingModal, setShowMeetingModal] = useState(false);
   const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const undoTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -286,6 +290,17 @@ export function Composer() {
           <Paperclip size={16} />
           Attach large file
         </button>
+        {/* Added: Schedule Meeting button — opens modal pre-filled with To/Cc + subject (TMAIL-127) */}
+        <button
+          className="btn btn--secondary"
+          data-testid="schedule-meeting-toggle"
+          onClick={() => setShowMeetingModal(true)}
+          disabled={sending}
+          title="Schedule meeting with these recipients"
+        >
+          <CalendarPlus size={16} />
+          Schedule meeting
+        </button>
       </div>
 
       {/* Added: AI Compose panel that appears when toggled (TMAIL-134) */}
@@ -319,6 +334,18 @@ export function Composer() {
             Schedule Send
           </button>
         </div>
+      )}
+
+      {/* Added: Schedule Meeting modal pre-populated from current To/Cc + subject (TMAIL-127) */}
+      {showMeetingModal && (
+        <ScheduleMeetingModal
+          initialTitle={subject}
+          initialAttendees={[
+            ...to.split(',').map((s) => s.trim()).filter(Boolean),
+            ...cc.split(',').map((s) => s.trim()).filter(Boolean),
+          ]}
+          onClose={() => setShowMeetingModal(false)}
+        />
       )}
 
       {undoState && (
