@@ -2,7 +2,7 @@
 use axum::{
     body::Body,
     extract::{Multipart, Path, State},
-    http::{header, StatusCode},
+    http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
@@ -163,10 +163,14 @@ pub async fn list_attachments(
 }
 
 /// GET /api/attachments/{id}/download — Download attachment file
-/// CONSTRAINTS: Returns 404 if attachment not found or not owned by user
+/// CONSTRAINTS: Returns 404 if attachment not found or not owned by user.
+/// Supports HTTP Range requests (RFC 7233) so large attachments can be streamed
+/// in chunks instead of buffered fully in memory — important for the 25 MB limit
+/// and for resumable downloads on flaky mobile networks.
 pub async fn download_attachment(
     State(state): State<AppState>,
     axum::Extension(claims): axum::Extension<Claims>,
+    headers: HeaderMap,
     Path(id): Path<Uuid>,
 ) -> Result<Response, AppError> {
     let _mailbox_id = parse_mailbox_id(&claims)?;
@@ -184,23 +188,148 @@ pub async fn download_attachment(
         ));
     }
 
+    // Added: Look up the on-disk size once so we can build correct Content-Range
+    // headers and validate any Range request before reading bytes.
+    let total_size = service
+        .file_size(&attachment.storage_path)
+        .await
+        .map_err(|e| AppError::Internal(e))?;
+
+    let range_header = headers
+        .get(header::RANGE)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
+    // Added: If the client sent a Range header, serve 206 Partial Content from disk
+    // using a bounded seek+read instead of loading the whole file into memory.
+    if let Some(raw_range) = range_header {
+        match parse_byte_range(&raw_range, total_size) {
+            Ok((start, end)) => {
+                let chunk = service
+                    .read_file_range(&attachment.storage_path, start, end)
+                    .await
+                    .map_err(|e| AppError::Internal(e))?;
+
+                let response = Response::builder()
+                    .status(StatusCode::PARTIAL_CONTENT)
+                    .header(header::CONTENT_TYPE, &attachment.content_type)
+                    .header(
+                        header::CONTENT_DISPOSITION,
+                        format!("attachment; filename=\"{}\"", attachment.filename),
+                    )
+                    .header(header::ACCEPT_RANGES, "bytes")
+                    .header(
+                        header::CONTENT_RANGE,
+                        format!("bytes {}-{}/{}", start, end, total_size),
+                    )
+                    .header(header::CONTENT_LENGTH, chunk.len())
+                    .body(Body::from(chunk))
+                    .map_err(|e| {
+                        AppError::Internal(anyhow::anyhow!("Failed to build response: {}", e))
+                    })?;
+                return Ok(response);
+            }
+            Err(RangeError::Unsatisfiable) => {
+                // NOTE: RFC 7233 §4.4 — 416 must include Content-Range with the
+                // representation's complete length so clients can recover.
+                let response = Response::builder()
+                    .status(StatusCode::RANGE_NOT_SATISFIABLE)
+                    .header(header::CONTENT_RANGE, format!("bytes */{}", total_size))
+                    .body(Body::empty())
+                    .map_err(|e| {
+                        AppError::Internal(anyhow::anyhow!("Failed to build response: {}", e))
+                    })?;
+                return Ok(response);
+            }
+            // NOTE: Malformed Range headers are ignored per RFC 7233 §3.1 — fall
+            // through to a normal 200 response.
+            Err(RangeError::Malformed) => {}
+        }
+    }
+
     let data = service
         .read_file(&attachment.storage_path)
         .await
         .map_err(|e| AppError::Internal(e))?;
 
-    // Added: Build response with proper content headers for browser download
+    // Added: Build response with proper content headers for browser download.
+    // Accept-Ranges advertises Range support so clients (and reverse proxies) know
+    // they can issue partial requests on retry.
     let response = Response::builder()
         .header(header::CONTENT_TYPE, &attachment.content_type)
         .header(
             header::CONTENT_DISPOSITION,
             format!("attachment; filename=\"{}\"", attachment.filename),
         )
+        .header(header::ACCEPT_RANGES, "bytes")
         .header(header::CONTENT_LENGTH, data.len())
         .body(Body::from(data))
         .map_err(|e| AppError::Internal(anyhow::anyhow!("Failed to build response: {}", e)))?;
 
     Ok(response)
+}
+
+/// PURPOSE: Categorise Range-header failures so the caller can decide between 416
+/// (the range is well-formed but outside the representation) and a normal 200
+/// (the header was malformed and per RFC 7233 §3.1 should be ignored).
+#[derive(Debug, PartialEq, Eq)]
+enum RangeError {
+    Malformed,
+    Unsatisfiable,
+}
+
+/// PURPOSE: Parse a single-range `Range: bytes=START-END` header against the file's
+/// total size. Returns the resolved inclusive byte offsets.
+///
+/// Supports:
+///   - `bytes=0-99`         → first 100 bytes
+///   - `bytes=100-`         → from byte 100 to end-of-file
+///   - `bytes=-500`         → last 500 bytes (suffix range)
+///
+/// Multi-range requests (`bytes=0-10,20-30`) are intentionally not supported —
+/// returning the first range as a 206 is RFC-compliant and avoids the
+/// multipart/byteranges complexity that no mail client actually needs.
+fn parse_byte_range(value: &str, total_size: u64) -> Result<(u64, u64), RangeError> {
+    let spec = value.strip_prefix("bytes=").ok_or(RangeError::Malformed)?;
+    // NOTE: Take the first range only — multipart byteranges are out of scope.
+    let first = spec.split(',').next().ok_or(RangeError::Malformed)?.trim();
+
+    let (start_str, end_str) = first.split_once('-').ok_or(RangeError::Malformed)?;
+
+    if total_size == 0 {
+        // NOTE: Any byte range against an empty representation is unsatisfiable.
+        return Err(RangeError::Unsatisfiable);
+    }
+    let last_byte = total_size - 1;
+
+    let (start, end) = match (start_str.trim(), end_str.trim()) {
+        ("", "") => return Err(RangeError::Malformed),
+        // Suffix range: last N bytes
+        ("", suffix) => {
+            let n: u64 = suffix.parse().map_err(|_| RangeError::Malformed)?;
+            if n == 0 {
+                return Err(RangeError::Unsatisfiable);
+            }
+            let n = n.min(total_size);
+            (total_size - n, last_byte)
+        }
+        // Open-ended: from start to EOF
+        (start, "") => {
+            let s: u64 = start.parse().map_err(|_| RangeError::Malformed)?;
+            (s, last_byte)
+        }
+        // Closed: start to end (clamped to last byte)
+        (start, end) => {
+            let s: u64 = start.parse().map_err(|_| RangeError::Malformed)?;
+            let e: u64 = end.parse().map_err(|_| RangeError::Malformed)?;
+            (s, e.min(last_byte))
+        }
+    };
+
+    if start > last_byte || end < start {
+        return Err(RangeError::Unsatisfiable);
+    }
+    Ok((start, end))
 }
 
 /// DELETE /api/attachments/{id} — Delete an attachment (file + record)
@@ -271,5 +400,74 @@ mod tests {
             iat: 0,
         };
         assert!(parse_mailbox_id(&claims).is_err());
+    }
+
+    #[test]
+    fn test_parse_byte_range_closed() {
+        assert_eq!(parse_byte_range("bytes=0-99", 1000), Ok((0, 99)));
+        assert_eq!(parse_byte_range("bytes=200-299", 1000), Ok((200, 299)));
+    }
+
+    #[test]
+    fn test_parse_byte_range_end_clamped_to_last_byte() {
+        // Added: requested end beyond EOF is clamped to last byte, NOT 416
+        assert_eq!(parse_byte_range("bytes=0-99999", 1000), Ok((0, 999)));
+    }
+
+    #[test]
+    fn test_parse_byte_range_open_ended() {
+        // Added: bytes=100- means from 100 to EOF
+        assert_eq!(parse_byte_range("bytes=100-", 1000), Ok((100, 999)));
+    }
+
+    #[test]
+    fn test_parse_byte_range_suffix() {
+        // Added: bytes=-200 means last 200 bytes
+        assert_eq!(parse_byte_range("bytes=-200", 1000), Ok((800, 999)));
+    }
+
+    #[test]
+    fn test_parse_byte_range_suffix_larger_than_file() {
+        // Added: suffix range bigger than file returns full file
+        assert_eq!(parse_byte_range("bytes=-5000", 1000), Ok((0, 999)));
+    }
+
+    #[test]
+    fn test_parse_byte_range_first_of_multi_range() {
+        // NOTE: Only the first range of a multi-range request is honored
+        assert_eq!(parse_byte_range("bytes=0-10,20-30", 1000), Ok((0, 10)));
+    }
+
+    #[test]
+    fn test_parse_byte_range_start_past_eof_is_unsatisfiable() {
+        assert_eq!(
+            parse_byte_range("bytes=2000-3000", 1000),
+            Err(RangeError::Unsatisfiable)
+        );
+    }
+
+    #[test]
+    fn test_parse_byte_range_empty_file_is_unsatisfiable() {
+        assert_eq!(
+            parse_byte_range("bytes=0-0", 0),
+            Err(RangeError::Unsatisfiable)
+        );
+    }
+
+    #[test]
+    fn test_parse_byte_range_malformed() {
+        assert_eq!(parse_byte_range("0-99", 1000), Err(RangeError::Malformed));
+        assert_eq!(parse_byte_range("bytes=abc", 1000), Err(RangeError::Malformed));
+        assert_eq!(parse_byte_range("bytes=-", 1000), Err(RangeError::Malformed));
+        assert_eq!(parse_byte_range("bytes=abc-xyz", 1000), Err(RangeError::Malformed));
+    }
+
+    #[test]
+    fn test_parse_byte_range_zero_length_suffix_is_unsatisfiable() {
+        // Added: bytes=-0 has no defined semantic; treat as unsatisfiable
+        assert_eq!(
+            parse_byte_range("bytes=-0", 1000),
+            Err(RangeError::Unsatisfiable)
+        );
     }
 }

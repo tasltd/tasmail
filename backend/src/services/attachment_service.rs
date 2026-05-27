@@ -145,6 +145,69 @@ impl AttachmentService {
         })
     }
 
+    /// PURPOSE: Get the size of a stored file in bytes without reading it into memory
+    /// CONSTRAINTS: Used by Range download to compute Content-Range and validate offsets
+    pub async fn file_size(&self, storage_path: &str) -> anyhow::Result<u64> {
+        let meta = tokio::fs::metadata(storage_path).await.map_err(|err| {
+            anyhow::anyhow!(
+                "Failed to stat attachment file '{}': {}. File may have been deleted or moved.",
+                storage_path,
+                err
+            )
+        })?;
+        Ok(meta.len())
+    }
+
+    /// PURPOSE: Read a byte range [start, end] (inclusive) from a stored file
+    /// CONSTRAINTS: end must be >= start and < file size; range is clamped by caller
+    /// Used by the HTTP Range download path so 25 MB attachments don't load fully into memory.
+    pub async fn read_file_range(
+        &self,
+        storage_path: &str,
+        start: u64,
+        end: u64,
+    ) -> anyhow::Result<Vec<u8>> {
+        use tokio::io::{AsyncReadExt, AsyncSeekExt, SeekFrom};
+
+        if end < start {
+            return Err(anyhow::anyhow!(
+                "Invalid byte range: end ({}) < start ({}) for '{}'",
+                end,
+                start,
+                storage_path
+            ));
+        }
+
+        let mut file = tokio::fs::File::open(storage_path).await.map_err(|err| {
+            anyhow::anyhow!(
+                "Failed to open attachment file '{}' for range read: {}.",
+                storage_path,
+                err
+            )
+        })?;
+        file.seek(SeekFrom::Start(start)).await.map_err(|err| {
+            anyhow::anyhow!(
+                "Failed to seek to byte {} in '{}': {}.",
+                start,
+                storage_path,
+                err
+            )
+        })?;
+
+        let length = end - start + 1;
+        let mut buf = vec![0u8; length as usize];
+        file.read_exact(&mut buf).await.map_err(|err| {
+            anyhow::anyhow!(
+                "Failed to read {} bytes from '{}' at offset {}: {}.",
+                length,
+                storage_path,
+                start,
+                err
+            )
+        })?;
+        Ok(buf)
+    }
+
     /// PURPOSE: Delete file from storage
     pub async fn delete_file(&self, storage_path: &str) -> anyhow::Result<()> {
         // NOTE: Ignore "not found" errors — file may already be cleaned up
@@ -297,6 +360,75 @@ mod tests {
         let (status, result) = service.scan_file("/some/path").await.unwrap();
         assert_eq!(status, "error");
         assert!(result.unwrap().contains("ClamAV unavailable"));
+    }
+
+    #[tokio::test]
+    async fn test_file_size_matches_stored_bytes() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let service = AttachmentService::new(temp_dir.path().to_path_buf(), None);
+        let mailbox_id = Uuid::new_v4();
+        let data = b"twenty four bytes of data";
+
+        let (storage_path, _) = service
+            .store_file(mailbox_id, data, "size.bin")
+            .await
+            .unwrap();
+
+        let size = service.file_size(&storage_path).await.unwrap();
+        assert_eq!(size, data.len() as u64);
+    }
+
+    #[tokio::test]
+    async fn test_read_file_range_returns_inclusive_slice() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let service = AttachmentService::new(temp_dir.path().to_path_buf(), None);
+        let mailbox_id = Uuid::new_v4();
+        let data = b"0123456789abcdef";
+
+        let (storage_path, _) = service
+            .store_file(mailbox_id, data, "range.bin")
+            .await
+            .unwrap();
+
+        // Added: Bytes 4..=9 inclusive should be "456789" (6 bytes)
+        let chunk = service.read_file_range(&storage_path, 4, 9).await.unwrap();
+        assert_eq!(chunk, b"456789");
+        assert_eq!(chunk.len(), 6);
+    }
+
+    #[tokio::test]
+    async fn test_read_file_range_full_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let service = AttachmentService::new(temp_dir.path().to_path_buf(), None);
+        let mailbox_id = Uuid::new_v4();
+        let data = b"hello range";
+
+        let (storage_path, _) = service
+            .store_file(mailbox_id, data, "full.bin")
+            .await
+            .unwrap();
+
+        let chunk = service
+            .read_file_range(&storage_path, 0, (data.len() - 1) as u64)
+            .await
+            .unwrap();
+        assert_eq!(chunk, data);
+    }
+
+    #[tokio::test]
+    async fn test_read_file_range_rejects_inverted_range() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let service = AttachmentService::new(temp_dir.path().to_path_buf(), None);
+        let mailbox_id = Uuid::new_v4();
+
+        let (storage_path, _) = service
+            .store_file(mailbox_id, b"abcdef", "bad-range.bin")
+            .await
+            .unwrap();
+
+        // Added: end < start must be rejected before any I/O
+        let result = service.read_file_range(&storage_path, 5, 2).await;
+        assert!(result.is_err());
     }
 
     #[tokio::test]
