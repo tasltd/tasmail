@@ -83,10 +83,17 @@ pub struct UpdateAiConfigRequest {
     pub active: Option<bool>,
 }
 
-/// PURPOSE: Request body for the summarize endpoint
+/// PURPOSE: Request body for the summarize endpoint.
+/// folder and uid are optional — when both present, the handler can read /
+/// write the PostgreSQL summary cache (TMAIL-103). Older clients that omit
+/// them still get a summary, they just skip the cache.
 #[derive(Debug, Deserialize)]
 pub struct SummarizeRequest {
     pub email_text: String,
+    #[serde(default)]
+    pub folder: Option<String>,
+    #[serde(default)]
+    pub uid: Option<u32>,
 }
 
 // Added: Request body for thread/conversation summarization (TMAIL-103)
@@ -564,6 +571,23 @@ mod tests {
 
         let request: SummarizeRequest = serde_json::from_value(json).unwrap();
         assert_eq!(request.email_text, "Hello, this is a test email about the quarterly report.");
+        // Added: TMAIL-103 — folder/uid are optional, so legacy clients still parse.
+        assert!(request.folder.is_none());
+        assert!(request.uid.is_none());
+    }
+
+    // Added: TMAIL-103 — verify the cache-enabled request shape parses.
+    #[test]
+    fn test_summarize_request_with_cache_keys() {
+        let json = serde_json::json!({
+            "email_text": "Quarterly report attached.",
+            "folder": "INBOX",
+            "uid": 4242
+        });
+
+        let request: SummarizeRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(request.folder.as_deref(), Some("INBOX"));
+        assert_eq!(request.uid, Some(4242));
     }
 
     // Added: Smart reply request/response tests for TMAIL-104

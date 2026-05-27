@@ -47,6 +47,9 @@ export interface SummarizeResult {
   summary: string;
   provider: AiProvider;
   model: string;
+  // Added: TMAIL-103 — true if the result came from the PostgreSQL cache.
+  // Optional because older backends omit the field.
+  cached?: boolean;
 }
 
 // PURPOSE: List all AI configs for the current user (keys masked)
@@ -74,9 +77,15 @@ export async function testAiConfig(id: string): Promise<TestResult> {
   return apiClient.post<TestResult>(`/ai/config/${id}/test`, {});
 }
 
-// PURPOSE: Summarize a single email using the user's active AI configuration
-export async function summarizeEmail(_folder: string, _uid: number, emailText: string): Promise<SummarizeResult> {
-  return apiClient.post<SummarizeResult>('/ai/summarize', { email_text: emailText });
+// PURPOSE: Summarize a single email using the user's active AI configuration.
+// Sends folder + uid so the backend can cache the result keyed on body hash
+// and skip re-paying provider tokens for the same email (TMAIL-103).
+export async function summarizeEmail(folder: string, uid: number, emailText: string): Promise<SummarizeResult> {
+  return apiClient.post<SummarizeResult>('/ai/summarize', {
+    email_text: emailText,
+    folder,
+    uid,
+  });
 }
 
 // Added: Thread/conversation summary response for TMAIL-103
@@ -85,6 +94,8 @@ export interface ThreadSummaryResult {
   message_count: number;
   provider: AiProvider;
   model: string;
+  // Added: TMAIL-103 — true if the result came from the PostgreSQL cache.
+  cached?: boolean;
 }
 
 // Added: Summarize an email thread/conversation using multiple message UIDs (TMAIL-103)

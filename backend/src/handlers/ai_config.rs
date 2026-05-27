@@ -14,6 +14,9 @@ use crate::models::ai_config::{
     ThreadSummaryRequest, UpdateAiConfigRequest, decrypt_api_key, derive_encryption_key,
     encrypt_api_key,
 };
+// Added: TMAIL-103 — cache layer for AI summaries so identical content doesn't
+// re-hit the provider on every viewer.
+use crate::models::email_summary_cache::{hash_body, hash_thread_uids, EmailSummaryCache};
 use crate::services::ai_client;
 use crate::services::auth_service::Claims;
 use crate::state::AppState;
@@ -191,6 +194,28 @@ pub async fn summarize_email(
         return Err(AppError::BadRequest("Email text is required for summarization".to_string()));
     }
 
+    // Added: TMAIL-103 — Check the PostgreSQL cache before paying provider
+    // tokens. The cache key is (user, folder, uid, body_hash) so any edit to
+    // the message body invalidates the entry automatically. Older clients
+    // that don't send folder+uid skip the cache and pay the AI cost.
+    let body_hash = hash_body(&body.email_text);
+    let cache_key = body.folder.as_deref().and_then(|folder| {
+        body.uid.map(|uid| (folder.to_string(), uid as i64))
+    });
+
+    if let Some((ref folder, uid)) = cache_key {
+        if let Some(cached) =
+            EmailSummaryCache::find_single(&state.db, user_id, folder, uid, &body_hash).await?
+        {
+            return Ok(Json(serde_json::json!({
+                "summary": cached.summary,
+                "provider": cached.provider,
+                "model": cached.model,
+                "cached": true
+            })));
+        }
+    }
+
     let api_key = decrypt_api_key(&config.api_key_encrypted, &encryption_key)
         .map_err(|err| AppError::Internal(anyhow::anyhow!("Failed to decrypt API key: {}", err)))?;
 
@@ -206,10 +231,42 @@ pub async fn summarize_email(
     .await
     .map_err(|err| AppError::BadRequest(format!("AI summarization failed: {}", err)))?;
 
+    // Added: TMAIL-103 — Persist the fresh summary so the next viewer hits the
+    // cache. Failures here shouldn't fail the request; the user already paid
+    // for the AI call, return the result and log the persistence error.
+    if let Some((ref folder, uid)) = cache_key {
+        let provider_str = serde_json::to_string(&config.provider)
+            .unwrap_or_else(|_| "\"unknown\"".to_string());
+        let provider_str = provider_str.trim_matches('"').to_string();
+        if let Err(err) = EmailSummaryCache::upsert(
+            &state.db,
+            user_id,
+            "single",
+            folder,
+            uid,
+            &body_hash,
+            &summary,
+            &provider_str,
+            &config.model_name,
+            None,
+        )
+        .await
+        {
+            tracing::warn!(
+                error = %err,
+                user_id = %user_id,
+                folder = %folder,
+                uid = uid,
+                "Failed to cache email summary"
+            );
+        }
+    }
+
     Ok(Json(serde_json::json!({
         "summary": summary,
         "provider": config.provider,
-        "model": config.model_name
+        "model": config.model_name,
+        "cached": false
     })))
 }
 
@@ -301,6 +358,31 @@ pub async fn thread_summary(
         return Err(AppError::BadRequest("At least one message UID is required".to_string()));
     }
 
+    // Added: TMAIL-103 — Check the cache first using the uid-set hash. The
+    // representative uid is the lowest one in the thread (a stable anchor for
+    // the UNIQUE index); the full set is encoded in body_hash so a different
+    // set never collides.
+    let thread_hash = hash_thread_uids(&body.uids);
+    let representative_uid = *body.uids.iter().min().expect("uids non-empty") as i64;
+
+    if let Some(cached) = EmailSummaryCache::find_thread(
+        &state.db,
+        user_id,
+        &body.folder,
+        representative_uid,
+        &thread_hash,
+    )
+    .await?
+    {
+        return Ok(Json(serde_json::json!({
+            "summary": cached.summary,
+            "message_count": cached.message_count.unwrap_or(body.uids.len() as i32),
+            "provider": cached.provider,
+            "model": cached.model,
+            "cached": true
+        })));
+    }
+
     // Added: Find the user's active AI config
     let config = AiConfiguration::find_active(&state.db, user_id)
         .await?
@@ -359,11 +441,41 @@ pub async fn thread_summary(
     .await
     .map_err(|err| AppError::BadRequest(format!("AI thread summarization failed: {}", err)))?;
 
+    // Added: TMAIL-103 — Persist thread summary so subsequent views of the
+    // same conversation don't repay the AI cost. Failures are logged but
+    // don't fail the request — the AI call already succeeded.
+    let provider_str = serde_json::to_string(&config.provider)
+        .unwrap_or_else(|_| "\"unknown\"".to_string());
+    let provider_str = provider_str.trim_matches('"').to_string();
+    if let Err(err) = EmailSummaryCache::upsert(
+        &state.db,
+        user_id,
+        "thread",
+        &body.folder,
+        representative_uid,
+        &thread_hash,
+        &summary,
+        &provider_str,
+        &config.model_name,
+        Some(email_texts.len() as i32),
+    )
+    .await
+    {
+        tracing::warn!(
+            error = %err,
+            user_id = %user_id,
+            folder = %body.folder,
+            uid_count = body.uids.len(),
+            "Failed to cache thread summary"
+        );
+    }
+
     Ok(Json(serde_json::json!({
         "summary": summary,
         "message_count": email_texts.len(),
         "provider": config.provider,
-        "model": config.model_name
+        "model": config.model_name,
+        "cached": false
     })))
 }
 

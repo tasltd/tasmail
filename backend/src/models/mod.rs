@@ -48,6 +48,8 @@ pub mod calendar_event;
 pub mod ldap_config;
 // Added: AI configuration model for BYOK AI integration (TMAIL-105)
 pub mod ai_config;
+// Added: AI summary cache to avoid re-generating identical summaries (TMAIL-103)
+pub mod email_summary_cache;
 // Added: SAML 2.0 SSO configuration model for enterprise IdP integration (TMAIL-101)
 pub mod saml_config;
 // Added: OIDC provider model for Sign in with Google/Microsoft (TMAIL-99)

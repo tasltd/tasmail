@@ -90,18 +90,36 @@ describe('ai-config API', () => {
   });
 
   describe('summarizeEmail', () => {
-    // Added: Updated test to include folder and uid params (TMAIL-103)
-    it('calls POST /ai/summarize with email text', async () => {
+    // Updated: TMAIL-103 — folder + uid now go on the wire so the backend can
+    // hit its PostgreSQL summary cache instead of re-paying provider tokens.
+    it('calls POST /ai/summarize with email text plus folder/uid for caching', async () => {
       vi.mocked(apiClient.post).mockResolvedValue({
         summary: 'This email discusses the quarterly report.',
         provider: 'openai',
         model: 'gpt-4o',
+        cached: false,
       });
       const result = await summarizeEmail('INBOX', 42, 'Hello, here is the quarterly report...');
       expect(apiClient.post).toHaveBeenCalledWith('/ai/summarize', {
         email_text: 'Hello, here is the quarterly report...',
+        folder: 'INBOX',
+        uid: 42,
       });
       expect(result.summary).toBe('This email discusses the quarterly report.');
+      expect(result.cached).toBe(false);
+    });
+
+    // Added: TMAIL-103 — verify the cached flag surfaces when the backend
+    // returns a hit, so the UI/telemetry can distinguish a cheap rerun.
+    it('passes through cached=true on cache hits', async () => {
+      vi.mocked(apiClient.post).mockResolvedValue({
+        summary: 'Cached summary.',
+        provider: 'openai',
+        model: 'gpt-4o',
+        cached: true,
+      });
+      const result = await summarizeEmail('INBOX', 42, 'same content');
+      expect(result.cached).toBe(true);
     });
   });
 
