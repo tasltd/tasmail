@@ -96,12 +96,22 @@ if [[ $FAIL_COUNT -gt 0 ]]; then
 fi
 
 echo ""
-echo "Protocols (TMAIL-12 requires IMAP + LMTP + Sieve):"
-# Added: All three protocols must be on a single `protocols =` line so Dovecot
+echo "Protocols (TMAIL-12 requires IMAP + LMTP + Sieve; TMAIL-133 adds POP3):"
+# Added: All four protocols must be on a single `protocols =` line so Dovecot
 # starts the corresponding services. ManageSieve is registered as `sieve`.
 assert_match "$CONF" '^protocols\s*=\s*.*\bimap\b'  "protocols line includes imap"
+assert_match "$CONF" '^protocols\s*=\s*.*\bpop3\b'  "protocols line includes pop3 (TMAIL-133)"
 assert_match "$CONF" '^protocols\s*=\s*.*\blmtp\b'  "protocols line includes lmtp"
 assert_match "$CONF" '^protocols\s*=\s*.*\bsieve\b' "protocols line includes sieve"
+
+echo ""
+echo "POP3 wiring (TMAIL-133):"
+# Added: A protocol pop3 { ... } block is what makes Dovecot expose its POP3
+# tuning knobs; pop3_uidl_format keeps UIDs stable across mailbox state changes.
+assert_match "$CONF" 'protocol pop3 \{' \
+    "POP3 protocol block defined (port 995 / POP3S)"
+assert_match "$CONF" 'pop3_uidl_format\s*=' \
+    "pop3_uidl_format set (stable UIDs for POP3 clients)"
 
 echo ""
 echo "Sieve wiring:"

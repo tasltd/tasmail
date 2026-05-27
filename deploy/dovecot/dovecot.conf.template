@@ -10,9 +10,11 @@
 # Protocols
 # --------------------------------------------------------------------------
 
-# Added: Enable IMAP for client access, LMTP for Postfix mail delivery,
-# and ManageSieve (port 4190) for clients to upload/edit Sieve filter scripts
-protocols = imap lmtp sieve
+# Added: Enable IMAP for client access, POP3 for legacy clients (TMAIL-133),
+# LMTP for Postfix mail delivery, and ManageSieve (port 4190) for clients
+# to upload/edit Sieve filter scripts. POP3S listens on 995, reusing the
+# same TLS certs declared below.
+protocols = imap pop3 lmtp sieve
 
 # --------------------------------------------------------------------------
 # TLS Settings (Let's Encrypt certificates)
@@ -215,6 +217,35 @@ protocol imap {
 
     # Added: IMAP IDLE for push notifications (real-time new mail)
     imap_idle_notify_interval = 2 mins
+}
+
+# --------------------------------------------------------------------------
+# POP3 Settings (TMAIL-133)
+# --------------------------------------------------------------------------
+
+# Added: POP3S listens on 995 with the same TLS material as IMAPS. Mail clients
+# that only speak POP3 (legacy desktops, some appliances) can fetch their
+# Maildir over this protocol; backend `handlers/pop3_config.rs` lets each
+# user toggle POP3 on/off and choose between leave-on-server vs delete-after-
+# download behaviour. The protocol entry above is what causes Dovecot to spawn
+# the pop3-login service in the first place.
+protocol pop3 {
+    # Added: Cap simultaneous POP3 sessions per user/IP at 10 — POP3 is a
+    # batch-download protocol, so a much lower fan-out than IMAP is fine.
+    mail_max_userip_connections = 10
+
+    # Added: Stable UIDL across mailbox state changes so POP3 clients can
+    # reliably detect already-downloaded messages. %g = GUID (immutable
+    # per-message identifier in Maildir), independent of UID renumbering.
+    pop3_uidl_format = %08Xu%08Xv
+
+    # Added: Hide \Deleted-flagged messages so a re-list after expunge is
+    # consistent for clients that LIST then RETR in two passes.
+    pop3_no_flag_updates = no
+
+    # Added: Treat lock conflicts as transient errors rather than data loss,
+    # matching Dovecot's recommended setting for shared Maildir backends.
+    pop3_lock_session = yes
 }
 
 # --------------------------------------------------------------------------
