@@ -28,7 +28,55 @@ const METRIC_QUEUE_DEPTH: &str = "tasmail_queue_depth";
 const METRIC_QUEUE_SENT: &str = "tasmail_queue_sent_total";
 const METRIC_QUEUE_FAILED: &str = "tasmail_queue_failed_total";
 const METRIC_QUEUE_DEAD: &str = "tasmail_queue_dead_letter_total";
+const METRIC_QUEUE_BOUNCED: &str = "tasmail_queue_bounced_total";
 const METRIC_QUEUE_LATENCY: &str = "tasmail_queue_send_latency_seconds";
+
+/// Added: TMAIL-58 NDR (Non-Delivery Report) classifier.
+/// Returns true when the SMTP failure indicates a hard bounce — the remote permanently
+/// rejected the message. Hard bounces should NOT be retried (they'll just keep failing
+/// and waste budget); they go straight to status='bounced'.
+///
+/// Pattern coverage:
+/// - 5xx SMTP reply codes (permanent failures per RFC 5321 §4.2.1)
+/// - Enhanced status codes 5.x.x (RFC 3463)
+/// - Common human-readable bounce phrases from major MTAs (Postfix, Sendmail, Exchange)
+pub fn is_hard_bounce(error_message: &str) -> bool {
+    let lower = error_message.to_lowercase();
+
+    // RFC 5321 5xx reply codes — any standalone 5xx in the error indicates permanent failure
+    // Match "550 ", "551 ", ... "559 " or "5.x.x" enhanced codes.
+    let has_5xx_reply = lower
+        .split_whitespace()
+        .any(|tok| tok.len() == 3 && tok.starts_with('5') && tok.chars().skip(1).all(|c| c.is_ascii_digit()));
+    let has_5xx_enhanced = lower.contains("5.1.") // bad destination address
+        || lower.contains("5.2.") // mailbox status (full, disabled, etc.)
+        || lower.contains("5.3.") // mail system status
+        || lower.contains("5.4.") // network/routing
+        || lower.contains("5.5.") // protocol
+        || lower.contains("5.6.") // content
+        || lower.contains("5.7."); // policy/blocked
+
+    let bounce_phrases = [
+        "mailbox unavailable",
+        "user unknown",
+        "no such user",
+        "recipient address rejected",
+        "mailbox not found",
+        "does not exist",
+        "address rejected",
+        "blocked",
+        "permanent failure",
+        "permanently failed",
+        "550 ",
+        "551 ",
+        "552 ", // exceeded storage quota — treat as hard bounce per RFC
+        "553 ",
+        "554 ",
+    ];
+    let has_phrase = bounce_phrases.iter().any(|p| lower.contains(p));
+
+    has_5xx_reply || has_5xx_enhanced || has_phrase
+}
 
 pub struct QueueProcessor {
     pool: Arc<PgPool>,
@@ -72,6 +120,7 @@ impl QueueProcessor {
         metrics::describe_counter!(METRIC_QUEUE_SENT, "Successfully delivered queued emails");
         metrics::describe_counter!(METRIC_QUEUE_FAILED, "Queued emails that failed and will be retried");
         metrics::describe_counter!(METRIC_QUEUE_DEAD, "Queued emails moved to dead_letter (max retries exceeded)");
+        metrics::describe_counter!(METRIC_QUEUE_BOUNCED, "Queued emails hard-bounced (NDR detected, never retried)");
         metrics::describe_histogram!(METRIC_QUEUE_LATENCY, "End-to-end SMTP send latency for queued emails");
 
         let cancel = self.cancel.clone();
@@ -199,7 +248,20 @@ async fn process_item(
         Err(send_err) => {
             let error_message = format!("{}", send_err);
             let new_retry_count = item.retry_count + 1;
-            if new_retry_count >= item.max_retries {
+
+            // Added: TMAIL-58 — detect hard bounces (NDRs) and route them to 'bounced'
+            // status without consuming retry budget. Retrying a 550 mailbox-unavailable
+            // is pointless — it will keep failing and waste both our time and the remote MTA's.
+            if is_hard_bounce(&error_message) {
+                metrics::counter!(METRIC_QUEUE_BOUNCED).increment(1);
+                if let Err(e) = EmailQueueItem::mark_bounced(&pool, item.id, &error_message).await {
+                    tracing::error!("Failed to mark queue item {} bounced: {}", item.id, e);
+                }
+                tracing::warn!(
+                    "Queue item {} → bounced (NDR detected, no retry): {}",
+                    item.id, error_message
+                );
+            } else if new_retry_count >= item.max_retries {
                 metrics::counter!(METRIC_QUEUE_DEAD).increment(1);
                 if let Err(e) = EmailQueueItem::mark_dead_letter(&pool, item.id, &error_message).await {
                     tracing::error!("Failed to mark queue item {} dead_letter: {}", item.id, e);
@@ -227,8 +289,10 @@ async fn process_item(
 mod tests {
     use super::*;
 
-    #[test]
-    fn queue_processor_construction() {
+    // Fix: PgPool::connect_lazy spawns a background task and requires a Tokio runtime,
+    // so this must be a #[tokio::test] (was #[test], failed with "requires a Tokio context").
+    #[tokio::test]
+    async fn queue_processor_construction() {
         // sanity: defaults are non-zero
         let pool = sqlx::PgPool::connect_lazy("postgres://invalid/invalid").unwrap();
         let cfg = JwtConfig {
@@ -241,5 +305,58 @@ mod tests {
             .with_worker_concurrency(8);
         assert_eq!(p.batch_size, 100);
         assert_eq!(p.worker_concurrency, 8);
+    }
+
+    // Added: TMAIL-58 — NDR (hard bounce) classifier coverage
+    #[test]
+    fn is_hard_bounce_detects_smtp_5xx_codes() {
+        assert!(is_hard_bounce("550 5.1.1 mailbox unavailable"));
+        assert!(is_hard_bounce("SMTP error: 551 user does not exist"));
+        assert!(is_hard_bounce("552 storage quota exceeded"));
+        assert!(is_hard_bounce("553 mailbox name not allowed"));
+        assert!(is_hard_bounce("554 transaction failed"));
+    }
+
+    #[test]
+    fn is_hard_bounce_detects_enhanced_status_codes() {
+        assert!(is_hard_bounce("Server replied with 5.1.1 bad destination"));
+        assert!(is_hard_bounce("Delivery failed: 5.2.2 mailbox full"));
+        assert!(is_hard_bounce("5.7.1 policy rejection from upstream"));
+    }
+
+    #[test]
+    fn is_hard_bounce_detects_common_bounce_phrases() {
+        assert!(is_hard_bounce("recipient address rejected by remote server"));
+        assert!(is_hard_bounce("Mailbox Unavailable on host smtp.example.com"));
+        assert!(is_hard_bounce("user unknown in virtual mailbox table"));
+        assert!(is_hard_bounce("does not exist at this domain"));
+        assert!(is_hard_bounce("permanent failure — message rejected"));
+    }
+
+    #[test]
+    fn is_hard_bounce_rejects_transient_failures() {
+        // 4xx codes are TRANSIENT — must NOT be classified as hard bounce
+        assert!(!is_hard_bounce("421 service temporarily unavailable"));
+        assert!(!is_hard_bounce("450 mailbox busy — try later"));
+        assert!(!is_hard_bounce("4.7.1 greylisted, retry in 60s"));
+        // Network-level errors are transient
+        assert!(!is_hard_bounce("connection timed out"));
+        assert!(!is_hard_bounce("DNS resolution failed for smtp.example.com"));
+        assert!(!is_hard_bounce("TLS handshake failed"));
+    }
+
+    #[test]
+    fn is_hard_bounce_empty_and_whitespace() {
+        assert!(!is_hard_bounce(""));
+        assert!(!is_hard_bounce("   "));
+        assert!(!is_hard_bounce("unknown error"));
+    }
+
+    // Added: TMAIL-58 — case-insensitive matching (MTAs vary in casing)
+    #[test]
+    fn is_hard_bounce_is_case_insensitive() {
+        assert!(is_hard_bounce("USER UNKNOWN"));
+        assert!(is_hard_bounce("Mailbox NOT Found"));
+        assert!(is_hard_bounce("PERMANENT FAILURE"));
     }
 }

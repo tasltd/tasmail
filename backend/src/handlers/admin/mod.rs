@@ -7,3 +7,5 @@ pub mod payment_providers;
 pub mod feature_flags;
 // Added (TMAIL-183): Admin endpoints for the enterprise_quote_requests inbox.
 pub mod quote_requests;
+// Added (TMAIL-58): Admin endpoint for global email queue statistics.
+pub mod queue;

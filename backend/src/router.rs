@@ -344,6 +344,11 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/queue/stats", get(handlers::queue::queue_stats))
         .route("/api/queue/{id}", delete(handlers::queue::cancel_queued))
         .route("/api/queue/{id}/retry", post(handlers::queue::retry_queued))
+        // Added: Admin global queue stats for TMAIL-58
+        .route(
+            "/api/admin/queue-stats",
+            get(handlers::admin::queue::admin_queue_stats),
+        )
         // Added: Email tasks/to-do routes for TMAIL-126
         .route(
             "/api/tasks",
