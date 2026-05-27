@@ -1,15 +1,18 @@
 // Added: Core API client with JWT auth and auto-refresh for TMAIL-140
 // PURPOSE: Dio-based HTTP client that handles Bearer token injection,
 //          401 auto-refresh via /api/auth/refresh, and secure token storage
-// EXTERNAL: Connects to TASMail backend (default http://10.0.2.2:3000 for Android emulator)
+// EXTERNAL: Connects to TASMail backend. Base URL is resolved at build time
+//          via AppEnvironment (--dart-define=ENV=prod|dev, or
+//          --dart-define=API_BASE_URL=...). See utils/app_environment.dart.
 
 import 'package:dio/dio.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import '../utils/app_environment.dart';
 
 class ApiClient {
-  // NOTE: 10.0.2.2 maps to host machine localhost from Android emulator
-  static const String _defaultBaseUrl = 'http://10.0.2.2:3000/api';
-
+  // Changed: Default base URL now comes from the resolved app environment
+  //          (TMAIL-139) instead of being hardcoded to the Android emulator
+  //          loopback. setBaseUrl() can still override at runtime.
   late final Dio _dio;
   final FlutterSecureStorage _storage = const FlutterSecureStorage();
 
@@ -19,7 +22,7 @@ class ApiClient {
 
   ApiClient._internal() {
     _dio = Dio(BaseOptions(
-      baseUrl: _defaultBaseUrl,
+      baseUrl: AppEnvironment.current.apiBaseUrl,
       connectTimeout: const Duration(seconds: 10),
       receiveTimeout: const Duration(seconds: 30),
       headers: {'Content-Type': 'application/json'},
