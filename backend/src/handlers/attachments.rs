@@ -11,6 +11,7 @@ use uuid::Uuid;
 
 use crate::error::AppError;
 use crate::models::attachment::{Attachment, StorageStats};
+use crate::models::mailbox::Mailbox;
 use crate::services::attachment_service::AttachmentService;
 use crate::services::auth_service::Claims;
 use crate::state::AppState;
@@ -87,6 +88,24 @@ pub async fn upload_attachment(
     let filename = filename.unwrap_or_else(|| "unnamed".to_string());
 
     let size_bytes = data.len() as i64;
+
+    // Added (TMAIL-59 gap): Enforce per-mailbox storage quota BEFORE touching the disk.
+    // Attachments count toward the mailbox's quota_bytes budget per the spec.
+    // quota_bytes <= 0 is treated as "unlimited / not configured" — admin-created
+    // mailboxes always seed a positive default, so this only matters for legacy rows.
+    let mailbox = Mailbox::find_by_id(&state.db, mailbox_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Mailbox not found".to_string()))?;
+
+    if mailbox.quota_bytes > 0 {
+        let used = Attachment::total_size_for_mailbox(&state.db, mailbox_id).await?;
+        if would_exceed_quota(used, size_bytes, mailbox.quota_bytes) {
+            return Err(AppError::BadRequest(format!(
+                "Attachment would exceed mailbox quota: {} used + {} new > {} allowed",
+                used, size_bytes, mailbox.quota_bytes
+            )));
+        }
+    }
 
     // Added: Store file to disk and compute checksum
     let (storage_path, checksum) = service
@@ -332,6 +351,15 @@ fn parse_byte_range(value: &str, total_size: u64) -> Result<(u64, u64), RangeErr
     Ok((start, end))
 }
 
+/// PURPOSE: Pure check used by upload_attachment to decide whether adding a new
+/// attachment would push the mailbox above its storage quota.
+/// CONSTRAINTS: Callers must already have filtered out the unlimited case
+/// (`quota_bytes <= 0`); this helper assumes the quota is enforced.
+/// Saturating arithmetic prevents i64 overflow on absurdly-sized inputs.
+fn would_exceed_quota(used: i64, incoming: i64, quota_bytes: i64) -> bool {
+    used.saturating_add(incoming) > quota_bytes
+}
+
 /// DELETE /api/attachments/{id} — Delete an attachment (file + record)
 pub async fn delete_attachment(
     State(state): State<AppState>,
@@ -471,5 +499,41 @@ mod tests {
             parse_byte_range("bytes=-0", 1000),
             Err(RangeError::Unsatisfiable)
         );
+    }
+
+    // Added (TMAIL-59 gap fix): per-mailbox attachment quota enforcement
+    #[test]
+    fn test_would_exceed_quota_under_limit() {
+        // 100 used + 50 new = 150 ≤ 200 quota → allowed
+        assert!(!would_exceed_quota(100, 50, 200));
+    }
+
+    #[test]
+    fn test_would_exceed_quota_exact_fit() {
+        // Exact fit must be allowed — the boundary belongs to the user
+        assert!(!would_exceed_quota(150, 50, 200));
+    }
+
+    #[test]
+    fn test_would_exceed_quota_over_limit() {
+        // 150 used + 100 new = 250 > 200 quota → rejected
+        assert!(would_exceed_quota(150, 100, 200));
+    }
+
+    #[test]
+    fn test_would_exceed_quota_empty_mailbox_first_upload_too_big() {
+        // First upload that already exceeds the quota must be rejected
+        assert!(would_exceed_quota(0, 300, 200));
+    }
+
+    #[test]
+    fn test_would_exceed_quota_saturates_on_overflow() {
+        // Plain `used + incoming` would wrap to a negative i64 here and
+        // incorrectly report "under quota". saturating_add pins the result
+        // to i64::MAX so the comparison still rejects the upload.
+        let used = i64::MAX - 5;
+        let incoming = 100;
+        let quota = i64::MAX - 10;
+        assert!(would_exceed_quota(used, incoming, quota));
     }
 }

@@ -122,6 +122,25 @@ impl Attachment {
         Ok(result.rows_affected() > 0)
     }
 
+    /// PURPOSE: Total bytes currently used by this mailbox's attachments.
+    /// Returns 0 when the mailbox has no stored attachments.
+    /// Used by the upload handler to enforce per-mailbox quota — attachments
+    /// count toward the mailbox storage budget per the TMAIL-59 spec
+    /// ("Quota enforcement (attachments count toward mailbox)").
+    pub async fn total_size_for_mailbox(
+        pool: &PgPool,
+        mailbox_id: Uuid,
+    ) -> Result<i64, sqlx::Error> {
+        // NOTE: COALESCE handles the no-rows case where SUM would return NULL.
+        let total: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(SUM(size_bytes), 0)::BIGINT FROM attachments WHERE mailbox_id = $1",
+        )
+        .bind(mailbox_id)
+        .fetch_one(pool)
+        .await?;
+        Ok(total)
+    }
+
     /// PURPOSE: Get aggregated storage stats for a mailbox
     pub async fn storage_stats(
         pool: &PgPool,
