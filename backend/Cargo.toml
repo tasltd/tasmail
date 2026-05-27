@@ -69,6 +69,17 @@ aes-gcm = "0.10"
 # Added: SAML AuthnRequest deflate compression and URL encoding for TMAIL-101
 flate2 = "1"
 urlencoding = "2"
+# Added: Pure-async Postfix milter (no libmilter dep) for the DLP milter binary (TMAIL-108).
+#        Only the dlp_milter [[bin]] target depends on this; the main backend
+#        does not link against it. See docs/research/indymilter-dlp-milter.md.
+indymilter = "0.3"
+# Added: Bytes type used by indymilter body callback (TMAIL-108)
+bytes = "1"
+
+# Added: DLP milter daemon for the optional self-host Postfix deployment (TMAIL-108)
+[[bin]]
+name = "dlp_milter"
+path = "src/bin/dlp_milter.rs"
 
 [dev-dependencies]
 tokio-test = "0.4"

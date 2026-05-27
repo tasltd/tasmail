@@ -1799,6 +1799,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "indymilter"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d59de8ca0453c550ba5960c3e646c197f7bbbca553212ab89bf7eeeb0298e40f"
+dependencies = [
+ "async-trait",
+ "bitflags",
+ "bytes",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "inout"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3585,6 +3598,7 @@ dependencies = [
  "axum",
  "axum-extra",
  "base64",
+ "bytes",
  "chrono",
  "chrono-tz",
  "criterion",
@@ -3597,6 +3611,7 @@ dependencies = [
  "hmac",
  "http-body-util",
  "imap-proto",
+ "indymilter",
  "jsonwebtoken",
  "lettre",
  "mailparse",

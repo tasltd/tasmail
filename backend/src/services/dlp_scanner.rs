@@ -24,6 +24,49 @@ static IBAN_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\b[A-Z]{2}\d{2}[A-Z0-9]{4,30}\b").unwrap()
 });
 
+/// Added: Default list of dangerous attachment extensions blocked by the DLP milter
+/// NOTE: Extensions are matched case-insensitively against the filename suffix.
+///   Operators can override via the `TASMAIL_DLP_BLOCKED_EXTENSIONS` env var
+///   (comma-separated, no leading dot) read by the milter binary.
+pub const DEFAULT_BLOCKED_EXTENSIONS: &[&str] = &[
+    "exe", "bat", "cmd", "com", "scr", "pif", "vbs", "vbe", "js", "jse",
+    "wsf", "wsh", "ps1", "psm1", "msi", "msp", "hta", "cpl", "jar",
+    "lnk", "reg", "iso", "img",
+];
+
+/// PURPOSE: Returns true when the filename ends in one of the supplied blocked extensions
+/// CONSTRAINTS: case-insensitive; empty filename or missing extension returns false
+pub fn is_blocked_attachment(filename: &str, blocked: &[&str]) -> bool {
+    let lower = filename.to_lowercase();
+    let ext = match lower.rsplit_once('.') {
+        Some((_, e)) if !e.is_empty() => e,
+        _ => return false,
+    };
+    blocked.iter().any(|b| b.eq_ignore_ascii_case(ext))
+}
+
+/// PURPOSE: Scan a list of attachment filenames against blocked extensions
+/// EXTERNAL: Pure function — caller provides filenames extracted from MIME parts
+pub fn scan_attachments(
+    filenames: &[String],
+    blocked: &[&str],
+) -> Vec<DlpScanMatch> {
+    let mut matches = Vec::new();
+    for filename in filenames {
+        if is_blocked_attachment(filename, blocked) {
+            matches.push(DlpScanMatch {
+                rule_id: uuid::Uuid::nil(),
+                rule_name: "Blocked Attachment Extension".to_string(),
+                action: DlpAction::Block,
+                severity: DlpSeverity::High,
+                matched_pattern: blocked.join(","),
+                matched_text: filename.clone(),
+            });
+        }
+    }
+    matches
+}
+
 /// PURPOSE: Built-in DLP patterns for common sensitive data — used as defaults
 /// NOTE: These are applied in addition to user-created rules in the database
 pub fn get_builtin_patterns() -> Vec<BuiltinPattern> {
@@ -421,5 +464,81 @@ mod tests {
         let rules: Vec<DlpRule> = vec![];
         let matches = scan_content(&rules, Some("Payment with card 5500-0000-0000-0004"), None);
         assert!(matches.iter().any(|m| m.rule_name == "Credit Card Number"));
+    }
+
+    #[test]
+    fn test_attachment_blocked_extension_basic() {
+        // Added: .exe attachments should be blocked by the default list
+        let names = vec!["payload.exe".to_string()];
+        let matches = scan_attachments(&names, DEFAULT_BLOCKED_EXTENSIONS);
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].matched_text, "payload.exe");
+        assert_eq!(matches[0].action, DlpAction::Block);
+    }
+
+    #[test]
+    fn test_attachment_blocked_case_insensitive() {
+        // Added: Uppercase extensions must still match the lowercase blocklist
+        let names = vec!["Invoice.BAT".to_string(), "script.Vbs".to_string()];
+        let matches = scan_attachments(&names, DEFAULT_BLOCKED_EXTENSIONS);
+        assert_eq!(matches.len(), 2);
+    }
+
+    #[test]
+    fn test_attachment_safe_extensions_pass() {
+        // Added: Common safe extensions should not produce matches
+        let names = vec![
+            "report.pdf".to_string(),
+            "photo.jpg".to_string(),
+            "notes.txt".to_string(),
+            "data.csv".to_string(),
+        ];
+        let matches = scan_attachments(&names, DEFAULT_BLOCKED_EXTENSIONS);
+        assert!(matches.is_empty(), "Safe files triggered DLP: {:?}", matches);
+    }
+
+    #[test]
+    fn test_attachment_no_extension_passes() {
+        // Added: A filename without an extension should NOT be blocked
+        let names = vec!["README".to_string(), "Makefile".to_string()];
+        let matches = scan_attachments(&names, DEFAULT_BLOCKED_EXTENSIONS);
+        assert!(matches.is_empty());
+    }
+
+    #[test]
+    fn test_attachment_double_extension_uses_last() {
+        // Added: report.pdf.exe must be blocked (last extension wins)
+        let names = vec!["report.pdf.exe".to_string()];
+        let matches = scan_attachments(&names, DEFAULT_BLOCKED_EXTENSIONS);
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].matched_text, "report.pdf.exe");
+    }
+
+    #[test]
+    fn test_attachment_custom_blocked_list_overrides_default() {
+        // Added: Operators can pass a tighter list (e.g. block .zip too)
+        let names = vec!["archive.zip".to_string(), "doc.pdf".to_string()];
+        let custom: &[&str] = &["zip"];
+        let matches = scan_attachments(&names, custom);
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].matched_text, "archive.zip");
+    }
+
+    #[test]
+    fn test_is_blocked_attachment_dotfile_safe() {
+        // Added: A bare dotfile (".bashrc") has no real extension — must not block
+        assert!(!is_blocked_attachment(".bashrc", DEFAULT_BLOCKED_EXTENSIONS));
+    }
+
+    #[test]
+    fn test_default_blocked_list_covers_common_threats() {
+        // Added: Sanity-check that the default list covers the typical malware vectors
+        let critical = ["exe", "bat", "cmd", "vbs", "js", "ps1", "jar"];
+        for ext in critical {
+            assert!(
+                DEFAULT_BLOCKED_EXTENSIONS.iter().any(|e| *e == ext),
+                "Default blocklist is missing .{ext}"
+            );
+        }
     }
 }

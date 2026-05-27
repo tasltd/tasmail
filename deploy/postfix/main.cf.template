@@ -98,11 +98,15 @@ smtpd_sasl_security_options = noanonymous, noplaintext
 smtpd_sasl_tls_security_options = noanonymous
 
 # --------------------------------------------------------------------------
-# Rspamd Milter Integration (spam filtering, DKIM signing)
+# Milter Integration: Rspamd (spam / DKIM) + TASMail DLP (TMAIL-108)
 # --------------------------------------------------------------------------
 
-# Added: Connect to Rspamd via milter protocol for spam/virus filtering and DKIM signing
-smtpd_milters = inet:127.0.0.1:11332
+# Added: Two milters in declaration order:
+#   1. Rspamd on :11332 — spam filtering + DKIM signing
+#   2. TASMail DLP on :8895 — outbound content / attachment policy
+# milter_default_action = accept makes the chain fail-open if either milter is
+# down; flip to tempfail if your compliance posture requires strict enforcement.
+smtpd_milters = inet:127.0.0.1:11332, inet:127.0.0.1:8895
 non_smtpd_milters = $smtpd_milters
 milter_protocol = 6
 milter_default_action = accept
