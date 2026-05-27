@@ -21,8 +21,8 @@ declare -a WEEKLY_LIMITS=(50 100 250 500 1000 2500 5000 0)
 declare -a WEEKLY_DESCRIPTIONS=(
     "Initial warm-up — low volume, establish reputation"
     "Gradual increase — monitor bounce rates"
-    "Moderate volume — check spam folder placement"
-    "Steady growth — review engagement metrics"
+    "Moderate volume — enroll in Google Postmaster Tools and check spam placement"
+    "Steady growth — review engagement metrics in Google Postmaster Tools"
     "Scaling up — maintain consistent sending patterns"
     "High volume ramp — monitor deliverability scores"
     "Near-full capacity — verify inbox placement rates"

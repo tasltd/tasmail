@@ -259,5 +259,6 @@ Detailed docs in `docs/`: `PRD.md`, `ARCHITECTURE.md`, `SSR.md` (SRS), `API-SPEC
 `GAP-ANALYSIS.md`, `SELF-HOST-MAIL-SERVERS.md` (optional Postfix/Dovecot install path),
 `MOBILE-PLATFORM-DECISION.md` (ADR: Flutter for the Ghana market — TMAIL-49),
 `BACKUP-RESTORE.md` (daily pg_dump + incremental Maildir rsync + off-site + verify — TMAIL-42),
+`IP-WARMUP-RUNBOOK.md` (8-week ramp + Google Postmaster Tools enrollment — TMAIL-17),
 plus `docs/research/` (raw research notes) and `docs/traceability/` (generated
 DOCX/PDF traceability reports — regenerated, don't hand-edit).

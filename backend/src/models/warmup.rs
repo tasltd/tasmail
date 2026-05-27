@@ -54,8 +54,8 @@ pub struct StartWarmupRequest {
 pub const WARMUP_WEEKLY_LIMITS: [(u32, u32, &str); 8] = [
     (1, 50, "Initial warm-up — low volume, establish reputation"),
     (2, 100, "Gradual increase — monitor bounce rates"),
-    (3, 250, "Moderate volume — check spam folder placement"),
-    (4, 500, "Steady growth — review engagement metrics"),
+    (3, 250, "Moderate volume — enroll in Google Postmaster Tools and check spam placement"),
+    (4, 500, "Steady growth — review engagement metrics in Google Postmaster Tools"),
     (5, 1000, "Scaling up — maintain consistent sending patterns"),
     (6, 2500, "High volume ramp — monitor deliverability scores"),
     (7, 5000, "Near-full capacity — verify inbox placement rates"),
@@ -315,6 +315,24 @@ mod tests {
         let json = serde_json::json!({});
         let result = serde_json::from_value::<StartWarmupRequest>(json);
         assert!(result.is_err());
+    }
+
+    // Added: TMAIL-17 — Postmaster Tools enrollment must be captured in week 3-4 guidance
+    #[test]
+    fn test_postmaster_tools_in_week_3_and_4_descriptions() {
+        let schedule = WarmupSchedule::generate();
+        let w3 = schedule.weeks.iter().find(|w| w.week == 3).unwrap();
+        let w4 = schedule.weeks.iter().find(|w| w.week == 4).unwrap();
+        assert!(
+            w3.description.contains("Google Postmaster Tools"),
+            "Week 3 description should mention Google Postmaster Tools enrollment, got: {}",
+            w3.description
+        );
+        assert!(
+            w4.description.contains("Google Postmaster Tools"),
+            "Week 4 description should mention Google Postmaster Tools monitoring, got: {}",
+            w4.description
+        );
     }
 
     #[test]
