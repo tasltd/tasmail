@@ -21,6 +21,13 @@ pub struct CalendarEvent {
     pub linked_message_uid: Option<i32>,
     pub linked_folder: Option<String>,
     pub ics_uid: String,
+    // Added (TMAIL-269): unguessable token for the public /book/{token} page.
+    // Always present (DB default = gen_random_uuid()); only exposed to external
+    // visitors when `public_enabled` is true.
+    pub public_token: Uuid,
+    // Added (TMAIL-269): owner opt-in flag for external scheduling. New rows
+    // default to false so existing events remain private.
+    pub public_enabled: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -69,6 +76,8 @@ pub struct UpdateEventRequest {
     pub all_day: Option<bool>,
     pub recurrence_rule: Option<String>,
     pub status: Option<String>,
+    // Added (TMAIL-269): toggle external scheduling on/off without rotating the token.
+    pub public_enabled: Option<bool>,
 }
 
 /// PURPOSE: Request body for RSVP-ing to an event
@@ -177,6 +186,7 @@ impl CalendarEvent {
                 all_day = COALESCE($8, all_day),
                 recurrence_rule = COALESCE($9, recurrence_rule),
                 status = COALESCE($10, status),
+                public_enabled = COALESCE($11, public_enabled),
                 updated_at = now()
              WHERE id = $1 AND organizer_id = $2
              RETURNING *"
@@ -191,6 +201,24 @@ impl CalendarEvent {
         .bind(req.all_day)
         .bind(&req.recurrence_rule)
         .bind(&req.status)
+        .bind(req.public_enabled)
+        .fetch_optional(pool)
+        .await
+    }
+
+    /// PURPOSE: Look up an event by its public booking token. Only returns
+    /// events whose owner has explicitly enabled external scheduling, so a
+    /// token leaked while disabled cannot be used to peek at a private event.
+    /// CONSTRAINTS: token must be a valid UUID; caller is unauthenticated.
+    pub async fn find_by_public_token(
+        pool: &PgPool,
+        token: Uuid,
+    ) -> Result<Option<CalendarEvent>, sqlx::Error> {
+        sqlx::query_as::<_, CalendarEvent>(
+            "SELECT * FROM calendar_events
+             WHERE public_token = $1 AND public_enabled = true"
+        )
+        .bind(token)
         .fetch_optional(pool)
         .await
     }
@@ -268,6 +296,66 @@ impl EventAttendee {
         .fetch_optional(pool)
         .await
     }
+
+    /// PURPOSE: Upsert an attendee row for the public booking flow.
+    /// External visitors may not yet be on the attendee list, so we insert
+    /// them on first RSVP and update their status on subsequent visits.
+    /// Idempotent: clicking "Accept" twice records one row in the final state.
+    /// CONSTRAINTS: caller must have already validated that `rsvp` is one of
+    /// the allowed status values ('accepted' | 'declined' | 'maybe').
+    pub async fn upsert_public_rsvp(
+        pool: &PgPool,
+        event_id: Uuid,
+        email: &str,
+        display_name: Option<&str>,
+        rsvp: &str,
+    ) -> Result<EventAttendee, sqlx::Error> {
+        // NOTE: event_attendees doesn't have a unique index on (event_id, email),
+        // so we can't rely on ON CONFLICT here. Do the lookup-then-update-or-insert
+        // dance explicitly inside a transaction to stay race-safe.
+        let mut tx = pool.begin().await?;
+
+        let existing: Option<EventAttendee> = sqlx::query_as::<_, EventAttendee>(
+            "SELECT * FROM event_attendees
+             WHERE event_id = $1 AND email = $2
+             FOR UPDATE"
+        )
+        .bind(event_id)
+        .bind(email)
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        let row = if let Some(existing) = existing {
+            sqlx::query_as::<_, EventAttendee>(
+                "UPDATE event_attendees
+                    SET rsvp = $2,
+                        display_name = COALESCE($3, display_name),
+                        responded_at = now()
+                  WHERE id = $1
+                  RETURNING *"
+            )
+            .bind(existing.id)
+            .bind(rsvp)
+            .bind(display_name)
+            .fetch_one(&mut *tx)
+            .await?
+        } else {
+            sqlx::query_as::<_, EventAttendee>(
+                "INSERT INTO event_attendees (event_id, email, display_name, rsvp, responded_at)
+                 VALUES ($1, $2, $3, $4, now())
+                 RETURNING *"
+            )
+            .bind(event_id)
+            .bind(email)
+            .bind(display_name)
+            .bind(rsvp)
+            .fetch_one(&mut *tx)
+            .await?
+        };
+
+        tx.commit().await?;
+        Ok(row)
+    }
 }
 
 #[cfg(test)]
@@ -276,6 +364,7 @@ mod tests {
 
     #[test]
     fn test_calendar_event_serialization() {
+        let token = Uuid::new_v4();
         let event = CalendarEvent {
             id: Uuid::new_v4(),
             organizer_id: Uuid::new_v4(),
@@ -290,6 +379,8 @@ mod tests {
             linked_message_uid: Some(42),
             linked_folder: Some("INBOX".to_string()),
             ics_uid: "uid-12345@tasmail.io".to_string(),
+            public_token: token,
+            public_enabled: false,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
@@ -298,10 +389,15 @@ mod tests {
         assert!(json.contains("Team Standup"));
         assert!(json.contains("tentative"));
         assert!(json.contains("uid-12345@tasmail.io"));
+        // TMAIL-269: serialized payload includes the new public-scheduling fields.
+        assert!(json.contains("public_token"));
+        assert!(json.contains("public_enabled"));
 
         let deserialized: CalendarEvent = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.title, "Team Standup");
         assert_eq!(deserialized.location.as_deref(), Some("Conference Room A"));
+        assert_eq!(deserialized.public_token, token);
+        assert!(!deserialized.public_enabled);
     }
 
     #[test]
@@ -386,6 +482,19 @@ mod tests {
         let req: UpdateEventRequest = serde_json::from_str(json).unwrap();
         assert!(req.title.is_none());
         assert!(req.status.is_none());
+        assert!(req.public_enabled.is_none());
+    }
+
+    #[test]
+    fn test_update_event_request_public_enabled() {
+        // TMAIL-269: owners can toggle external scheduling via PATCH-like update.
+        let json = r#"{"public_enabled": true}"#;
+        let req: UpdateEventRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.public_enabled, Some(true));
+
+        let json = r#"{"public_enabled": false}"#;
+        let req: UpdateEventRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.public_enabled, Some(false));
     }
 
     #[test]
@@ -431,6 +540,8 @@ mod tests {
             linked_message_uid: None,
             linked_folder: None,
             ics_uid: "flat-test@tasmail.io".to_string(),
+            public_token: Uuid::new_v4(),
+            public_enabled: false,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };

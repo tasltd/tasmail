@@ -3,7 +3,7 @@
 import React from 'react';
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2, ArrowLeft, Calendar, Download, Check, X, HelpCircle, Users, MapPin, LayoutGrid } from 'lucide-react';
+import { Plus, Trash2, ArrowLeft, Calendar, Download, Check, X, HelpCircle, Users, MapPin, LayoutGrid, Link2, Copy } from 'lucide-react';
 import {
   listEvents,
   createEvent,
@@ -19,6 +19,8 @@ import type {
 } from '../../api/calendar';
 import { useMailStore } from '../../stores/mailStore';
 import { LoadingSkeleton } from '../shared/LoadingSkeleton';
+// Added (TMAIL-269): builder for the public /book/:token share URL.
+import { buildBookingUrl } from '../../api/public-calendar';
 // Added: Import CalendarView for visual calendar grid toggle (TMAIL-118)
 import { CalendarView } from './CalendarView';
 
@@ -184,6 +186,34 @@ function EventDetail({
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['calendar-event', eventId] }),
   });
 
+  // Added (TMAIL-269): toggle public scheduling and copy the share URL.
+  const publicToggleMut = useMutation({
+    mutationFn: (enabled: boolean) => updateEvent(eventId, { public_enabled: enabled }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['calendar-event', eventId] }),
+  });
+  const [copyState, setCopyState] = useState<'idle' | 'copied'>('idle');
+
+  const handleCopyShareLink = async () => {
+    if (!eventDetail?.public_token) return;
+    const url = buildBookingUrl(eventDetail.public_token);
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch {
+      // Fallback for browsers/contexts without async clipboard (HTTP, old Firefox).
+      const ta = document.createElement('textarea');
+      ta.value = url;
+      ta.setAttribute('readonly', 'true');
+      ta.style.position = 'absolute';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+    }
+    setCopyState('copied');
+    setTimeout(() => setCopyState('idle'), 1500);
+  };
+
   const handleDownloadIcs = async () => {
     const icsContent = await downloadEventIcs(eventId);
     // Added: Create blob and trigger download for ICS file
@@ -249,6 +279,61 @@ function EventDetail({
         <button className="btn" onClick={() => rsvpMut.mutate({ status: 'maybe' })}>
           <HelpCircle size={14} /> Maybe
         </button>
+      </div>
+
+      {/* Added (TMAIL-269): public booking link controls.
+          Owners flip public_enabled on to publish /book/{token} for external participants. */}
+      <div
+        data-testid="public-share-section"
+        style={{
+          margin: '12px 0',
+          padding: '12px',
+          border: '1px solid var(--color-border)',
+          borderRadius: '6px',
+          background: 'var(--color-background-subtle, transparent)',
+        }}
+      >
+        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', fontWeight: 600 }}>
+          <input
+            type="checkbox"
+            checked={!!eventDetail.public_enabled}
+            onChange={(e) => publicToggleMut.mutate(e.target.checked)}
+            aria-label="Allow external participants to book via a share link"
+          />
+          <Link2 size={14} /> Public booking link
+        </label>
+        <p style={{ margin: '6px 0 8px', fontSize: '12px', color: 'var(--color-text-secondary)' }}>
+          Anyone with this link can view the event and RSVP without signing in.
+        </p>
+        {eventDetail.public_enabled && eventDetail.public_token && (
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+            <code
+              data-testid="public-share-url"
+              style={{
+                flex: 1,
+                minWidth: '180px',
+                padding: '6px 8px',
+                fontSize: '12px',
+                background: 'var(--color-surface, #f1f5f9)',
+                border: '1px solid var(--color-border)',
+                borderRadius: '4px',
+                overflowX: 'auto',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {buildBookingUrl(eventDetail.public_token)}
+            </code>
+            <button
+              type="button"
+              className="btn"
+              onClick={handleCopyShareLink}
+              aria-label="Copy share link"
+              data-testid="public-share-copy"
+            >
+              <Copy size={14} /> {copyState === 'copied' ? 'Copied!' : 'Copy'}
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Added: Attendee list with RSVP status badges */}

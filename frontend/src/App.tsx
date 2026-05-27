@@ -23,6 +23,8 @@ import { PaymentProvidersManager } from './components/admin/PaymentProvidersMana
 import { UsersManager } from './components/admin/UsersManager';
 import { WarmupManager } from './components/admin/WarmupManager';
 import { UsageBillingPage } from './components/billing/UsageBillingPage';
+// Added (TMAIL-269): public booking page for external participants.
+import { BookingPage } from './components/booking/BookingPage';
 import { ErrorBoundary } from './components/shared/ErrorBoundary';
 import './App.css';
 
@@ -97,6 +99,8 @@ function AppContent() {
         <Route path="/login" element={<LoginRoute />} />
         {/* Public BYOK signup page */}
         <Route path="/signup" element={<SignupPage />} />
+        {/* TMAIL-269: public scheduling page for external participants — no auth required */}
+        <Route path="/book/:token" element={<BookingPage />} />
         {/* Onboarding wizard — runs after signup OR any time the user has no IMAP/SMTP config yet. */}
         <Route
           path="/onboarding"

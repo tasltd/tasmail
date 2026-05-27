@@ -16,6 +16,9 @@ export interface CalendarEvent {
   linked_message_uid: number | null;
   linked_folder: string | null;
   ics_uid: string;
+  // Added (TMAIL-269): public scheduling token + opt-in flag.
+  public_token: string;
+  public_enabled: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -57,6 +60,8 @@ export interface UpdateEventRequest {
   all_day?: boolean;
   recurrence_rule?: string;
   status?: string;
+  // Added (TMAIL-269): toggle the public booking page on/off.
+  public_enabled?: boolean;
 }
 
 export interface RsvpRequest {

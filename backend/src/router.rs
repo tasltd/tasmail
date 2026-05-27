@@ -100,7 +100,11 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/billing/plans", get(handlers::billing::list_plans))
         .route("/api/billing/webhook/paystack", post(handlers::billing::webhook_paystack))
         // Changed: MoMo webhook removed — TASMail mirrors PayPro (Paystack/Mastercard/Cybersource/Bank). Mastercard webhook replaces it.
-        .route("/api/billing/webhook/mastercard", post(handlers::billing::webhook_mastercard));
+        .route("/api/billing/webhook/mastercard", post(handlers::billing::webhook_mastercard))
+        // Added (TMAIL-269): public scheduling endpoints for external participants.
+        // Token in path is a UUIDv4; handler enforces public_enabled = true.
+        .route("/api/calendar/public/{token}", get(handlers::public_calendar::get_public_event))
+        .route("/api/calendar/public/{token}/rsvp", post(handlers::public_calendar::submit_public_rsvp));
 
     // Protected routes (auth required)
     let protected_routes = Router::new()

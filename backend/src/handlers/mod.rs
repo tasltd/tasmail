@@ -51,6 +51,8 @@ pub mod bulk_import;
 pub mod chat_integrations;
 // Added: Calendar event handlers for meeting scheduling (TMAIL-127)
 pub mod calendar;
+// Added (TMAIL-269): public scheduling endpoints for external participants.
+pub mod public_calendar;
 // Added: LDAP/AD configuration management handlers for TMAIL-100
 pub mod ldap;
 // Added: AI configuration management handlers for BYOK AI integration (TMAIL-105)
