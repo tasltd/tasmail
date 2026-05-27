@@ -7,9 +7,14 @@ import 'package:tasmail_mobile/screens/settings/settings_screen.dart';
 
 void main() {
   Widget createTestWidget() {
+    // NOTE: NoSplash.splashFactory avoids loading shaders/ink_sparkle.frag,
+    //       which fails to decode on Flutter 3.44+ (see docs/research/flutter-test-ink-sparkle-shader.md)
     return ChangeNotifierProvider(
       create: (_) => AuthProvider(),
-      child: const MaterialApp(home: SettingsScreen()),
+      child: MaterialApp(
+        theme: ThemeData(splashFactory: NoSplash.splashFactory),
+        home: const SettingsScreen(),
+      ),
     );
   }
 

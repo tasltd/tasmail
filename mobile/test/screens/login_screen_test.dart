@@ -8,9 +8,14 @@ import 'package:tasmail_mobile/screens/auth/login_screen.dart';
 void main() {
   Widget createTestWidget() {
     // NOTE: Don't call checkAuth() to avoid async flutter_secure_storage issues in tests
+    // NOTE: NoSplash.splashFactory avoids loading shaders/ink_sparkle.frag,
+    //       which fails to decode on Flutter 3.44+ (see docs/research/flutter-test-ink-sparkle-shader.md)
     return ChangeNotifierProvider(
       create: (_) => AuthProvider(),
-      child: const MaterialApp(home: LoginScreen()),
+      child: MaterialApp(
+        theme: ThemeData(splashFactory: NoSplash.splashFactory),
+        home: const LoginScreen(),
+      ),
     );
   }
 

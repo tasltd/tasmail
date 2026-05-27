@@ -9,7 +9,10 @@ void main() {
     MobileMessageDetail? replyTo,
     MobileMessageDetail? forward,
   }) {
+    // NOTE: NoSplash.splashFactory avoids loading shaders/ink_sparkle.frag,
+    //       which fails to decode on Flutter 3.44+ (see docs/research/flutter-test-ink-sparkle-shader.md)
     return MaterialApp(
+      theme: ThemeData(splashFactory: NoSplash.splashFactory),
       home: ComposeScreen(replyTo: replyTo, forward: forward),
     );
   }

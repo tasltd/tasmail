@@ -5,7 +5,12 @@ import 'package:tasmail_mobile/screens/search/search_screen.dart';
 
 void main() {
   Widget createTestWidget() {
-    return const MaterialApp(home: SearchScreen());
+    // NOTE: NoSplash.splashFactory avoids loading shaders/ink_sparkle.frag,
+    //       which fails to decode on Flutter 3.44+ (see docs/research/flutter-test-ink-sparkle-shader.md)
+    return MaterialApp(
+      theme: ThemeData(splashFactory: NoSplash.splashFactory),
+      home: const SearchScreen(),
+    );
   }
 
   group('SearchScreen', () {
