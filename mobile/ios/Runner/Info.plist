@@ -4,6 +4,9 @@
 <dict>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
+	<!-- Added: Face ID usage description for biometric unlock (TMAIL-142) -->
+	<key>NSFaceIDUsageDescription</key>
+	<string>Use Face ID to unlock TASMail without your password.</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>

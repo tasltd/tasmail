@@ -1,5 +1,7 @@
 package io.techatscale.tasmail_mobile
 
-import io.flutter.embedding.android.FlutterActivity
+// Changed: Switched from FlutterActivity to FlutterFragmentActivity for TMAIL-142
+// local_auth requires FragmentActivity to host the biometric prompt fragment.
+import io.flutter.embedding.android.FlutterFragmentActivity
 
-class MainActivity : FlutterActivity()
+class MainActivity : FlutterFragmentActivity()

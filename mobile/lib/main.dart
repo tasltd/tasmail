@@ -12,6 +12,8 @@ import 'screens/auth/login_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/message/message_screen.dart';
 import 'screens/compose/compose_screen.dart';
+// Added: Biometric Lock settings route for TMAIL-142
+import 'screens/settings/biometric_settings_screen.dart';
 import 'models/email.dart';
 
 void main() {
@@ -79,6 +81,11 @@ class TasMailApp extends StatelessWidget {
                       replyTo: args?['replyTo'] as MobileMessageDetail?,
                       forward: args?['forward'] as MobileMessageDetail?,
                     ),
+                  );
+                // Added: Biometric Lock settings route for TMAIL-142
+                case '/settings/biometric':
+                  return MaterialPageRoute(
+                    builder: (_) => const BiometricSettingsScreen(),
                   );
                 default:
                   return null;

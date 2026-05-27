@@ -133,7 +133,12 @@ class SettingsScreen extends StatelessWidget {
               title: Text(item.label),
               trailing: const Icon(Icons.chevron_right, size: 20),
               onTap: () {
-                // NOTE: Sub-setting screens will be implemented incrementally
+                // Changed: Wired Biometric Lock route for TMAIL-142; other sub-screens
+                // still show the "coming soon" placeholder until they ship.
+                if (item.route == '/settings/biometric') {
+                  Navigator.pushNamed(context, item.route);
+                  return;
+                }
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(content: Text('${item.label} - coming soon')),
                 );
