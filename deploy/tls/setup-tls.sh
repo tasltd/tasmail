@@ -214,7 +214,7 @@ fi
 # --------------------------------------------------------------------------
 echo -e "${BOLD}Postfix TLS Configuration (add to /etc/postfix/main.cf):${RESET}"
 cat << EOF
-# --- TLS Settings ---
+# --- TLS Settings (TLS 1.2 minimum, TLS 1.3 preferred) ---
 # Added: TLS certificate paths for Let's Encrypt
 smtpd_tls_cert_file = ${CERT_DIR}/fullchain.pem
 smtpd_tls_key_file = ${CERT_DIR}/privkey.pem
@@ -223,12 +223,16 @@ smtpd_tls_auth_only = yes
 smtpd_tls_loglevel = 1
 smtpd_tls_protocols = !SSLv2, !SSLv3, !TLSv1, !TLSv1.1
 smtpd_tls_mandatory_protocols = !SSLv2, !SSLv3, !TLSv1, !TLSv1.1
-smtpd_tls_mandatory_ciphers = medium
+smtpd_tls_mandatory_ciphers = high
+smtpd_tls_ciphers = high
+tls_preempt_cipherlist = yes
 
-# Added: Outbound TLS (opportunistic)
+# Added: Outbound TLS (opportunistic, high-grade ciphers)
 smtp_tls_security_level = may
 smtp_tls_loglevel = 1
 smtp_tls_protocols = !SSLv2, !SSLv3, !TLSv1, !TLSv1.1
+smtp_tls_mandatory_protocols = !SSLv2, !SSLv3, !TLSv1, !TLSv1.1
+smtp_tls_mandatory_ciphers = high
 smtp_tls_CApath = /etc/ssl/certs
 
 # Added: TLS session cache
@@ -243,12 +247,14 @@ echo ""
 # --------------------------------------------------------------------------
 echo -e "${BOLD}Dovecot TLS Configuration (add to /etc/dovecot/conf.d/10-ssl.conf):${RESET}"
 cat << EOF
-# Added: TLS settings for Dovecot IMAP
+# Added: TLS settings for Dovecot IMAP (TLS 1.2 min, TLS 1.3 preferred)
 ssl = required
 ssl_cert = <${CERT_DIR}/fullchain.pem
 ssl_key = <${CERT_DIR}/privkey.pem
 ssl_min_protocol = TLSv1.2
 ssl_prefer_server_ciphers = yes
+ssl_cipher_list = ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:!aNULL:!MD5:!DSS
+ssl_ciphersuites = TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256
 EOF
 
 echo ""
