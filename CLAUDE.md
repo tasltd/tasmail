@@ -12,6 +12,7 @@ proxies IMAP/SMTP for the browser using the user's encrypted credentials.
 
 Stack: React 19 SPA frontend, Rust/Axum backend, Flutter mobile app, PostgreSQL.
 GitHub: `tasltd/tasmail`. TASCIM PM project: `TMAIL`. Live at `https://mail.techatscale.io`.
+External-facing overview lives in `README.md` at the repo root — keep it in sync with the positioning above when the pitch changes.
 
 The repo also ships an **optional** Postfix/Dovecot installer (`deploy/scripts/setup-all.sh`)
 for operators who want to run their own mail server alongside TASMail. That setup is
@@ -48,7 +49,7 @@ npm run build:alt-ui           # Build themes/shadcn-prototype into frontend/pub
 ```
 
 ### Database
-PostgreSQL 16+. Default dev connection: `postgres://tasmail:tasmail@localhost/tasmail`. Migrations run automatically on backend startup via `sqlx::migrate!("./migrations")`. 72 migration files (001–072) covering the full schema; recent additions cover feature flags (`057`), usage-based billing (`058`), enterprise quote requests (`059`), a series of FK-cascade + Postgres ENUM→TEXT-with-CHECK conversions (`060`–`065`) so sqlx can decode the columns as `String` in the Rust models, email-queue priority + bounced state (`066`), push notification quiet-hours + grouping (`067`), phishing dangerous-attachment tracking (`068`), eDiscovery compliance (`069`), email summary cache (`070`), CalDAV public-scheduling tokens (`071`), and per-organizer ICS UID on calendar events (`072`). When adding a status/type column, prefer `TEXT + CHECK` over a Postgres ENUM — see migrations 061/063/065 for the pattern.
+PostgreSQL 16+. Default dev connection: `postgres://tasmail:tasmail@localhost/tasmail`. Migrations run automatically on backend startup via `sqlx::migrate!("./migrations")` — see `backend/migrations/` for the latest files (numbered `NNN_description.sql`, sequential). Recent themes: feature flags (`057`), usage-based billing (`058`), enterprise quote requests (`059`), a series of FK-cascade + Postgres ENUM→TEXT-with-CHECK conversions (`060`–`065`) so sqlx can decode the columns as `String` in the Rust models, email-queue priority + bounced state (`066`), push notification quiet-hours + grouping (`067`), phishing dangerous-attachment tracking (`068`), eDiscovery compliance (`069`), email summary cache (`070`), CalDAV public-scheduling tokens (`071`), per-organizer ICS UID on calendar events (`072`), and per-account brute-force lockout (`073`). When adding a status/type column, prefer `TEXT + CHECK` over a Postgres ENUM — see migrations 061/063/065 for the pattern. SQLx is run in *online* mode (no `.sqlx/` offline cache committed) — the build relies on a reachable `DATABASE_URL` at `cargo check`/`cargo build` time.
 
 ## Architecture
 
@@ -253,6 +254,43 @@ invoicing or bank transfer — the same four providers PayPro uses. The live cal
 is at `/pricing`. Keep this in mind when touching billing / quote-request code paths
 (`migrations/058_usage_billing.sql`, `migrations/059_enterprise_quote_requests.sql`,
 `handlers/billing.rs`).
+
+## Branch & deploy policy (TMAIL convention)
+
+While TMAIL is in its early/beta stage, the workflow is **direct-to-`main`**:
+
+* Routine dev work and the auto-fix queue commit straight to `origin/main` — no PR or worktree gating required.
+* `git push --no-verify` is the default (matches the global rule + bypasses husky).
+* The systemd unit `tasmail-backend.service` picks up the new release binary on restart, and `tasmail-vite.service` is hot-reload. So a green `cargo build --release` + `systemctl --user restart tasmail-backend.service` is the deploy.
+* The main session should *orchestrate* (queue / re-queue auto-fix work, summarise, escalate) — the queue workers do the coding. Reference `TMAIL-NNN` in commit subjects; TodoWrite progress auto-syncs to the linked PM item.
+
+This convention will tighten (PR-gated, worktree-isolated) once the closed beta graduates — see `docs/BETA-LAUNCH-RUNBOOK.md`.
+
+## Common gotchas
+
+A small set of things that have bitten new sessions and are not obvious from reading code:
+
+* **`JWT_SECRET` is load-bearing** — it signs JWTs **and** derives the AES-256-GCM key used to encrypt IMAP/SMTP passwords, payment provider credentials, and other DB-stored secrets (`backend/src/services/encryption.rs`). Rotating it invalidates every refresh token *and* every encrypted column. Keep the production value stable.
+* **Row-Level Security is on by default** — raw `psql` queries against tenant-scoped tables (`emails`, `contacts`, `signatures`, etc.) will return empty unless you first `SET app.current_user_id = '<uuid>';` in the session. The auth middleware sets this per-request; ad-hoc DB inspection needs it too.
+* **Build needs a live database** — `cargo build` / `cargo check` invoke the SQLx macros against `DATABASE_URL`. CI and local builds will fail with a SQLx error if the DB is unreachable. There's no `.sqlx/` offline cache committed.
+* **`npm run trace-check` is a CI gate** — run it locally before pushing changes to `backend/src/router.rs`, `backend/src/handlers/**`, or `frontend/src/api/**`. If you intentionally removed a SPA consumer of a critical route (auth/billing/folders/messages/signatures/contacts), refresh the baseline with `npm run trace-check:update` in the same commit.
+* **`background-sync.ts` uses dynamic imports** — the static traceability scan misses these. False positives on `/api/messages/schedule`, `/api/drafts`, `/api/folders/.../move|flag` usually trace back here, not to a genuine orphan.
+* **CORS_ORIGIN must include both the SPA and the alt-UI origin** in dev if you want the wand-icon hop to work — `/modern/` is served by Vite at the same origin in prod, but in dev the alt-UI build is copied into `frontend/public/modern/` and read via the same Vite server.
+* **Live deployment is workstation-hosted** — the backend runs on `tas-src-1` (this machine) and is reverse-tunnelled to the public proxy. `systemctl --user restart tasmail-backend.service` is what "deploys" — there is no container registry, no remote build, no CI/CD pipeline.
+
+## Adding a new route (cookbook)
+
+The codebase has 60+ handlers; the pattern for a new endpoint is:
+
+1. **Migration** — add `backend/migrations/NNN_feature.sql` (next sequential number). Prefer `TEXT + CHECK` over Postgres `ENUM`; add the appropriate `tenant_id` FK + RLS policy if the table is tenant-scoped.
+2. **Model** — add `backend/src/models/feature.rs` with SQLx-decodable structs (use `String` for status/type columns thanks to the ENUM→TEXT migrations).
+3. **Handler** — add `backend/src/handlers/feature.rs` with `async fn` signatures of shape `(State<AppState>, AuthUser, Json<Req>) -> Result<Json<Resp>, AppError>`.
+4. **Route** — wire it in `backend/src/router.rs` (decide public vs protected — protected sits below `auth_middleware`).
+5. **API client** — add the call in `frontend/src/api/feature.ts` going through the singleton `ApiClient` (gives auto-refresh on 401 for free).
+6. **Consumer** — wire a component / hook / TanStack Query usage so the route isn't orphaned.
+7. **Traceability** — run `npm run trace-check` locally. If the route is in a *critical category* (auth, billing, folders, messages, signatures, contacts) and intentionally has no SPA consumer (e.g. webhook, mobile-only), refresh `docs/traceability/orphans-baseline.json` with `npm run trace-check:update` in the same commit.
+8. **Tests** — backend: `#[cfg(test)]` module on the handler; frontend: colocated `*.test.ts` next to the API module. Add an E2E spec under `frontend/e2e/` if it's a user-visible flow.
+9. **Commit** — reference the PM item (e.g. `TMAIL-123`) in the commit subject; the PM module auto-syncs TodoWrite progress.
 
 ## Documentation
 
