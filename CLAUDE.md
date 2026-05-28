@@ -267,6 +267,7 @@ Detailed docs in `docs/`: `PRD.md`, `ARCHITECTURE.md`, `SSR.md` (SRS), `API-SPEC
 `HOSTING-PROCUREMENT.md` (Aveshost beta → Smart Infraco colocation procurement runbook — TMAIL-18),
 `COMPANY-REGISTRATION-RUNBOOK.md` (Ghana Office of the Registrar of Companies filing runbook — TMAIL-43),
 `DPC-REGISTRATION-RUNBOOK.md` (Ghana Data Protection Commission Data Controller registration runbook — TMAIL-44),
+`BETA-CUSTOMER-RECRUITMENT-RUNBOOK.md` (closed-beta recruitment of 10 customers — 3 BYO-SMTP + 7 Full Hosted — from personal network — TMAIL-45),
 plus `docs/research/` (raw research notes), `docs/traceability/` (generated
 DOCX/PDF traceability reports — regenerated, don't hand-edit), and
 `docs/assessments/` (point-in-time audits, e.g. `frontend-render-perf-2026-05.md`).
