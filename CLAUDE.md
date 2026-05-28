@@ -264,6 +264,7 @@ Detailed docs in `docs/`: `PRD.md`, `ARCHITECTURE.md`, `SSR.md` (SRS), `API-SPEC
 `BACKUP-RESTORE.md` (daily pg_dump + incremental Maildir rsync + off-site + verify — TMAIL-42),
 `IP-WARMUP-RUNBOOK.md` (8-week ramp + Google Postmaster Tools enrollment — TMAIL-17),
 `PAYMENT-PROVIDER-MIGRATION.md` (PayPro → TASMail credential migration runbook — TMAIL-163),
+`HOSTING-PROCUREMENT.md` (Aveshost beta → Smart Infraco colocation procurement runbook — TMAIL-18),
 plus `docs/research/` (raw research notes), `docs/traceability/` (generated
 DOCX/PDF traceability reports — regenerated, don't hand-edit), and
 `docs/assessments/` (point-in-time audits, e.g. `frontend-render-perf-2026-05.md`).
