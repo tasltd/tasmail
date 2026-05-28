@@ -7,6 +7,36 @@
 	<!-- Added: Face ID usage description for biometric unlock (TMAIL-142) -->
 	<key>NSFaceIDUsageDescription</key>
 	<string>Use Face ID to unlock TASMail without your password.</string>
+	<!-- Added: TMAIL-55 — native OS integration usage descriptions. -->
+	<key>NSCameraUsageDescription</key>
+	<string>Take photos to attach to your emails.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Attach images from your photo library to emails.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Save email attachments to your photo library.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>Pick recipients from your contacts when composing email.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Record audio attachments when composing email.</string>
+	<!-- Added: TMAIL-55 — register mailto: so iOS Share Sheet and Settings →
+	     Default Mail App can hand "send email" intents to TASMail. -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>io.techatscale.tasmail.mailto</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>mailto</string>
+			</array>
+		</dict>
+	</array>
+	<!-- Added: TMAIL-55 — declare mailto: as a queryable scheme so the app can
+	     check canOpenURL for mailto links it didn't create itself. -->
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>mailto</string>
+	</array>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>

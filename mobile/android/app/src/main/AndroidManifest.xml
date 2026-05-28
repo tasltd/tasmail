@@ -3,6 +3,19 @@
     <uses-permission android:name="android.permission.USE_BIOMETRIC"/>
     <!-- Legacy fingerprint permission for API < 28 fallback (also used by local_auth) -->
     <uses-permission android:name="android.permission.USE_FINGERPRINT"/>
+    <!-- Added: TMAIL-55 — native OS integration permissions. -->
+    <!-- Camera capture for inline photo attachments (image_picker). -->
+    <uses-permission android:name="android.permission.CAMERA"/>
+    <!-- Read contacts for system contact picker (flutter_contacts).
+         openExternalPick() does NOT require this on most OEMs but we declare
+         it so the manifest is honest about runtime capability. -->
+    <uses-permission android:name="android.permission.READ_CONTACTS"/>
+    <!-- Internet already covered transitively but declared for clarity. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- For Android 13+ photo picker / shared media access (image_picker). -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO"/>
+
     <application
         android:label="tasmail_mobile"
         android:name="${applicationName}"
@@ -28,6 +41,46 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+
+            <!-- Added: TMAIL-55 — mailto: deep link handler. Browsers, contact
+                 apps, calendar invites etc. route "send email" intents here. -->
+            <intent-filter android:autoVerify="false">
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="mailto"/>
+            </intent-filter>
+
+            <!-- Added: TMAIL-55 — receive plain text / URL shares
+                 (Chrome "Share link", text selection share, etc.). -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <data android:mimeType="text/*"/>
+            </intent-filter>
+
+            <!-- Added: TMAIL-55 — receive a single image share (gallery, camera). -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <data android:mimeType="image/*"/>
+            </intent-filter>
+
+            <!-- Added: TMAIL-55 — receive a single arbitrary file share (PDF,
+                 document, audio, video, etc.). -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <data android:mimeType="*/*"/>
+            </intent-filter>
+
+            <!-- Added: TMAIL-55 — receive multi-file share (multiple photos
+                 from gallery, multiple docs from Files app). -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <data android:mimeType="*/*"/>
+            </intent-filter>
         </activity>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
@@ -45,5 +98,12 @@
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
         </intent>
+        <!-- Added: TMAIL-55 — query camera activities so image_picker can
+             launch them on Android 11+ with scoped package visibility. -->
+        <intent>
+            <action android:name="android.media.action.IMAGE_CAPTURE"/>
+        </intent>
+        <!-- Added: TMAIL-55 — query contact provider (Android 11+). -->
+        <provider android:authorities="com.android.contacts"/>
     </queries>
 </manifest>

@@ -1,4 +1,6 @@
 // Added: TASMail mobile app entry point for TMAIL-139
+// Changed: TMAIL-55 — wired native OS integrations (mailto: deep links + share
+//          intents) via IntentDispatcher.
 // PURPOSE: App initialization with providers, routing, and Material 3 theme
 // EXTERNAL: Uses Provider for state management, MaterialApp for routing
 
@@ -15,13 +17,49 @@ import 'screens/compose/compose_screen.dart';
 // Added: Biometric Lock settings route for TMAIL-142
 import 'screens/settings/biometric_settings_screen.dart';
 import 'models/email.dart';
+// Added: TMAIL-55 — native OS integration plumbing.
+import 'services/native/deep_link_service.dart';
+import 'services/native/intent_dispatcher.dart';
+import 'services/native/share_intent_service.dart';
+
+// Added: TMAIL-55 — global navigator key so IntentDispatcher can push routes
+//        from outside the widget tree (cold-start share / mailto: handling).
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(const TasMailApp());
 }
 
-class TasMailApp extends StatelessWidget {
+class TasMailApp extends StatefulWidget {
   const TasMailApp({super.key});
+
+  @override
+  State<TasMailApp> createState() => _TasMailAppState();
+}
+
+class _TasMailAppState extends State<TasMailApp> {
+  IntentDispatcher? _dispatcher;
+
+  @override
+  void initState() {
+    super.initState();
+    // NOTE: dispatcher start is async; we don't await so the splash screen can
+    //       render immediately. Failures inside start() are non-fatal —
+    //       users can still open the app normally.
+    _dispatcher = IntentDispatcher(
+      navigatorKey: navigatorKey,
+      shareService: ShareIntentServiceImpl(),
+      deepLinkService: DeepLinkServiceImpl(),
+    );
+    _dispatcher!.start();
+  }
+
+  @override
+  void dispose() {
+    _dispatcher?.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -34,6 +72,8 @@ class TasMailApp extends StatelessWidget {
         builder: (context, auth, _) {
           return MaterialApp(
             title: 'TASMail',
+            // Added: TMAIL-55 — share/deep-link push needs a navigator key.
+            navigatorKey: navigatorKey,
             debugShowCheckedModeBanner: false,
             // Added: Localization support for Ghana languages (Twi, Ewe, Ga, Hausa)
             localizationsDelegates: const [
@@ -80,6 +120,8 @@ class TasMailApp extends StatelessWidget {
                     builder: (_) => ComposeScreen(
                       replyTo: args?['replyTo'] as MobileMessageDetail?,
                       forward: args?['forward'] as MobileMessageDetail?,
+                      // Added: TMAIL-55 — prefill from mailto: / share intent.
+                      prefill: args?['prefill'] as ComposePrefill?,
                     ),
                   );
                 // Added: Biometric Lock settings route for TMAIL-142

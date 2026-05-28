@@ -48,6 +48,19 @@ dependencies:
   local_auth: ^2.3.0
   # Added: PIN hashing for biometric fallback (TMAIL-142)
   crypto: ^3.0.6
+  # Added: Native OS integrations for TMAIL-55
+  # - image_picker: camera + photo gallery for inline image attachments
+  # - file_picker: SAF / Files app document picker for arbitrary attachments
+  # - flutter_contacts: system contact picker for To/Cc/Bcc recipient lookup
+  # - app_links: mailto: deep-link handler (cold start + warm resume)
+  # - share_handler: receive share-sheet text/url/image payloads from other apps
+  # - path_provider: platform-correct temp dir for staging shared payloads
+  image_picker: ^1.1.2
+  file_picker: ^8.1.6
+  flutter_contacts: ^1.1.9+2
+  app_links: ^6.3.2
+  share_handler: ^0.0.22
+  path_provider: ^2.1.5
 
 dev_dependencies:
   flutter_test:
