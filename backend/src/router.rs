@@ -563,6 +563,12 @@ pub fn create_router(state: AppState) -> Router {
             "/api/admin/ldap/{id}/logs",
             get(handlers::ldap::list_sync_logs),
         )
+        // Added (TMAIL-100): "Test connection" used by the admin UI before saving
+        // a config — binds with the stored creds and returns 204 on success.
+        .route(
+            "/api/admin/ldap/{id}/test",
+            post(handlers::ldap::test_connection),
+        )
         // Added: AI configuration management routes for BYOK AI integration (TMAIL-105)
         .route(
             "/api/ai/config",

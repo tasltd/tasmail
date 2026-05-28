@@ -66,3 +66,6 @@ pub mod slot_suggester;
 // by GET /api/calendar/free-busy to merge external calendars into the local
 // busy view.
 pub mod caldav_freebusy;
+// Added (TMAIL-100): Real LDAP/AD bind+search and apply_sync. Replaces the
+// stub that previously lived inline in handlers/ldap.rs.
+pub mod ldap_service;

@@ -7,6 +7,7 @@ import {
   deleteLdapConfig,
   triggerLdapSync,
   listLdapSyncLogs,
+  testLdapConnection,
 } from './ldap';
 import { apiClient } from './client';
 
@@ -106,6 +107,25 @@ describe('ldap API', () => {
       expect(apiClient.get).toHaveBeenCalledWith('/admin/ldap/1/logs');
       expect(result).toHaveLength(2);
       expect(result[0].status).toBe('completed');
+    });
+  });
+
+  describe('testLdapConnection', () => {
+    it('POSTs /admin/ldap/:id/test and resolves on 204', async () => {
+      vi.mocked(apiClient.post).mockResolvedValue(undefined);
+
+      await expect(testLdapConnection('abc')).resolves.toBeUndefined();
+      expect(apiClient.post).toHaveBeenCalledWith('/admin/ldap/abc/test');
+    });
+
+    it('propagates the backend error message on bind failure', async () => {
+      vi.mocked(apiClient.post).mockRejectedValue(
+        new Error('LDAP bind failed: invalid credentials'),
+      );
+
+      await expect(testLdapConnection('abc')).rejects.toThrow(
+        /LDAP bind failed: invalid credentials/,
+      );
     });
   });
 });

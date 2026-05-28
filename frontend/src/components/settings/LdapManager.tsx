@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import type { FormEvent } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Network, Plus, Save, Trash2, RefreshCw, ChevronDown, ChevronRight, ArrowLeft } from 'lucide-react';
+import { Network, Plus, Save, Trash2, RefreshCw, ChevronDown, ChevronRight, ArrowLeft, PlugZap } from 'lucide-react';
 import {
   listLdapConfigs,
   createLdapConfig,
@@ -10,6 +10,7 @@ import {
   deleteLdapConfig,
   triggerLdapSync,
   listLdapSyncLogs,
+  testLdapConnection,
 } from '../../api/ldap';
 import type {
   LdapConfiguration,
@@ -93,6 +94,24 @@ export function LdapManager() {
       queryClient.invalidateQueries({ queryKey: ['ldap-sync-logs', id] });
     },
     onError: (err: Error) => setError(err.message),
+  });
+
+  // Added (TMAIL-100): "Test connection" mutation — surfaces the LDAP bind result
+  // without writing anything. Success message is held in component state so the
+  // admin sees a green checkmark next to the row they just tested.
+  const [testedOkId, setTestedOkId] = useState<string | null>(null);
+  const testMutation = useMutation({
+    mutationFn: (id: string) => testLdapConnection(id),
+    onSuccess: (_, id) => {
+      setError('');
+      setTestedOkId(id);
+      // NOTE: clear the green tick after a few seconds so it doesn't linger.
+      setTimeout(() => setTestedOkId((curr) => (curr === id ? null : curr)), 4000);
+    },
+    onError: (err: Error) => {
+      setTestedOkId(null);
+      setError(err.message);
+    },
   });
 
   // Added: Reset form to initial state
@@ -290,6 +309,18 @@ export function LdapManager() {
                   </span>
                 )}
                 {/* Added: Action buttons */}
+                <button
+                  className="btn btn--icon"
+                  title="Test connection"
+                  onClick={() => testMutation.mutate(config.id)}
+                  disabled={testMutation.isPending}
+                  data-testid={`ldap-test-${config.id}`}
+                >
+                  <PlugZap
+                    size={16}
+                    color={testedOkId === config.id ? '#16a34a' : undefined}
+                  />
+                </button>
                 <button
                   className="btn btn--icon"
                   title="Sync now"

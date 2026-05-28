@@ -75,6 +75,10 @@ urlencoding = "2"
 indymilter = "0.3"
 # Added: Bytes type used by indymilter body callback (TMAIL-108)
 bytes = "1"
+# Added: Pure-Rust async LDAP client for AD/LDAP user sync (TMAIL-100).
+# Default features bring in tokio + rustls TLS for ldaps://. Kerberos/GSSAPI
+# and NTLM are off by default — turn on later when the auth-side ticket lands.
+ldap3 = { version = "0.12", default-features = false, features = ["tls-rustls", "tls-rustls-ring"] }
 
 # Added: DLP milter daemon for the optional self-host Postfix deployment (TMAIL-108)
 [[bin]]

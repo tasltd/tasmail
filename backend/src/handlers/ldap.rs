@@ -1,9 +1,14 @@
-// Added: LDAP/Active Directory configuration handlers for TMAIL-100
+// Added: LDAP/Active Directory configuration handlers for TMAIL-100.
+// Updated (2026-05-28): bind passwords are now AES-256-GCM encrypted at rest
+// via EncryptionService, and trigger_sync calls the real ldap3-backed service
+// instead of returning placeholder zero counts. A test-connection endpoint
+// was added for the admin UI's "Test connection" button.
 use axum::{
     extract::{Path, State},
     http::StatusCode,
     Json,
 };
+use serde_json::json;
 use uuid::Uuid;
 
 use crate::error::AppError;
@@ -11,6 +16,7 @@ use crate::models::ldap_config::{
     CreateLdapConfigRequest, LdapConfiguration, LdapSyncLog, UpdateLdapConfigRequest,
 };
 use crate::services::auth_service::{self, Claims};
+use crate::services::ldap_service::LdapService;
 use crate::state::AppState;
 
 /// PURPOSE: List all LDAP/AD configurations
@@ -56,11 +62,14 @@ pub async fn create_ldap_config(
         return Err(AppError::BadRequest("Search base is required".to_string()));
     }
 
-    // NOTE: In production, bind_password should be encrypted before storage.
-    // For now, we store it as-is; a proper encryption service would wrap this.
-    let encrypted_password = &request.bind_password;
+    // Fix (TMAIL-100): encrypt the bind password before it hits the DB so the
+    // service-account credentials are never stored in plaintext.
+    let encrypted_password = state
+        .encryption
+        .encrypt(&request.bind_password)
+        .map_err(AppError::Internal)?;
 
-    let config = LdapConfiguration::create(&state.db, &request, encrypted_password).await?;
+    let config = LdapConfiguration::create(&state.db, &request, &encrypted_password).await?;
     Ok((StatusCode::CREATED, Json(config)))
 }
 
@@ -79,11 +88,23 @@ pub async fn update_ldap_config(
         .await
         .map_err(|_| AppError::NotFound(format!("LDAP configuration {id} not found")))?;
 
-    // NOTE: Only encrypt password if a new one was provided
-    let encrypted_password = request.bind_password.as_deref();
+    // Fix (TMAIL-100): when an admin rotates the bind password, encrypt the new
+    // value before persisting. When the field is absent we leave the existing
+    // ciphertext untouched.
+    let encrypted_password = match request.bind_password.as_deref() {
+        Some(pw) if !pw.trim().is_empty() => {
+            Some(state.encryption.encrypt(pw).map_err(AppError::Internal)?)
+        }
+        _ => None,
+    };
 
-    let config =
-        LdapConfiguration::update(&state.db, id, &request, encrypted_password).await?;
+    let config = LdapConfiguration::update(
+        &state.db,
+        id,
+        &request,
+        encrypted_password.as_deref(),
+    )
+    .await?;
     Ok(Json(config))
 }
 
@@ -104,8 +125,40 @@ pub async fn delete_ldap_config(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// PURPOSE: Trigger a manual LDAP sync for a specific configuration
-/// CONSTRAINTS: Creates a sync log entry; actual LDAP queries are abstracted
+/// PURPOSE: Verify the configured service account can bind. Returns 204 on
+/// success, 400 with the LDAP error message on failure.
+/// EXTERNAL: POST /api/admin/ldap/:id/test
+pub async fn test_connection(
+    State(state): State<AppState>,
+    axum::Extension(claims): axum::Extension<Claims>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode, AppError> {
+    auth_service::require_admin(&claims)?;
+    let config = LdapConfiguration::get_by_id(&state.db, id)
+        .await
+        .map_err(|_| AppError::NotFound(format!("LDAP configuration {id} not found")))?;
+
+    let bind_password = state
+        .encryption
+        .decrypt(&config.bind_password_encrypted)
+        .map_err(|e| {
+            AppError::BadRequest(format!(
+                "stored bind password could not be decrypted — re-save the configuration: {e}"
+            ))
+        })?;
+
+    LdapService::test_connection(&config.server_url, &config.bind_dn, &bind_password)
+        .await
+        .map_err(|e| AppError::BadRequest(format!("LDAP bind failed: {e}")))?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// PURPOSE: Trigger a manual LDAP sync for a specific configuration.
+/// CONSTRAINTS: Connects to the directory, runs the configured search, then
+/// creates / updates / soft-disables `mailboxes` rows to match. Errors per
+/// row are recorded in `ldap_sync_logs.errors`; the run is marked completed
+/// regardless so the admin sees what happened.
 /// EXTERNAL: POST /api/admin/ldap/:id/sync
 pub async fn trigger_sync(
     State(state): State<AppState>,
@@ -113,7 +166,6 @@ pub async fn trigger_sync(
     Path(id): Path<Uuid>,
 ) -> Result<(StatusCode, Json<LdapSyncLog>), AppError> {
     auth_service::require_admin(&claims)?; // TMAIL-210
-    // Added: Verify config exists and is active before syncing
     let config = LdapConfiguration::get_by_id(&state.db, id)
         .await
         .map_err(|_| AppError::NotFound(format!("LDAP configuration {id} not found")))?;
@@ -124,24 +176,64 @@ pub async fn trigger_sync(
         ));
     }
 
-    // Added: Create a sync log entry to track this run
     let sync_log = LdapSyncLog::create(&state.db, id).await?;
 
-    // NOTE: Actual LDAP directory queries would happen here via an ldap_service module.
-    // For now, we mark the sync as completed with placeholder results.
+    // Fix (TMAIL-100): replace the placeholder zero-count result with a real
+    // ldap3 search + apply_sync. Failures at the bind/search layer surface as
+    // a "failed" log entry with the error captured; per-row failures land in
+    // the sync log's errors array.
+    let bind_password = match state.encryption.decrypt(&config.bind_password_encrypted) {
+        Ok(pw) => pw,
+        Err(e) => {
+            let errors = json!([{
+                "stage": "decrypt_bind_password",
+                "error": e.to_string(),
+            }]);
+            let failed = LdapSyncLog::complete(&state.db, sync_log.id, "failed", 0, 0, 0, &errors)
+                .await?;
+            LdapConfiguration::update_sync_status(&state.db, id, "failed", 0).await?;
+            return Ok((StatusCode::CREATED, Json(failed)));
+        }
+    };
+
+    let users = match LdapService::search_users(
+        &config.server_url,
+        &config.bind_dn,
+        &bind_password,
+        &config.search_base,
+        &config.search_filter,
+        &config.email_attribute,
+        &config.name_attribute,
+    )
+    .await
+    {
+        Ok(u) => u,
+        Err(e) => {
+            let errors = json!([{
+                "stage": "ldap_search",
+                "error": e.to_string(),
+            }]);
+            let failed = LdapSyncLog::complete(&state.db, sync_log.id, "failed", 0, 0, 0, &errors)
+                .await?;
+            LdapConfiguration::update_sync_status(&state.db, id, "failed", 0).await?;
+            return Ok((StatusCode::CREATED, Json(failed)));
+        }
+    };
+
+    let result = LdapService::apply_sync(&state.db, users).await;
+    let total_synced = result.created + result.updated;
     let completed_log = LdapSyncLog::complete(
         &state.db,
         sync_log.id,
         "completed",
-        0,
-        0,
-        0,
-        &serde_json::json!([]),
+        result.created,
+        result.updated,
+        result.disabled,
+        &serde_json::Value::Array(result.errors.clone()),
     )
     .await?;
 
-    // Added: Update parent config sync metadata
-    LdapConfiguration::update_sync_status(&state.db, id, "completed", 0).await?;
+    LdapConfiguration::update_sync_status(&state.db, id, "completed", total_synced).await?;
 
     Ok((StatusCode::CREATED, Json(completed_log)))
 }

@@ -110,3 +110,13 @@ export async function triggerLdapSync(id: string): Promise<LdapSyncLog> {
 export async function listLdapSyncLogs(id: string): Promise<LdapSyncLog[]> {
   return apiClient.get<LdapSyncLog[]>(`/admin/ldap/${id}/logs`);
 }
+
+/**
+ * PURPOSE: Verify the saved bind credentials can reach the LDAP server (admin only).
+ * Returns void on success; throws with the LDAP error message on bind failure so
+ * the UI can surface it to the admin.
+ * EXTERNAL: POST /api/admin/ldap/:id/test
+ */
+export async function testLdapConnection(id: string): Promise<void> {
+  await apiClient.post<void>(`/admin/ldap/${id}/test`);
+}
