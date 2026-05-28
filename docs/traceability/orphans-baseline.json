@@ -1,27 +1,44 @@
 {
   "generated_by": "scripts/trace-check.py --update",
-  "orphan_count": 30,
+  "orphan_count": 42,
   "by_feature_count": {
+    "admin/deliverability": 1,
+    "admin/queue-stats": 1,
     "attachments": 2,
     "auth": 3,
     "billing": 2,
-    "calendar": 1,
+    "calendar": 5,
     "contacts": 1,
     "dane": 1,
     "dl": 1,
-    "folders": 2,
+    "folders": 3,
     "health": 1,
     "mailbox": 1,
     "messages": 1,
     "metrics": 1,
-    "mobile": 6,
+    "mobile": 8,
+    "push": 2,
     "queue": 1,
     "shared-files": 1,
-    "sync": 3,
+    "sync": 4,
     "tasks": 1,
     "ws": 1
   },
   "orphans": [
+    {
+      "method": "GET",
+      "path": "/api/admin/deliverability/external-tools",
+      "handler": "deliverability::external_deliverability_tools",
+      "auth": false,
+      "feature": "admin/deliverability"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/queue-stats",
+      "handler": "admin::queue::admin_queue_stats",
+      "auth": false,
+      "feature": "admin/queue-stats"
+    },
     {
       "method": "POST",
       "path": "/api/attachments",
@@ -80,6 +97,34 @@
     },
     {
       "method": "GET",
+      "path": "/api/calendar/free-busy",
+      "handler": "calendar::get_free_busy_query",
+      "auth": false,
+      "feature": "calendar"
+    },
+    {
+      "method": "POST",
+      "path": "/api/calendar/imip/accept",
+      "handler": "calendar::accept_imip",
+      "auth": false,
+      "feature": "calendar"
+    },
+    {
+      "method": "GET",
+      "path": "/api/calendar/public/{token}",
+      "handler": "public_calendar::get_public_event",
+      "auth": false,
+      "feature": "calendar"
+    },
+    {
+      "method": "POST",
+      "path": "/api/calendar/public/{token}/rsvp",
+      "handler": "public_calendar::submit_public_rsvp",
+      "auth": false,
+      "feature": "calendar"
+    },
+    {
+      "method": "GET",
       "path": "/api/contacts",
       "handler": "contacts::list_contacts",
       "auth": false,
@@ -98,6 +143,13 @@
       "handler": "shared_files::download_by_token",
       "auth": false,
       "feature": "dl"
+    },
+    {
+      "method": "GET",
+      "path": "/api/folders/{folder}/export-mbox",
+      "handler": "eml::export_folder_mbox",
+      "auth": false,
+      "feature": "folders"
     },
     {
       "method": "POST",
@@ -177,11 +229,39 @@
       "feature": "mobile"
     },
     {
+      "method": "POST",
+      "path": "/api/mobile/sync",
+      "handler": "mobile::mobile_sync_post",
+      "auth": false,
+      "feature": "mobile"
+    },
+    {
       "method": "GET",
       "path": "/api/mobile/unread-count",
       "handler": "mobile::mobile_unread_count",
       "auth": false,
       "feature": "mobile"
+    },
+    {
+      "method": "GET",
+      "path": "/api/mobile/usage",
+      "handler": "mobile::mobile_usage",
+      "auth": false,
+      "feature": "mobile"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/push/devices/{id}/badge",
+      "handler": "push::update_badge_count",
+      "auth": false,
+      "feature": "push"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/push/devices/{id}/quiet-hours",
+      "handler": "push::update_quiet_hours",
+      "auth": false,
+      "feature": "push"
     },
     {
       "method": "GET",
@@ -208,6 +288,13 @@
       "method": "POST",
       "path": "/api/sync/checkpoint/{folder}",
       "handler": "sync::update_checkpoint",
+      "auth": false,
+      "feature": "sync"
+    },
+    {
+      "method": "GET",
+      "path": "/api/sync/checkpoints",
+      "handler": "sync::list_checkpoints",
       "auth": false,
       "feature": "sync"
     },

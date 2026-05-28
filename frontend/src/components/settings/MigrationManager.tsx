@@ -1,18 +1,31 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Upload, X, Server, FileArchive } from 'lucide-react';
+import { Upload, X, Server, FileArchive, Download } from 'lucide-react';
 import { migrationApi } from '../../api/migration';
 import type { MigrationJob } from '../../types/migration';
 // Added: PST import section for Outlook migration (TMAIL-115)
 import { PstImportManager } from './PstImportManager';
+// Added: MBOX folder export for TMAIL-68
+import { fetchFolders } from '../../api/folders';
+import { exportFolderMbox, downloadMbox } from '../../api/eml';
 
 export function MigrationManager() {
   const queryClient = useQueryClient();
-  const [tab, setTab] = useState<'imap' | 'mbox'>('imap');
+  const [tab, setTab] = useState<'imap' | 'mbox' | 'export'>('imap');
   const [imapForm, setImapForm] = useState({
     source_host: '', source_port: '993', source_user: '', source_password: '', source_use_ssl: true,
   });
   const [mboxPath, setMboxPath] = useState('');
+  // Added: Selected folder name for MBOX export (TMAIL-68)
+  const [exportFolder, setExportFolder] = useState('INBOX');
+  const [exportError, setExportError] = useState<string | null>(null);
+
+  // Added: Folder list for the MBOX export dropdown (TMAIL-68)
+  const { data: folders = [] } = useQuery({
+    queryKey: ['folders-for-export'],
+    queryFn: fetchFolders,
+    staleTime: 60_000,
+  });
 
   const { data: jobs = [], isLoading } = useQuery({
     queryKey: ['migration-jobs'],
@@ -57,6 +70,24 @@ export function MigrationManager() {
     mboxMutation.mutate({ mbox_file_path: mboxPath });
   };
 
+  // Added: MBOX folder export mutation (TMAIL-68)
+  const exportMutation = useMutation({
+    mutationFn: (folder: string) => exportFolderMbox(folder),
+    onSuccess: (blob, folder) => {
+      setExportError(null);
+      downloadMbox(blob, folder);
+    },
+    onError: (err: Error) => {
+      setExportError(err.message);
+    },
+  });
+
+  const handleExportSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setExportError(null);
+    exportMutation.mutate(exportFolder);
+  };
+
   return (
     <div className="settings-panel">
       <div className="settings-panel__header">
@@ -69,6 +100,10 @@ export function MigrationManager() {
         </button>
         <button className={`btn ${tab === 'mbox' ? 'btn--primary' : ''}`} onClick={() => setTab('mbox')}>
           <FileArchive size={16} /> MBOX Import
+        </button>
+        {/* Added: MBOX Export tab for TMAIL-68 — download a folder as .mbox */}
+        <button className={`btn ${tab === 'export' ? 'btn--primary' : ''}`} onClick={() => setTab('export')}>
+          <Download size={16} /> MBOX Export
         </button>
       </div>
 
@@ -119,6 +154,36 @@ export function MigrationManager() {
           </div>
           <button type="submit" className="btn btn--primary" disabled={mboxMutation.isPending}>
             {mboxMutation.isPending ? 'Starting...' : 'Start Import'}
+          </button>
+        </form>
+      )}
+
+      {/* Added: MBOX folder export tab for TMAIL-68 */}
+      {tab === 'export' && (
+        <form className="settings-form" onSubmit={handleExportSubmit}>
+          <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginBottom: '12px' }}>
+            Download all messages in a folder as a single MBOX file. The file can be re-imported
+            into Thunderbird, Apple Mail, Gmail (Google Takeout), or any other mbox-compatible client.
+          </p>
+          <div className="form-group">
+            <label htmlFor="export-folder-select">Folder</label>
+            <select
+              id="export-folder-select"
+              value={exportFolder}
+              onChange={(e) => setExportFolder(e.target.value)}
+              required
+            >
+              {folders.length === 0 && <option value="INBOX">INBOX</option>}
+              {folders.map((f) => (
+                <option key={f.name} value={f.name}>{f.name}</option>
+              ))}
+            </select>
+          </div>
+          {exportError && (
+            <p style={{ color: 'var(--color-danger)', fontSize: '12px', margin: '4px 0 12px' }}>{exportError}</p>
+          )}
+          <button type="submit" className="btn btn--primary" disabled={exportMutation.isPending}>
+            {exportMutation.isPending ? 'Exporting...' : 'Download .mbox'}
           </button>
         </form>
       )}

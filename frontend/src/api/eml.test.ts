@@ -1,6 +1,6 @@
 // Added: Unit tests for EML import/export API functions (TMAIL-68)
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { exportEml, importEml, downloadEml } from './eml';
+import { exportEml, importEml, downloadEml, exportFolderMbox, downloadMbox } from './eml';
 
 // NOTE: We mock global fetch since EML operations use raw fetch (not apiClient)
 // for binary request/response handling
@@ -153,6 +153,98 @@ describe('downloadEml', () => {
 
     downloadEml(blob, 99999);
     expect(mockAnchor.download).toBe('message_99999.eml');
+
+    createElementSpy.mockRestore();
+  });
+});
+
+// Added: Tests for MBOX folder export (TMAIL-68 — MBOX export)
+describe('exportFolderMbox', () => {
+  it('calls GET with correct URL and auth header', async () => {
+    const mockBlob = new Blob(['fake-mbox-content'], { type: 'application/mbox' });
+    mockFetch.mockResolvedValue({
+      ok: true,
+      blob: () => Promise.resolve(mockBlob),
+    });
+
+    const result = await exportFolderMbox('INBOX');
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      '/api/folders/INBOX/export-mbox',
+      {
+        headers: { Authorization: 'Bearer test-jwt-token' },
+      },
+    );
+    expect(result).toBe(mockBlob);
+  });
+
+  it('encodes folder names with special characters', async () => {
+    const mockBlob = new Blob(['mbox-data']);
+    mockFetch.mockResolvedValue({
+      ok: true,
+      blob: () => Promise.resolve(mockBlob),
+    });
+
+    await exportFolderMbox('Sent Items');
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      '/api/folders/Sent%20Items/export-mbox',
+      expect.any(Object),
+    );
+  });
+
+  it('throws error with details on failed response', async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 502,
+      text: () => Promise.resolve('{"error":"IMAP unreachable"}'),
+    });
+
+    await expect(exportFolderMbox('INBOX')).rejects.toThrow(
+      "MBOX export failed for folder 'INBOX': 502",
+    );
+  });
+});
+
+describe('downloadMbox', () => {
+  it('creates anchor element with sanitised filename and revokes blob URL', () => {
+    const mockObjectUrl = 'blob:http://localhost/mbox-uuid';
+    const createObjectUrlSpy = vi.fn(() => mockObjectUrl);
+    const revokeObjectUrlSpy = vi.fn();
+    vi.stubGlobal('URL', {
+      ...URL,
+      createObjectURL: createObjectUrlSpy,
+      revokeObjectURL: revokeObjectUrlSpy,
+    });
+
+    const mockAnchor = { href: '', download: '', click: vi.fn() };
+    const createElementSpy = vi.spyOn(document, 'createElement').mockReturnValue(mockAnchor as unknown as HTMLElement);
+
+    const blob = new Blob(['mbox-content'], { type: 'application/mbox' });
+    downloadMbox(blob, 'INBOX/Archive');
+
+    expect(createObjectUrlSpy).toHaveBeenCalledWith(blob);
+    expect(mockAnchor.href).toBe(mockObjectUrl);
+    // NOTE: forward slash gets replaced with underscore so the OS treats it as a single filename
+    expect(mockAnchor.download).toBe('INBOX_Archive.mbox');
+    expect(mockAnchor.click).toHaveBeenCalledOnce();
+    expect(revokeObjectUrlSpy).toHaveBeenCalledWith(mockObjectUrl);
+
+    createElementSpy.mockRestore();
+  });
+
+  it('falls back to "folder" filename for blank input', () => {
+    vi.stubGlobal('URL', {
+      ...URL,
+      createObjectURL: vi.fn(() => 'blob:test'),
+      revokeObjectURL: vi.fn(),
+    });
+
+    const mockAnchor = { href: '', download: '', click: vi.fn() };
+    const createElementSpy = vi.spyOn(document, 'createElement').mockReturnValue(mockAnchor as unknown as HTMLElement);
+
+    downloadMbox(new Blob(['x']), '   ');
+    expect(mockAnchor.download).toBe('folder.mbox');
 
     createElementSpy.mockRestore();
   });

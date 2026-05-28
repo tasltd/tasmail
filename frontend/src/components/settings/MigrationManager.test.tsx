@@ -18,6 +18,20 @@ vi.mock('../../api/migration', () => ({
   },
 }));
 
+// Added: Mocks for the MBOX folder export flow (TMAIL-68)
+const mockFetchFolders = vi.fn();
+const mockExportFolderMbox = vi.fn();
+const mockDownloadMbox = vi.fn();
+
+vi.mock('../../api/folders', () => ({
+  fetchFolders: (...args: unknown[]) => mockFetchFolders(...args),
+}));
+
+vi.mock('../../api/eml', () => ({
+  exportFolderMbox: (...args: unknown[]) => mockExportFolderMbox(...args),
+  downloadMbox: (...args: unknown[]) => mockDownloadMbox(...args),
+}));
+
 function createWrapper() {
   const qc = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -30,6 +44,11 @@ function createWrapper() {
 describe('MigrationManager', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockFetchFolders.mockResolvedValue([
+      { name: 'INBOX', total: 0, unseen: 0 },
+      { name: 'Sent', total: 0, unseen: 0 },
+      { name: 'Archive', total: 0, unseen: 0 },
+    ]);
   });
 
   it('renders "Email Migration" heading', async () => {
@@ -121,5 +140,91 @@ describe('MigrationManager', () => {
     await waitFor(() => {
       expect(screen.getByTitle('Cancel')).toBeInTheDocument();
     });
+  });
+
+  // Added: Tests for MBOX folder export tab (TMAIL-68)
+  it('shows MBOX Export tab button', async () => {
+    mockList.mockResolvedValue([]);
+    render(<MigrationManager />, { wrapper: createWrapper() });
+
+    await waitFor(() => {
+      expect(screen.getByText('MBOX Export')).toBeInTheDocument();
+    });
+  });
+
+  it('shows folder dropdown when MBOX Export tab is clicked', async () => {
+    mockList.mockResolvedValue([]);
+    render(<MigrationManager />, { wrapper: createWrapper() });
+
+    await waitFor(() => {
+      expect(screen.getByText('MBOX Export')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText('MBOX Export'));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Folder')).toBeInTheDocument();
+    });
+    // NOTE: Scope option queries to the export dropdown — the PST Import section
+    //       has its own folder dropdown with overlapping option names.
+    const dropdown = screen.getByLabelText('Folder') as HTMLSelectElement;
+    await waitFor(() => {
+      const options = Array.from(dropdown.querySelectorAll('option')).map((o) => o.textContent);
+      expect(options).toContain('INBOX');
+      expect(options).toContain('Sent');
+      expect(options).toContain('Archive');
+    });
+    expect(screen.getByText('Download .mbox')).toBeInTheDocument();
+  });
+
+  it('triggers exportFolderMbox + downloadMbox when Download .mbox is clicked', async () => {
+    mockList.mockResolvedValue([]);
+    const fakeBlob = new Blob(['mbox-bytes'], { type: 'application/mbox' });
+    mockExportFolderMbox.mockResolvedValue(fakeBlob);
+
+    render(<MigrationManager />, { wrapper: createWrapper() });
+
+    await waitFor(() => {
+      expect(screen.getByText('MBOX Export')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByText('MBOX Export'));
+
+    await waitFor(() => {
+      expect(screen.getByRole('option', { name: 'Sent' })).toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByLabelText('Folder'), { target: { value: 'Sent' } });
+    fireEvent.click(screen.getByText('Download .mbox'));
+
+    await waitFor(() => {
+      expect(mockExportFolderMbox).toHaveBeenCalledWith('Sent');
+    });
+    await waitFor(() => {
+      expect(mockDownloadMbox).toHaveBeenCalledWith(fakeBlob, 'Sent');
+    });
+  });
+
+  it('shows an error message when export fails', async () => {
+    mockList.mockResolvedValue([]);
+    mockExportFolderMbox.mockRejectedValue(
+      new Error("MBOX export failed for folder 'INBOX': 502 — IMAP unreachable"),
+    );
+
+    render(<MigrationManager />, { wrapper: createWrapper() });
+
+    await waitFor(() => {
+      expect(screen.getByText('MBOX Export')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByText('MBOX Export'));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Folder')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByText('Download .mbox'));
+
+    await waitFor(() => {
+      expect(screen.getByText(/MBOX export failed/)).toBeInTheDocument();
+    });
+    expect(mockDownloadMbox).not.toHaveBeenCalled();
   });
 });

@@ -147,6 +147,11 @@ pub fn create_router(state: AppState) -> Router {
             "/api/folders/{folder}/import-eml",
             post(handlers::eml::import_eml),
         )
+        // Added: MBOX folder export for TMAIL-68 — download an entire folder as an mbox file
+        .route(
+            "/api/folders/{folder}/export-mbox",
+            get(handlers::eml::export_folder_mbox),
+        )
         // Signatures
         .route(
             "/api/signatures",

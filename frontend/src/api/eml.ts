@@ -68,3 +68,43 @@ export function downloadEml(blob: Blob, uid: number): void {
   anchorElement.click();
   URL.revokeObjectURL(objectUrl);
 }
+
+/**
+ * PURPOSE: Export an entire folder as an MBOX file (RFC 4155 format)
+ * CONSTRAINTS: Requires valid folder name; streams the full folder so requests may be large
+ * EXTERNAL: GET /api/folders/{folder}/export-mbox — returns application/mbox blob
+ */
+export async function exportFolderMbox(folder: string): Promise<Blob> {
+  const encodedFolder = encodeURIComponent(folder);
+  const response = await fetch(
+    `${API_BASE_URL}/folders/${encodedFolder}/export-mbox`,
+    {
+      headers: {
+        Authorization: `Bearer ${localStorage.getItem('access_token')}`,
+      },
+    },
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(
+      `MBOX export failed for folder '${folder}': ${response.status} — ${errorText}`,
+    );
+  }
+
+  return response.blob();
+}
+
+/**
+ * PURPOSE: Trigger a browser file download for an MBOX folder export
+ * CONSTRAINTS: Sanitises the folder name into a safe `.mbox` filename
+ */
+export function downloadMbox(blob: Blob, folder: string): void {
+  const safeName = folder.replace(/[\\/"\n\r\0]/g, '_').trim() || 'folder';
+  const objectUrl = URL.createObjectURL(blob);
+  const anchorElement = document.createElement('a');
+  anchorElement.href = objectUrl;
+  anchorElement.download = `${safeName}.mbox`;
+  anchorElement.click();
+  URL.revokeObjectURL(objectUrl);
+}
