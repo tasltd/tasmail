@@ -80,6 +80,32 @@ class _InboxScreenState extends State<InboxScreen> {
     return deleted;
   }
 
+  // Added: Swipe-right-to-archive handler (TMAIL-54)
+  // PURPOSE: Mirrors _onDismissed but moves the message to the Archive folder
+  // instead of deleting. Returns true so Dismissible removes the tile only on
+  // a successful server-side move.
+  Future<bool> _onArchived(MobileMessageSummary message) async {
+    final mail = context.read<MailProvider>();
+    final archived = await mail.archiveMessage(message.folder, message.uid);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(archived ? 'Message archived' : 'Archive failed'),
+          action: archived
+              ? SnackBarAction(
+                  label: 'Undo',
+                  onPressed: () {
+                    // NOTE: Full undo would require server-side move back
+                    mail.loadInbox(refresh: true);
+                  },
+                )
+              : null,
+        ),
+      );
+    }
+    return archived;
+  }
+
   @override
   Widget build(BuildContext context) {
     final mail = context.watch<MailProvider>();
@@ -154,14 +180,30 @@ class _InboxScreenState extends State<InboxScreen> {
           final message = mail.messages[index];
           return Dismissible(
             key: Key('${message.folder}-${message.uid}'),
-            direction: DismissDirection.endToStart,
+            // Changed: bidirectional swipes for TMAIL-54
+            //   endToStart  (swipe left)  -> delete  (red)
+            //   startToEnd  (swipe right) -> archive (green)
+            direction: DismissDirection.horizontal,
             background: Container(
+              key: const Key('swipe_archive_bg'),
+              color: Colors.green,
+              alignment: Alignment.centerLeft,
+              padding: const EdgeInsets.only(left: 16),
+              child: const Icon(Icons.archive, color: Colors.white),
+            ),
+            secondaryBackground: Container(
+              key: const Key('swipe_delete_bg'),
               color: Colors.red,
               alignment: Alignment.centerRight,
               padding: const EdgeInsets.only(right: 16),
               child: const Icon(Icons.delete, color: Colors.white),
             ),
-            confirmDismiss: (_) => _onDismissed(message),
+            confirmDismiss: (direction) {
+              if (direction == DismissDirection.startToEnd) {
+                return _onArchived(message);
+              }
+              return _onDismissed(message);
+            },
             child: MessageTile(
               message: message,
               onTap: () => _onMessageTap(message),

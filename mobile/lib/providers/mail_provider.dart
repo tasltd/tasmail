@@ -153,6 +153,33 @@ class MailProvider extends ChangeNotifier {
     }
   }
 
+  // Added: Move a message to a different folder (TMAIL-54)
+  // PURPOSE: Backs swipe gestures and other relocation actions. Hits the
+  // shared `/folders/{folder}/messages/{uid}/move` endpoint that the web
+  // SPA already uses (see backend/src/handlers/messages.rs::move_message).
+  Future<bool> moveMessage(String folder, int uid, String toFolder) async {
+    try {
+      await _api.post(
+        '/folders/$folder/messages/$uid/move',
+        data: {'to_folder': toFolder},
+      );
+      _messages.removeWhere((m) => m.uid == uid && m.folder == folder);
+      notifyListeners();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  // Added: Convenience wrapper for swipe-right-to-archive (TMAIL-54)
+  // PURPOSE: Mobile UX requires a single "archive" affordance. Standard IMAP
+  // folder name is "Archive" (Apple Mail / FastMail / Dovecot default). Users
+  // whose server uses a different archive folder can rebind via settings in
+  // a follow-up issue.
+  Future<bool> archiveMessage(String folder, int uid) async {
+    return moveMessage(folder, uid, 'Archive');
+  }
+
   // PURPOSE: Toggle flag on a message
   Future<bool> toggleFlag(String folder, int uid, bool flagged) async {
     try {
