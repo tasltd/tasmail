@@ -1,0 +1,1 @@
+First public beta of TASMail Mobile. Connect any IMAP mailbox and get a fast, native Android client with biometric unlock, offline sync, and rich notifications. Built for the Ghana market.

@@ -1,0 +1,13 @@
+# Added: TMAIL-56 — Fastlane Appfile for the iOS side of TASMail Mobile.
+#
+# `apple_id` and `itc_team_id` come from App Store Connect after the
+# operator creates the iOS bundle ID. Until that happens, leave these
+# placeholders — `fastlane ios beta` will fail loudly with a useful
+# "set ITC_TEAM_ID" hint.
+#
+# See docs/MOBILE-DISTRIBUTION-RUNBOOK.md §5.
+
+app_identifier("io.techatscale.tasmail.mobile")
+apple_id(ENV["FASTLANE_APPLE_ID"] || "ops@techatscale.io")
+itc_team_id(ENV["FASTLANE_ITC_TEAM_ID"] || "")
+team_id(ENV["FASTLANE_TEAM_ID"] || "")

@@ -1,0 +1,86 @@
+# Added: TMAIL-56 — Fastlane lanes for TASMail Mobile iOS distribution.
+#
+# Lanes:
+#   bundle exec fastlane ios beta       # TestFlight upload
+#   bundle exec fastlane ios production # App Store submission (manual review)
+#
+# Prereq: macOS with Xcode, App Store Connect API key at ~/keys/appstore.p8,
+# and the env vars APPSTORE_KEY_ID, APPSTORE_ISSUER_ID, FASTLANE_APPLE_ID.
+#
+# iOS distribution is deferred — TMAIL launches Android-first for the Ghana
+# market (~94% Android share per MOBILE-PLATFORM-DECISION.md). This file is
+# scaffolded so it's ready when iOS launches but the lanes are not exercised
+# in CI yet.
+
+default_platform(:ios)
+
+REPO_ROOT  = File.expand_path("../../..", __dir__)
+MOBILE_DIR = File.join(REPO_ROOT, "mobile")
+IPA_PATH   = File.join(MOBILE_DIR, "build", "ios", "ipa", "tasmail_mobile.ipa")
+
+platform :ios do
+
+  desc "Build a release IPA via the Flutter toolchain"
+  private_lane :build_release_ipa do |options|
+    build_number = options[:build_number] || ENV["BUILD_NUMBER"] || Time.now.to_i.to_s
+    build_name   = options[:build_name]   || ENV["BUILD_NAME"]   || "1.0.0"
+
+    UI.message("📦 Building iOS IPA — version #{build_name}+#{build_number}")
+
+    Dir.chdir(MOBILE_DIR) do
+      sh("flutter clean")
+      sh("flutter pub get")
+      sh("flutter build ipa --release " \
+         "--build-name=#{build_name} " \
+         "--build-number=#{build_number}")
+    end
+
+    UI.user_error!("IPA not found at #{IPA_PATH}") unless File.exist?(IPA_PATH)
+    IPA_PATH
+  end
+
+  desc "Push the current build to TestFlight"
+  lane :beta do |options|
+    api_key = app_store_connect_api_key(
+      key_id:      ENV["APPSTORE_KEY_ID"],
+      issuer_id:   ENV["APPSTORE_ISSUER_ID"],
+      key_filepath: ENV["APPSTORE_KEY_FILEPATH"] || File.expand_path("~/keys/appstore.p8"),
+    )
+
+    ipa = build_release_ipa(options)
+
+    upload_to_testflight(
+      api_key: api_key,
+      ipa: ipa,
+      skip_waiting_for_build_processing: true,
+      changelog: options[:changelog] || "Internal beta build — see PM for change log",
+    )
+  end
+
+  desc "Push the current build to App Store Connect for review"
+  lane :production do |options|
+    api_key = app_store_connect_api_key(
+      key_id:       ENV["APPSTORE_KEY_ID"],
+      issuer_id:    ENV["APPSTORE_ISSUER_ID"],
+      key_filepath: ENV["APPSTORE_KEY_FILEPATH"] || File.expand_path("~/keys/appstore.p8"),
+    )
+
+    ipa = build_release_ipa(options)
+
+    upload_to_app_store(
+      api_key: api_key,
+      ipa: ipa,
+      submit_for_review: false,
+      automatic_release: false,
+      force: true,
+      skip_screenshots: true,
+      skip_metadata: true,
+    )
+
+    UI.success("✅ IPA uploaded — submit for review manually in App Store Connect")
+  end
+
+  error do |lane, exception, options|
+    UI.error("❌ Lane #{lane} failed: #{exception.message}")
+  end
+end

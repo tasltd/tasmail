@@ -43,3 +43,21 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Added: TMAIL-56 — production signing credentials. Real keystore + properties
+# live in 1Password (vault: "TASMail Mobile"), never in git. The .example file
+# IS committed so operators know what shape to fill in.
+/android/key.properties
+/android/app/*.jks
+/android/app/*.keystore
+/ios/fastlane/report.xml
+/ios/fastlane/Preview.html
+/ios/fastlane/screenshots
+/ios/fastlane/test_output
+/android/fastlane/report.xml
+/android/fastlane/Preview.html
+/android/fastlane/README.md
+
+# Added: TMAIL-56 — fastlane Google Play service-account JSON. Operator-supplied.
+/android/fastlane/play-store-credentials.json
+/android/fastlane/agconnect-services.json

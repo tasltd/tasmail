@@ -1,0 +1,11 @@
+# Added: TMAIL-56 — Fastlane Appfile for the Android side of TASMail Mobile.
+#
+# `json_key_file` points at the Google Play service-account credentials JSON
+# (downloaded from Play Console → API access). It is gitignored — the operator
+# drops it next to this file. See docs/MOBILE-DISTRIBUTION-RUNBOOK.md §4.
+#
+# `package_name` MUST match `applicationId` in android/app/build.gradle.kts.
+# Changing it requires a new Play Console listing — treat as immutable.
+
+json_key_file("play-store-credentials.json")
+package_name("io.techatscale.tasmail_mobile")

@@ -1,0 +1,131 @@
+# Added: TMAIL-56 — Fastlane lanes for TASMail Mobile Android distribution.
+#
+# Lanes:
+#   bundle exec fastlane android internal    # Internal testing track (Play)
+#   bundle exec fastlane android beta        # Closed/open beta track (Play)
+#   bundle exec fastlane android production  # Production track (Play, 10% rollout)
+#   bundle exec fastlane android appgallery  # Huawei AppGallery upload
+#
+# All lanes assume:
+#   - mobile/android/key.properties exists and points at the production keystore
+#   - mobile/android/fastlane/play-store-credentials.json exists (Play OAuth)
+#   - For appgallery lane: HUAWEI_CLIENT_ID + HUAWEI_CLIENT_SECRET + HUAWEI_APP_ID env vars
+#
+# See docs/MOBILE-DISTRIBUTION-RUNBOOK.md for the full setup ceremony.
+
+default_platform(:android)
+
+# Resolve repo root — fastlane sits at mobile/android/fastlane/Fastfile so we
+# need to climb three levels.
+REPO_ROOT  = File.expand_path("../../..", __dir__)
+MOBILE_DIR = File.join(REPO_ROOT, "mobile")
+BUILD_DIR  = File.join(MOBILE_DIR, "build", "app", "outputs")
+
+platform :android do
+
+  desc "Build a release AAB (signed) via the Flutter toolchain"
+  private_lane :build_release_aab do |options|
+    build_number = options[:build_number] || ENV["BUILD_NUMBER"] || Time.now.to_i.to_s
+    build_name   = options[:build_name]   || ENV["BUILD_NAME"]   || "1.0.0"
+
+    UI.message("📦 Building release AAB — version #{build_name}+#{build_number}")
+
+    Dir.chdir(MOBILE_DIR) do
+      sh("flutter clean")
+      sh("flutter pub get")
+      sh("flutter build appbundle --release " \
+         "--build-name=#{build_name} " \
+         "--build-number=#{build_number}")
+    end
+
+    aab = File.join(BUILD_DIR, "bundle", "release", "app-release.aab")
+    UI.user_error!("AAB not found at #{aab}") unless File.exist?(aab)
+    aab
+  end
+
+  desc "Build a release universal APK (for sideloading + Huawei AppGallery)"
+  private_lane :build_release_apk do |options|
+    build_number = options[:build_number] || ENV["BUILD_NUMBER"] || Time.now.to_i.to_s
+    build_name   = options[:build_name]   || ENV["BUILD_NAME"]   || "1.0.0"
+
+    UI.message("📦 Building release APK — version #{build_name}+#{build_number}")
+
+    Dir.chdir(MOBILE_DIR) do
+      sh("flutter clean")
+      sh("flutter pub get")
+      sh("flutter build apk --release " \
+         "--build-name=#{build_name} " \
+         "--build-number=#{build_number}")
+    end
+
+    apk = File.join(BUILD_DIR, "flutter-apk", "app-release.apk")
+    UI.user_error!("APK not found at #{apk}") unless File.exist?(apk)
+    apk
+  end
+
+  desc "Push the current build to Play Console Internal Testing track"
+  lane :internal do |options|
+    aab = build_release_aab(options)
+    upload_to_play_store(
+      track: "internal",
+      aab: aab,
+      skip_upload_apk: true,
+      skip_upload_metadata: true,
+      skip_upload_changelogs: false,
+      skip_upload_images: true,
+      skip_upload_screenshots: true,
+      release_status: "draft",
+    )
+  end
+
+  desc "Push the current build to Play Console Closed Beta (TMAIL-47 beta cohort)"
+  lane :beta do |options|
+    aab = build_release_aab(options)
+    upload_to_play_store(
+      track: "beta",
+      aab: aab,
+      skip_upload_apk: true,
+      skip_upload_metadata: false,
+      skip_upload_changelogs: false,
+      skip_upload_images: false,
+      skip_upload_screenshots: false,
+      release_status: "completed",
+    )
+  end
+
+  desc "Push the current build to Production with a 10% rollout"
+  lane :production do |options|
+    aab = build_release_aab(options)
+    upload_to_play_store(
+      track: "production",
+      aab: aab,
+      skip_upload_apk: true,
+      skip_upload_metadata: false,
+      skip_upload_changelogs: false,
+      skip_upload_images: false,
+      skip_upload_screenshots: false,
+      release_status: "inProgress",
+      rollout: "0.1",
+    )
+  end
+
+  desc "Upload the current build to Huawei AppGallery Connect"
+  lane :appgallery do |options|
+    apk = build_release_apk(options)
+
+    huawei_appgallery_connect(
+      client_id:      ENV["HUAWEI_CLIENT_ID"],
+      client_secret:  ENV["HUAWEI_CLIENT_SECRET"],
+      app_id:         ENV["HUAWEI_APP_ID"],
+      apk_path:       apk,
+      submit_for_review: false,
+    )
+
+    UI.success("✅ APK uploaded to AppGallery Connect — review must be submitted manually")
+    UI.message("   Console: https://developer.huawei.com/consumer/en/service/josp/agc/index.html")
+  end
+
+  error do |lane, exception, options|
+    UI.error("❌ Lane #{lane} failed: #{exception.message}")
+  end
+end

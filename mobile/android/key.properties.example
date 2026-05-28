@@ -1,0 +1,22 @@
+# TMAIL-56 — Android production signing credentials.
+#
+# Copy this file to `mobile/android/key.properties` and fill in the values
+# from the production keystore. The real key.properties is gitignored and
+# MUST be stored in 1Password (vault: "TASMail Mobile") so a fresh checkout
+# on a new machine can recreate it without re-issuing the upload key
+# (which would invalidate the Play Store listing).
+#
+# To generate the keystore the first time, run:
+#
+#   keytool -genkey -v \
+#     -keystore ~/keys/tasmail-upload.jks \
+#     -keyalg RSA -keysize 2048 -validity 10000 \
+#     -alias tasmail-upload
+#
+# Then store the resulting .jks file in 1Password as a file attachment.
+# See docs/MOBILE-DISTRIBUTION-RUNBOOK.md for the full ceremony.
+
+storeFile=/absolute/path/to/tasmail-upload.jks
+storePassword=CHANGE_ME
+keyAlias=tasmail-upload
+keyPassword=CHANGE_ME

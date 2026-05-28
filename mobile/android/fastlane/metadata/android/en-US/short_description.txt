@@ -1,0 +1,1 @@
+Fast, secure webmail-style app for Gmail, Outlook, Zoho and any IMAP server.

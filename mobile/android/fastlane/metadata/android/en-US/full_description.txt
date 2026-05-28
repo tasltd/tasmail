@@ -1,0 +1,20 @@
+TASMail is a Bring-Your-Own-Key (BYOK) email client built for Ghana and the rest of West Africa. Connect your existing Gmail, Outlook, Yahoo, Zoho, FastMail, iCloud, or any IMAP mailbox — TASMail never stores your messages on our servers, it just gives you a fast, beautiful interface to read and send them.
+
+WHY TASMAIL
+• Works with the email account you already have — no migration needed
+• End-to-end transport security: IMAPS + SMTPS, AES-256 credential storage
+• Offline inbox that syncs when you're back online — built for low-bandwidth networks
+• Biometric unlock (fingerprint / face)
+• Snooze, scheduled send, templates, signatures, contacts, calendar invitations
+• Native sharing — accept "Share via email" from any other app
+• Local notifications (no Firebase tracking required)
+• Localized for Twi, Ewe, Ga, Hausa, and English
+
+PRIVACY FIRST
+We do not read, scan, or sell your email. Your IMAP credentials are encrypted on-device with the OS keystore and on the server with AES-256-GCM. We do not run ad tracking, we do not require Google Play Services for core functionality, and Huawei devices without Google services are fully supported.
+
+PRICING
+TASMail is free to use with your own IMAP server. Premium hosted plans start at GHS 5/month — see https://mail.techatscale.io/pricing for details.
+
+SUPPORT
+Issues? Email support@techatscale.io or open a ticket at https://mail.techatscale.io/support.

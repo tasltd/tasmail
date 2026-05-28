@@ -1,0 +1,16 @@
+# Added: TMAIL-56 — Fastlane plugins for TASMail Mobile Android distribution.
+#
+# Run `bundle exec fastlane install_plugins` after editing this file (or
+# `fastlane install_plugins` if you don't use bundler). See:
+# https://docs.fastlane.tools/plugins/using-plugins/
+
+# Huawei AppGallery upload lane — critical for the Ghana market where many
+# Honor/Huawei devices ship without Google Play services.
+# https://github.com/karumi/fastlane-plugin-huawei_appgallery_connect
+gem 'fastlane-plugin-huawei_appgallery_connect'
+
+# Generate fastlane changelogs from git commits on the release branch.
+gem 'fastlane-plugin-changelog'
+
+# Pretty-print build summaries in CI logs.
+gem 'fastlane-plugin-versioning_android'
