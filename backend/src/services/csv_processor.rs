@@ -415,6 +415,9 @@ mod tests {
             totp_secret: Some("SECRETOTP123".to_string()),
             totp_enabled: true,
             totp_verified_at: None,
+            failed_login_attempts: 0,
+            last_failed_login_at: None,
+            locked_until: None,
         }
     }
 

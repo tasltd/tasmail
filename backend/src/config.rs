@@ -28,6 +28,50 @@ pub struct Config {
     // Added: Redis cache configuration for session/branding/rate-limit caching
     #[serde(default)]
     pub redis: RedisConfig,
+    // Added (TMAIL-273): Per-account brute-force lockout configuration. All
+    // fields default so a deployment that doesn't set the env vars still
+    // gets sane production behaviour (5 attempts / 15 min / 15 min lockout).
+    #[serde(default)]
+    pub lockout: LockoutConfig,
+}
+
+/// Added (TMAIL-273): Per-account brute-force lockout policy.
+///
+/// PURPOSE: Limits how many failed login attempts a single account can
+/// accumulate before the auth service refuses to check passwords against
+/// it for a cooldown period. Layered on top of the per-IP rate limit so
+/// distributed attackers rotating IPs can't grind a single account.
+///
+/// All values are configurable via env vars / config.toml so operators
+/// can tighten or relax the policy without a rebuild.
+#[derive(Debug, Deserialize, Clone)]
+pub struct LockoutConfig {
+    /// Failed attempts within `window_secs` that triggers a lockout.
+    /// Default: 5
+    #[serde(default = "default_lockout_threshold")]
+    pub threshold: i32,
+    /// Rolling window for counting failed attempts. An attempt older
+    /// than this resets the counter back to 1. Default: 900 (15 min).
+    #[serde(default = "default_lockout_window_secs")]
+    pub window_secs: i64,
+    /// How long an account stays locked once the threshold is hit.
+    /// Default: 900 (15 min).
+    #[serde(default = "default_lockout_duration_secs")]
+    pub duration_secs: i64,
+}
+
+fn default_lockout_threshold() -> i32 { 5 }
+fn default_lockout_window_secs() -> i64 { 900 }
+fn default_lockout_duration_secs() -> i64 { 900 }
+
+impl Default for LockoutConfig {
+    fn default() -> Self {
+        Self {
+            threshold: default_lockout_threshold(),
+            window_secs: default_lockout_window_secs(),
+            duration_secs: default_lockout_duration_secs(),
+        }
+    }
 }
 
 /// Added: Redis cache configuration
@@ -319,6 +363,19 @@ impl Config {
                     || cfg.cybersource_merchant_id.is_some()
                     || cfg.bank_account_number.is_some();
                 if has_any { Some(cfg) } else { None }
+            },
+            // Added (TMAIL-273): Lockout policy from env vars. Falls back to
+            // the defaults (5 / 15 min / 15 min) when unset.
+            lockout: LockoutConfig {
+                threshold: std::env::var("LOCKOUT_THRESHOLD")
+                    .ok().and_then(|p| p.parse().ok())
+                    .unwrap_or_else(default_lockout_threshold),
+                window_secs: std::env::var("LOCKOUT_WINDOW_SECS")
+                    .ok().and_then(|p| p.parse().ok())
+                    .unwrap_or_else(default_lockout_window_secs),
+                duration_secs: std::env::var("LOCKOUT_DURATION_SECS")
+                    .ok().and_then(|p| p.parse().ok())
+                    .unwrap_or_else(default_lockout_duration_secs),
             },
             // Added: Redis config from env vars
             redis: RedisConfig {

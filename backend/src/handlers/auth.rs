@@ -31,9 +31,13 @@ pub async fn login(
     // Added: Validate input lengths to prevent abuse (TMAIL-37)
     validation::validate_username(&body.username)?;
 
+    // Added (TMAIL-273): Thread the lockout policy through so authenticate()
+    // can enforce per-account brute-force limits in addition to the per-IP
+    // rate limiter that runs upstream of this handler.
     let tokens = auth_service::authenticate(
         &state.db,
         &state.config.jwt,
+        &state.config.lockout,
         &body.username,
         &body.password,
         None,

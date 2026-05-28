@@ -32,11 +32,15 @@ fn bench_mailbox() -> Mailbox {
         quota_warn_percent: 80,
         active: true,
         is_admin: false,
+        is_compliance_officer: false,
         created_at: Utc::now(),
         updated_at: Utc::now(),
         totp_secret: None,
         totp_enabled: false,
         totp_verified_at: None,
+        failed_login_attempts: 0,
+        last_failed_login_at: None,
+        locked_until: None,
     }
 }
 

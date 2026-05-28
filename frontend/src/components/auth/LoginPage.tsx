@@ -3,6 +3,13 @@ import { useState, useEffect } from 'react';
 import { TasmailLogo } from '../shared/TasmailLogo';
 import { listLoginProviders, getAuthorizeUrl } from '../../api/oidc';
 import type { OidcLoginProvider } from '../../api/oidc';
+import { ApiError } from '../../api/client';
+
+// Added (TMAIL-273): User-facing message rendered when the backend returns
+// HTTP 423 Locked from /api/auth/login. Intentionally generic — does NOT
+// expose remaining attempts or a countdown so attackers can't fingerprint
+// how close they were to the threshold.
+const LOCKED_MESSAGE = 'Account temporarily locked. Try again later.';
 
 interface LoginPageProps {
   onLogin: (username: string, password: string) => Promise<void>;
@@ -54,7 +61,14 @@ export function LoginPage({ onLogin }: LoginPageProps) {
     try {
       await onLogin(username, password);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Login failed');
+      // Added (TMAIL-273): Map HTTP 423 Locked from the backend to a fixed,
+      // non-enumerating message. Any other ApiError or Error renders with its
+      // own message (existing behaviour).
+      if (err instanceof ApiError && err.status === 423) {
+        setError(LOCKED_MESSAGE);
+      } else {
+        setError(err instanceof Error ? err.message : 'Login failed');
+      }
     } finally {
       setLoading(false);
     }

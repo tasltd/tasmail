@@ -23,6 +23,15 @@ pub struct Mailbox {
     pub totp_secret: Option<String>,
     pub totp_enabled: bool,
     pub totp_verified_at: Option<DateTime<Utc>>,
+    // Added (TMAIL-273): Per-account brute-force lockout. Defaults make
+    // existing callers keep compiling; sqlx FromRow picks the columns up
+    // from migration 073.
+    #[serde(default)]
+    pub failed_login_attempts: i32,
+    #[serde(default)]
+    pub last_failed_login_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub locked_until: Option<DateTime<Utc>>,
 }
 
 /// Safe representation without password hash
@@ -168,6 +177,9 @@ mod tests {
             totp_secret: Some("JBSWY3DPEHPK3PXP".to_string()),
             totp_enabled: true,
             totp_verified_at: Some(Utc::now()),
+            failed_login_attempts: 0,
+            last_failed_login_at: None,
+            locked_until: None,
         }
     }
 

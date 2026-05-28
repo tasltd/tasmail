@@ -8,10 +8,16 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::config::JwtConfig;
+use crate::config::{JwtConfig, LockoutConfig};
 use crate::error::AppError;
+use crate::models::audit_log::AuditLog;
 use crate::models::mailbox::Mailbox;
 use crate::models::session::Session;
+
+/// Added (TMAIL-273): Generic, non-enumerating message returned on every 423.
+/// Same text whether the lockout is fresh or already in effect, so attackers
+/// can't fingerprint how close they are to the threshold.
+const LOCKOUT_MESSAGE: &str = "Account temporarily locked. Try again later.";
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Claims {
@@ -126,10 +132,86 @@ pub fn hash_refresh_token(token: &str) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+/// Added (TMAIL-273): Per-account lockout state going into the next
+/// authentication decision. Encapsulates the three persistent columns added
+/// by migration 073 so the pure decision helper can be unit-tested without a
+/// database.
+#[derive(Debug, Clone, Copy)]
+pub struct LockoutState {
+    pub failed_attempts: i32,
+    pub last_failed_at: Option<chrono::DateTime<Utc>>,
+    pub locked_until: Option<chrono::DateTime<Utc>>,
+}
+
+impl From<&Mailbox> for LockoutState {
+    fn from(m: &Mailbox) -> Self {
+        Self {
+            failed_attempts: m.failed_login_attempts,
+            last_failed_at: m.last_failed_login_at,
+            locked_until: m.locked_until,
+        }
+    }
+}
+
+/// Added (TMAIL-273): Outcome of one authentication attempt against the
+/// lockout state machine. Drives both the SQL update and the audit_log
+/// transition record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LockoutOutcome {
+    /// Caller arrived while still inside an active lockout window —
+    /// reject without checking the password.
+    AlreadyLocked,
+    /// This failed attempt pushed the rolling counter to the threshold —
+    /// lockout starts now.
+    JustLocked,
+    /// Failed attempt, counter incremented, threshold not yet reached.
+    FailedNotLocked,
+    /// Password verified successfully; counter and lockout cleared.
+    Success,
+}
+
+/// Added (TMAIL-273): Pure helper computing the next failure-counter +
+/// locked_until pair given the current state. Pure → unit-testable.
+///
+/// Behaviour:
+/// * If the last failure is older than `window_secs`, the counter restarts at 1
+///   (the rolling window has expired).
+/// * Otherwise increment.
+/// * If the resulting counter is >= `threshold`, set `locked_until = now + duration`.
+pub fn next_failed_state(
+    prev: &LockoutState,
+    cfg: &LockoutConfig,
+    now: chrono::DateTime<Utc>,
+) -> (i32, chrono::DateTime<Utc>, Option<chrono::DateTime<Utc>>, LockoutOutcome) {
+    let within_window = prev
+        .last_failed_at
+        .map(|t| (now - t).num_seconds() < cfg.window_secs)
+        .unwrap_or(false);
+    let counter = if within_window { prev.failed_attempts + 1 } else { 1 };
+    if counter >= cfg.threshold {
+        let until = now + Duration::seconds(cfg.duration_secs);
+        (counter, now, Some(until), LockoutOutcome::JustLocked)
+    } else {
+        (counter, now, None, LockoutOutcome::FailedNotLocked)
+    }
+}
+
+/// Added (TMAIL-273): Pure helper that decides whether the caller is still
+/// locked out before we even check the password. Returns true when
+/// `locked_until` is set and still in the future.
+pub fn is_currently_locked(state: &LockoutState, now: chrono::DateTime<Utc>) -> bool {
+    state.locked_until.map(|t| t > now).unwrap_or(false)
+}
+
 /// Authenticate user: verify credentials, create tokens, store session
+///
+/// Added (TMAIL-273): Enforces per-account brute-force lockout in addition
+/// to the existing per-IP rate limit. Threshold/window/duration come from
+/// `LockoutConfig` so operators can tune the policy.
 pub async fn authenticate(
     pool: &sqlx::PgPool,
     config: &JwtConfig,
+    lockout_cfg: &LockoutConfig,
     username: &str,
     password: &str,
     ip_address: Option<&str>,
@@ -139,8 +221,92 @@ pub async fn authenticate(
         .await?
         .ok_or_else(|| AppError::Unauthorized("Invalid credentials".to_string()))?;
 
+    let now = Utc::now();
+    let state = LockoutState::from(&mailbox);
+
+    // 1) If the account is still in an active lockout window, reject
+    //    immediately — without touching the password hash. This is the
+    //    "successful login during lockout still returns 423" branch of the
+    //    acceptance criteria.
+    if is_currently_locked(&state, now) {
+        // NOTE: Audit a separate "already locked" hit so investigators can
+        // see continued attempts against a locked account.
+        let _ = AuditLog::record(
+            pool,
+            Some(mailbox.id),
+            "auth.locked_attempt",
+            Some("mailbox"),
+            Some(&mailbox.id.to_string()),
+            Some(serde_json::json!({
+                "locked_until": state.locked_until,
+            })),
+            ip_address,
+            user_agent,
+        )
+        .await;
+        return Err(AppError::AccountLocked(LOCKOUT_MESSAGE.to_string()));
+    }
+
+    // 2) If the previous lockout window has passed but the columns are still
+    //    populated, log the expiry transition once before resetting state.
+    let lockout_just_expired =
+        state.locked_until.map(|t| t <= now).unwrap_or(false);
+
+    // 3) Verify the password.
     if !verify_password(password, &mailbox.password_hash)? {
+        let (new_count, last_failed, new_lock, outcome) =
+            next_failed_state(&state, lockout_cfg, now);
+        // Best-effort persist — don't fail the whole login flow if the
+        // UPDATE blows up (the user still gets a 401/423).
+        let _ = persist_failed_state(pool, mailbox.id, new_count, last_failed, new_lock).await;
+
+        if outcome == LockoutOutcome::JustLocked {
+            let _ = AuditLog::record(
+                pool,
+                Some(mailbox.id),
+                "auth.locked",
+                Some("mailbox"),
+                Some(&mailbox.id.to_string()),
+                Some(serde_json::json!({
+                    "failed_login_attempts": new_count,
+                    "locked_until": new_lock,
+                    "threshold": lockout_cfg.threshold,
+                    "duration_secs": lockout_cfg.duration_secs,
+                })),
+                ip_address,
+                user_agent,
+            )
+            .await;
+            return Err(AppError::AccountLocked(LOCKOUT_MESSAGE.to_string()));
+        }
         return Err(AppError::Unauthorized("Invalid credentials".to_string()));
+    }
+
+    // 4) Password matched — clear lockout columns. Log the expiry-on-success
+    //    transition if the previous lockout had simply timed out before this
+    //    successful login.
+    let had_lockout = state.locked_until.is_some() || state.failed_attempts > 0;
+    let _ = persist_success_reset(pool, mailbox.id).await;
+    if had_lockout {
+        let action = if lockout_just_expired {
+            "auth.lockout_expired"
+        } else {
+            "auth.lockout_cleared"
+        };
+        let _ = AuditLog::record(
+            pool,
+            Some(mailbox.id),
+            action,
+            Some("mailbox"),
+            Some(&mailbox.id.to_string()),
+            Some(serde_json::json!({
+                "prior_failed_attempts": state.failed_attempts,
+                "prior_locked_until": state.locked_until,
+            })),
+            ip_address,
+            user_agent,
+        )
+        .await;
     }
 
     let access_token = create_access_token(config, &mailbox)?;
@@ -161,6 +327,51 @@ pub async fn authenticate(
         refresh_token,
         expires_in: config.access_token_expiry_secs,
     })
+}
+
+/// Added (TMAIL-273): Persist failed-attempt counter + lockout timestamp.
+/// Best-effort — the login response shape doesn't change if this UPDATE fails.
+async fn persist_failed_state(
+    pool: &sqlx::PgPool,
+    mailbox_id: uuid::Uuid,
+    failed_attempts: i32,
+    last_failed_at: chrono::DateTime<Utc>,
+    locked_until: Option<chrono::DateTime<Utc>>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE mailboxes
+            SET failed_login_attempts = $2,
+                last_failed_login_at = $3,
+                locked_until = $4,
+                updated_at = NOW()
+          WHERE id = $1",
+    )
+    .bind(mailbox_id)
+    .bind(failed_attempts)
+    .bind(last_failed_at)
+    .bind(locked_until)
+    .execute(pool)
+    .await
+    .map(|_| ())
+}
+
+/// Added (TMAIL-273): Reset lockout state after a successful login.
+async fn persist_success_reset(
+    pool: &sqlx::PgPool,
+    mailbox_id: uuid::Uuid,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE mailboxes
+            SET failed_login_attempts = 0,
+                last_failed_login_at = NULL,
+                locked_until = NULL,
+                updated_at = NOW()
+          WHERE id = $1",
+    )
+    .bind(mailbox_id)
+    .execute(pool)
+    .await
+    .map(|_| ())
 }
 
 /// Fix: TMAIL-157 — connection-pinned session insert. RLS policy on the
@@ -291,6 +502,9 @@ mod tests {
             totp_secret: None,
             totp_enabled: false,
             totp_verified_at: None,
+            failed_login_attempts: 0,
+            last_failed_login_at: None,
+            locked_until: None,
         }
     }
 
@@ -447,5 +661,150 @@ mod tests {
         // Expiry should be ~900 seconds after issued-at
         let diff = claims.exp - claims.iat;
         assert!(diff >= 899 && diff <= 901);
+    }
+
+    // ---------------------------------------------------------------------
+    // Added (TMAIL-273): Per-account brute-force lockout state machine.
+    //
+    // The helpers are intentionally pure (no DB) so we can exercise every
+    // transition required by the acceptance criteria without standing up a
+    // test database. Each test maps to one bullet on the AC:
+    //
+    //   - threshold_increment_on_fail   → "increment failed_login_attempts"
+    //   - window_expiry_resets_counter  → "older than window resets counter"
+    //   - lockout_returns_locked        → "5 in 15min ⇒ locked, return 423"
+    //   - currently_locked_blocks       → "locked_until > now ⇒ block"
+    //   - lockout_expiry_allows_retry   → "lockout expiry allows retry"
+    // ---------------------------------------------------------------------
+
+    fn test_lockout_cfg() -> LockoutConfig {
+        LockoutConfig {
+            threshold: 5,
+            window_secs: 900,
+            duration_secs: 900,
+        }
+    }
+
+    fn state(attempts: i32, last: Option<chrono::DateTime<Utc>>, lock: Option<chrono::DateTime<Utc>>) -> LockoutState {
+        LockoutState {
+            failed_attempts: attempts,
+            last_failed_at: last,
+            locked_until: lock,
+        }
+    }
+
+    #[test]
+    fn lockout_threshold_increment_on_fail() {
+        // Counter increments by 1 each failure within the window and stays
+        // below threshold until attempt #5.
+        let cfg = test_lockout_cfg();
+        let now = Utc::now();
+        let mut s = state(0, None, None);
+
+        for expected in 1..5 {
+            let (count, _last, lock, outcome) = next_failed_state(&s, &cfg, now);
+            assert_eq!(count, expected, "attempt {expected}");
+            assert!(lock.is_none(), "no lockout before threshold (attempt {expected})");
+            assert_eq!(outcome, LockoutOutcome::FailedNotLocked);
+            s = state(count, Some(now), None);
+        }
+    }
+
+    #[test]
+    fn lockout_window_expiry_resets_counter() {
+        // 4 prior failures, but the last one was outside the 15-min window —
+        // the next failure resets the counter to 1, not 5.
+        let cfg = test_lockout_cfg();
+        let now = Utc::now();
+        let last_failed = now - Duration::seconds(cfg.window_secs + 1);
+        let prev = state(4, Some(last_failed), None);
+
+        let (count, last, lock, outcome) = next_failed_state(&prev, &cfg, now);
+        assert_eq!(count, 1, "rolling window expired → counter restarts at 1");
+        assert_eq!(last, now);
+        assert!(lock.is_none());
+        assert_eq!(outcome, LockoutOutcome::FailedNotLocked);
+    }
+
+    #[test]
+    fn lockout_triggers_at_threshold() {
+        // 5th failure within the window pushes counter to threshold → locked.
+        let cfg = test_lockout_cfg();
+        let now = Utc::now();
+        let prev = state(4, Some(now - Duration::seconds(60)), None);
+
+        let (count, _last, lock, outcome) = next_failed_state(&prev, &cfg, now);
+        assert_eq!(count, 5);
+        let lock = lock.expect("threshold should set locked_until");
+        assert_eq!(
+            (lock - now).num_seconds(),
+            cfg.duration_secs,
+            "locked_until = now + duration_secs"
+        );
+        assert_eq!(outcome, LockoutOutcome::JustLocked);
+    }
+
+    #[test]
+    fn lockout_blocks_while_active() {
+        // is_currently_locked() returns true while locked_until is in the future.
+        let now = Utc::now();
+        let s = state(5, Some(now), Some(now + Duration::seconds(60)));
+        assert!(is_currently_locked(&s, now));
+    }
+
+    #[test]
+    fn lockout_expiry_allows_retry() {
+        // Once locked_until is in the past, is_currently_locked() returns
+        // false → the auth flow falls through to the password check on the
+        // next attempt.
+        let now = Utc::now();
+        let s = state(5, Some(now - Duration::seconds(1000)), Some(now - Duration::seconds(1)));
+        assert!(!is_currently_locked(&s, now));
+    }
+
+    #[test]
+    fn lockout_no_state_is_not_locked() {
+        // Fresh account with no lockout history.
+        let now = Utc::now();
+        let s = state(0, None, None);
+        assert!(!is_currently_locked(&s, now));
+    }
+
+    #[test]
+    fn lockout_threshold_one_locks_first_attempt() {
+        // Defensive: with threshold=1 the very first failure locks the
+        // account. Verifies the inequality is `>=` not `>`.
+        let cfg = LockoutConfig { threshold: 1, window_secs: 900, duration_secs: 900 };
+        let now = Utc::now();
+        let prev = state(0, None, None);
+
+        let (count, _last, lock, outcome) = next_failed_state(&prev, &cfg, now);
+        assert_eq!(count, 1);
+        assert!(lock.is_some());
+        assert_eq!(outcome, LockoutOutcome::JustLocked);
+    }
+
+    #[test]
+    fn lockout_state_from_mailbox_copies_columns() {
+        // From<&Mailbox> mirrors the three migration-073 columns into the
+        // pure helper struct.
+        let mut mb = test_mailbox();
+        let now = Utc::now();
+        mb.failed_login_attempts = 3;
+        mb.last_failed_login_at = Some(now);
+        mb.locked_until = Some(now + Duration::seconds(60));
+
+        let s = LockoutState::from(&mb);
+        assert_eq!(s.failed_attempts, 3);
+        assert_eq!(s.last_failed_at, Some(now));
+        assert_eq!(s.locked_until, Some(now + Duration::seconds(60)));
+    }
+
+    #[test]
+    fn lockout_config_defaults_are_safe() {
+        let cfg = LockoutConfig::default();
+        assert_eq!(cfg.threshold, 5);
+        assert_eq!(cfg.window_secs, 900);
+        assert_eq!(cfg.duration_secs, 900);
     }
 }

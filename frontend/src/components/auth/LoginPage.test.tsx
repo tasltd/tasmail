@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { LoginPage } from './LoginPage';
+// Added (TMAIL-273): Needed to construct a 423 ApiError for the lockout test.
+import { ApiError } from '../../api/client';
 
 describe('LoginPage', () => {
   const mockOnLogin = vi.fn();
@@ -102,5 +104,44 @@ describe('LoginPage', () => {
 
     expect(screen.getByLabelText('Email')).toHaveAttribute('autocomplete', 'username');
     expect(screen.getByLabelText('Password')).toHaveAttribute('autocomplete', 'current-password');
+  });
+
+  // Added (TMAIL-273): When the backend returns HTTP 423 from /api/auth/login
+  // the page must render the generic "Account temporarily locked..." message
+  // regardless of what JSON the backend put in the body. No countdown, no
+  // remaining-attempts hint — the whole point is non-enumeration.
+  it('shows generic lockout message on HTTP 423 ApiError', async () => {
+    mockOnLogin.mockRejectedValue(
+      new ApiError(423, JSON.stringify({ error: 'whatever-the-backend-said' })),
+    );
+    render(<LoginPage onLogin={mockOnLogin} />);
+
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'locked@test.com' } });
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'wrong' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Sign In' }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText('Account temporarily locked. Try again later.'),
+      ).toBeInTheDocument();
+    });
+    // The backend body text must NOT leak into the UI.
+    expect(screen.queryByText(/whatever-the-backend-said/)).not.toBeInTheDocument();
+  });
+
+  // Added (TMAIL-273): Non-423 ApiErrors keep the existing error.message
+  // pass-through path so 401 "Invalid credentials" still surfaces normally.
+  it('passes through non-423 ApiError messages', async () => {
+    mockOnLogin.mockRejectedValue(new ApiError(401, 'Invalid credentials body'));
+    render(<LoginPage onLogin={mockOnLogin} />);
+
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'user@test.com' } });
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'nope' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Sign In' }));
+
+    await waitFor(() => {
+      // ApiError.message is "API Error 401: Invalid credentials body"
+      expect(screen.getByText(/API Error 401/)).toBeInTheDocument();
+    });
   });
 });

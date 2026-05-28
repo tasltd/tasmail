@@ -13,7 +13,8 @@ use tower::ServiceExt;
 use uuid::Uuid;
 
 use tasmail::config::{
-    Config, DatabaseConfig, ImapConfig, JwtConfig, RedisConfig, ServerConfig, SmtpConfig, StorageConfig,
+    Config, DatabaseConfig, ImapConfig, JwtConfig, LockoutConfig, RedisConfig, ServerConfig,
+    SmtpConfig, StorageConfig,
 };
 use tasmail::router::create_router;
 use tasmail::services::auth_service::Claims;
@@ -161,6 +162,8 @@ pub fn test_config() -> Config {
         push: None,
         // Added: Redis config defaults for test
         redis: RedisConfig::default(),
+        // Added (TMAIL-273): Lockout policy defaults for tests
+        lockout: LockoutConfig::default(),
     }
 }
 

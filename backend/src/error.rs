@@ -39,6 +39,12 @@ pub enum AppError {
     // Maps to HTTP 429 so SPAs can surface a retry-friendly message.
     #[error("Too many requests: {0}")]
     TooManyRequests(String),
+
+    // Added (TMAIL-273): Per-account brute-force lockout was triggered or is
+    // still in effect. Maps to HTTP 423 Locked. The body intentionally stays
+    // generic — no remaining attempts, no countdown, no enumeration.
+    #[error("Account locked: {0}")]
+    AccountLocked(String),
 }
 
 impl IntoResponse for AppError {
@@ -79,6 +85,13 @@ impl IntoResponse for AppError {
             AppError::TooManyRequests(msg) => {
                 tracing::warn!("Rate limit exceeded: {}", msg);
                 (StatusCode::TOO_MANY_REQUESTS, msg.clone())
+            }
+            // Added (TMAIL-273): Per-account brute-force lockout. Returns 423
+            // with a generic message — no remaining attempts or countdown so
+            // attackers can't fingerprint how close they were to the threshold.
+            AppError::AccountLocked(msg) => {
+                tracing::warn!("Account lockout enforced: {}", msg);
+                (StatusCode::LOCKED, msg.clone())
             }
         };
 
@@ -122,6 +135,11 @@ mod tests {
             (
                 AppError::ServiceUnavailable("".to_string()),
                 StatusCode::SERVICE_UNAVAILABLE,
+            ),
+            // Added (TMAIL-273): AccountLocked → 423 Locked
+            (
+                AppError::AccountLocked("".to_string()),
+                StatusCode::LOCKED,
             ),
         ];
 
