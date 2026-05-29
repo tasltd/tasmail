@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 description = "TASMail - Self-hosted email service backend"
 license = "MIT"
+# Default `cargo run` to the webmail server binary; `dlp_milter` is opt-in via --bin
+default-run = "tasmail"
 
 [dependencies]
 # Web framework
