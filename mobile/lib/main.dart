@@ -119,6 +119,10 @@ class _TasMailAppState extends State<TasMailApp> {
                   return MaterialPageRoute(
                     builder: (_) => ComposeScreen(
                       replyTo: args?['replyTo'] as MobileMessageDetail?,
+                      // Added: TMAIL-145 — Reply-All entry point + the current
+                      //   user's email so the Cc list excludes self.
+                      replyAll: args?['replyAll'] as MobileMessageDetail?,
+                      currentUserEmail: args?['currentUserEmail'] as String?,
                       forward: args?['forward'] as MobileMessageDetail?,
                       // Added: TMAIL-55 — prefill from mailto: / share intent.
                       prefill: args?['prefill'] as ComposePrefill?,

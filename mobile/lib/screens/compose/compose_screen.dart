@@ -3,6 +3,10 @@
 //   * AttachmentPickerService → camera / gallery / file-picker menu
 //   * ContactPickerService    → system contact picker on To/Cc fields
 //   * ComposePrefill arg      → ingest mailto: + share-sheet payloads
+// Changed: TMAIL-145 — finished reply-all + contact autocomplete:
+//   * ContactSuggestionService → typing-time overlay against /api/contacts
+//   * replyAll arg            → prefill To=sender, Cc=original(to+cc)-self
+//   * currentUserEmail arg    → used to exclude self from reply-all Cc
 // PURPOSE: New email, reply, reply-all, forward with recipient fields, body
 //          editor, and native attachments.
 // EXTERNAL: Uses /api/messages/send endpoint via ApiClient.
@@ -11,29 +15,43 @@ import 'package:flutter/material.dart';
 import '../../api/api_client.dart';
 import '../../models/attachment_draft.dart';
 import '../../models/email.dart';
+import '../../services/contact_suggestion_service.dart';
 import '../../services/native/attachment_picker_service.dart';
 import '../../services/native/contact_picker_service.dart';
 import '../../services/native/deep_link_service.dart';
 import '../../services/native/share_intent_service.dart';
 import '../../widgets/attachment_chip.dart';
+import '../../widgets/email_recipient_field.dart';
 
 class ComposeScreen extends StatefulWidget {
   final MobileMessageDetail? replyTo;
+  // Added: TMAIL-145 — Reply-All flow: prefill To with the sender and Cc with
+  //   the original recipients (minus the current user).
+  final MobileMessageDetail? replyAll;
   final MobileMessageDetail? forward;
   // Added: TMAIL-55 — prefill from mailto: deep link or incoming share intent.
   final ComposePrefill? prefill;
+  // Added: TMAIL-145 — current user's email, used to filter self out of the
+  //   reply-all Cc list. Optional: when null, all original recipients are kept
+  //   and the user can trim manually.
+  final String? currentUserEmail;
   // Added: TMAIL-55 — DI seams for unit/widget tests.
   final AttachmentPickerService? attachmentPicker;
   final ContactPickerService? contactPicker;
+  // Added: TMAIL-145 — DI seam for contact-autocomplete suggestions.
+  final ContactSuggestionService? suggestionService;
   final ApiClient? api;
 
   const ComposeScreen({
     super.key,
     this.replyTo,
+    this.replyAll,
     this.forward,
     this.prefill,
+    this.currentUserEmail,
     this.attachmentPicker,
     this.contactPicker,
+    this.suggestionService,
     this.api,
   });
 
@@ -53,6 +71,8 @@ class _ComposeScreenState extends State<ComposeScreen> {
   late final ApiClient _api;
   late final AttachmentPickerService _attachmentPicker;
   late final ContactPickerService _contactPicker;
+  // Added: TMAIL-145 — autocomplete backend for To/Cc fields.
+  late final ContactSuggestionService _suggestionService;
 
   @override
   void initState() {
@@ -60,18 +80,38 @@ class _ComposeScreenState extends State<ComposeScreen> {
     _api = widget.api ?? ApiClient();
     _attachmentPicker = widget.attachmentPicker ?? AttachmentPickerServiceImpl();
     _contactPicker = widget.contactPicker ?? ContactPickerServiceImpl();
+    _suggestionService =
+        widget.suggestionService ?? ContactSuggestionServiceImpl(api: _api);
     _prefillForReplyOrForward();
     _applyPrefill(widget.prefill);
   }
 
-  // Added: Pre-fill fields for reply/forward
+  // Added: Pre-fill fields for reply/reply-all/forward.
   void _prefillForReplyOrForward() {
     if (widget.replyTo != null) {
       final msg = widget.replyTo!;
       _toController.text = msg.from ?? '';
-      _subjectController.text = msg.subject?.startsWith('Re:') == true
-          ? msg.subject!
-          : 'Re: ${msg.subject ?? ''}';
+      _subjectController.text = _withRePrefix(msg.subject);
+      _bodyController.text =
+          '\n\n--- Original Message ---\n${msg.bodyText ?? ''}';
+    } else if (widget.replyAll != null) {
+      // Added: TMAIL-145 — reply-all: To = original sender; Cc = original
+      //   to + cc with the current user filtered out (so the user does not
+      //   email themselves on reply).
+      final msg = widget.replyAll!;
+      _toController.text = msg.from ?? '';
+      final ccCandidates = <String>[...msg.to, ...msg.cc];
+      final cc = ccCandidates
+          .map((e) => e.trim())
+          .where((e) => e.isNotEmpty)
+          .where((e) => !_isSelf(e, widget.currentUserEmail))
+          .where((e) => !_isSelf(e, _extractEmail(msg.from)))
+          .toList();
+      if (cc.isNotEmpty) {
+        _ccController.text = cc.join(', ');
+        _showCc = true;
+      }
+      _subjectController.text = _withRePrefix(msg.subject);
       _bodyController.text =
           '\n\n--- Original Message ---\n${msg.bodyText ?? ''}';
     } else if (widget.forward != null) {
@@ -82,6 +122,30 @@ class _ComposeScreenState extends State<ComposeScreen> {
       _bodyController.text =
           '\n\n--- Forwarded Message ---\nFrom: ${msg.from ?? ''}\nTo: ${msg.to.join(', ')}\nSubject: ${msg.subject ?? ''}\n\n${msg.bodyText ?? ''}';
     }
+  }
+
+  // PURPOSE: Idempotently prepend "Re: " — handles null and an existing
+  //   prefix without doubling up.
+  String _withRePrefix(String? subject) {
+    final s = subject ?? '';
+    return s.startsWith('Re:') ? s : 'Re: $s';
+  }
+
+  // PURPOSE: Pull the email out of "Display Name <user@host>" or accept a
+  //   bare address. Case-insensitive comparison happens at the call site.
+  String? _extractEmail(String? addr) {
+    if (addr == null || addr.isEmpty) return null;
+    final m = RegExp(r'<([^>]+)>').firstMatch(addr);
+    return (m != null ? m.group(1)! : addr).trim();
+  }
+
+  // NOTE: Filters reply-all Cc against the current user AND the original
+  //   sender (the sender already goes to the To: line, no need to Cc them).
+  bool _isSelf(String addr, String? self) {
+    if (self == null || self.isEmpty) return false;
+    final lhs = _extractEmail(addr)?.toLowerCase();
+    final rhs = _extractEmail(self)?.toLowerCase();
+    return lhs != null && rhs != null && lhs == rhs;
   }
 
   // Added: TMAIL-55 — apply mailto: / share-sheet prefill on top of reply state.
@@ -153,8 +217,11 @@ class _ComposeScreenState extends State<ComposeScreen> {
                 .toList()
             : [],
         'subject': _subjectController.text,
-        'body_text': _bodyController.text,
-        'body_html': '<p>${_bodyController.text.replaceAll('\n', '<br>')}</p>',
+        // Fix: TMAIL-145 — backend SendRequest expects `text_body`/`html_body`
+        //   (services/smtp_service.rs:12), not the old `body_text`/`body_html`.
+        //   The wrong keys silently no-op'd so sent emails had empty bodies.
+        'text_body': _bodyController.text,
+        'html_body': '<p>${_bodyController.text.replaceAll('\n', '<br>')}</p>',
         // Added: TMAIL-55 — attachment metadata (file upload is handled by a
         //   second pass that POSTs each path to /api/attachments; for now we
         //   surface the count + names so the backend can warn about size).
@@ -291,9 +358,11 @@ class _ComposeScreenState extends State<ComposeScreen> {
       appBar: AppBar(
         title: Text(widget.replyTo != null
             ? 'Reply'
-            : widget.forward != null
-                ? 'Forward'
-                : 'Compose'),
+            : widget.replyAll != null
+                ? 'Reply All'
+                : widget.forward != null
+                    ? 'Forward'
+                    : 'Compose'),
         actions: [
           // Added: TMAIL-55 — attach button in app bar.
           IconButton(
@@ -320,48 +389,42 @@ class _ComposeScreenState extends State<ComposeScreen> {
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
-            // Added: To field with contact-picker affordance.
-            TextField(
-              key: const Key('to_field'),
+            // Added: TMAIL-145 — To field now wraps RawAutocomplete via
+            //   EmailRecipientField. The `to_field` Key remains on the inner
+            //   TextField, so existing widget tests keep working.
+            EmailRecipientField(
+              fieldKey: const Key('to_field'),
               controller: _toController,
-              decoration: InputDecoration(
-                labelText: 'To',
-                border: const OutlineInputBorder(),
-                // Added: TMAIL-55 — contact picker on To.
-                prefixIcon: IconButton(
-                  key: const Key('to_pick_contact'),
-                  icon: const Icon(Icons.contacts),
-                  tooltip: 'Pick contact',
-                  onPressed: () => _pickContact(_toController),
-                ),
-                suffixIcon: !_showCc
-                    ? IconButton(
-                        icon: const Text('Cc', style: TextStyle(fontSize: 12)),
-                        onPressed: () => setState(() => _showCc = true),
-                      )
-                    : null,
+              suggestionService: _suggestionService,
+              label: 'To',
+              prefixIcon: IconButton(
+                key: const Key('to_pick_contact'),
+                icon: const Icon(Icons.contacts),
+                tooltip: 'Pick contact',
+                onPressed: () => _pickContact(_toController),
               ),
-              keyboardType: TextInputType.emailAddress,
+              suffixIcon: !_showCc
+                  ? IconButton(
+                      icon: const Text('Cc', style: TextStyle(fontSize: 12)),
+                      onPressed: () => setState(() => _showCc = true),
+                    )
+                  : null,
             ),
             const SizedBox(height: 12),
 
-            // Added: CC field (toggleable) with contact-picker affordance.
+            // Added: CC field (toggleable) with contact picker + autocomplete.
             if (_showCc) ...[
-              TextField(
-                key: const Key('cc_field'),
+              EmailRecipientField(
+                fieldKey: const Key('cc_field'),
                 controller: _ccController,
-                decoration: InputDecoration(
-                  labelText: 'Cc',
-                  border: const OutlineInputBorder(),
-                  // Added: TMAIL-55 — contact picker on Cc.
-                  prefixIcon: IconButton(
-                    key: const Key('cc_pick_contact'),
-                    icon: const Icon(Icons.contacts),
-                    tooltip: 'Pick contact',
-                    onPressed: () => _pickContact(_ccController),
-                  ),
+                suggestionService: _suggestionService,
+                label: 'Cc',
+                prefixIcon: IconButton(
+                  key: const Key('cc_pick_contact'),
+                  icon: const Icon(Icons.contacts),
+                  tooltip: 'Pick contact',
+                  onPressed: () => _pickContact(_ccController),
                 ),
-                keyboardType: TextInputType.emailAddress,
               ),
               const SizedBox(height: 12),
             ],

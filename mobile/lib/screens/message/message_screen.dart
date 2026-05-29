@@ -5,6 +5,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_widget_from_html/flutter_widget_from_html.dart';
 import 'package:provider/provider.dart';
+import '../../providers/auth_provider.dart';
 import '../../providers/mail_provider.dart';
 
 class MessageScreen extends StatefulWidget {
@@ -41,6 +42,7 @@ class _MessageScreenState extends State<MessageScreen> {
         title: const Text('Message'),
         actions: [
           IconButton(
+            key: const Key('reply_button'),
             icon: const Icon(Icons.reply),
             onPressed: message != null
                 ? () => Navigator.pushNamed(context, '/compose', arguments: {
@@ -49,7 +51,24 @@ class _MessageScreenState extends State<MessageScreen> {
                 : null,
             tooltip: 'Reply',
           ),
+          // Added: TMAIL-145 — Reply All. Only meaningful when the original
+          //   message had additional recipients beyond the current user. We
+          //   surface it unconditionally to keep parity with the desktop UI;
+          //   ComposeScreen handles the self-exclusion gracefully.
           IconButton(
+            key: const Key('reply_all_button'),
+            icon: const Icon(Icons.reply_all),
+            onPressed: message != null
+                ? () => Navigator.pushNamed(context, '/compose', arguments: {
+                      'replyAll': message,
+                      'currentUserEmail':
+                          context.read<AuthProvider>().user?.email,
+                    })
+                : null,
+            tooltip: 'Reply All',
+          ),
+          IconButton(
+            key: const Key('forward_button'),
             icon: const Icon(Icons.forward),
             onPressed: message != null
                 ? () => Navigator.pushNamed(context, '/compose', arguments: {
