@@ -481,8 +481,16 @@ export function CalendarManager() {
           </p>
         )}
         {events?.map((event: CalendarEvent) => (
+          // Added (TMAIL-287): data-testid + className so E2E + visual regression
+          // can target a single row deterministically — `div:has-text(title)`
+          // matches all ancestors and clicks landed on the inner title <div>
+          // which has no onClick handler.
           <div
             key={event.id}
+            className="event-list__row"
+            data-testid="event-row"
+            data-event-id={event.id}
+            data-event-title={event.title}
             style={{
               display: 'flex',
               alignItems: 'center',
