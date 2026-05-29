@@ -1,14 +1,26 @@
-// Added: Email search screen for TMAIL-147
-// PURPOSE: Standard and NLP-powered email search with results display
-// EXTERNAL: Uses /api/search and /api/nlp-search endpoints
+// Changed: Rewritten for TMAIL-147 to fix endpoint/parsing bugs and add
+//          parsed-params display + search history.
+// PURPOSE: Standard IMAP search via /api/search and AI natural-language search
+//          via /api/search/nlp, with a banner showing what the AI parsed and a
+//          history sheet of prior NLP queries.
+// EXTERNAL: Delegates HTTP to SearchApi (search_api.dart), renders results via
+//          MessageTile, and uses ParsedParamsBanner + SearchHistorySheet for the
+//          two new pieces.
 
 import 'package:flutter/material.dart';
-import '../../api/api_client.dart';
+import '../../api/search_api.dart';
 import '../../models/email.dart';
+import '../../models/nlp_search.dart';
 import '../../widgets/message_tile.dart';
+import '../../widgets/parsed_params_banner.dart';
+import '../../widgets/search_history_sheet.dart';
 
 class SearchScreen extends StatefulWidget {
-  const SearchScreen({super.key});
+  // PURPOSE: Tests inject a fake SearchApi here; production gets the default
+  //          ApiClient-backed implementation.
+  final SearchApi? searchApi;
+
+  const SearchScreen({super.key, this.searchApi});
 
   @override
   State<SearchScreen> createState() => _SearchScreenState();
@@ -16,16 +28,40 @@ class SearchScreen extends StatefulWidget {
 
 class _SearchScreenState extends State<SearchScreen> {
   final _searchController = TextEditingController();
-  final ApiClient _api = ApiClient();
-  List<MobileMessageSummary> _results = [];
+  late final SearchApi _api;
+
+  List<MobileMessageSummary> _results = const [];
+  ParsedSearchParams? _lastParsedParams;
   bool _isSearching = false;
   bool _useNlp = false;
   String? _error;
 
   @override
+  void initState() {
+    super.initState();
+    _api = widget.searchApi ?? SearchApiClient();
+  }
+
+  @override
   void dispose() {
     _searchController.dispose();
     super.dispose();
+  }
+
+  // PURPOSE: Convert NlpSearchResultItem → MobileMessageSummary so the same
+  //          MessageTile can render both result kinds. NLP results lack
+  //          read/flag/attachment info, so we default them.
+  MobileMessageSummary _nlpItemToSummary(NlpSearchResultItem item) {
+    return MobileMessageSummary(
+      uid: item.uid,
+      folder: item.folder,
+      from: item.from,
+      subject: item.subject,
+      date: item.date,
+      isRead: true,
+      isFlagged: false,
+      hasAttachment: false,
+    );
   }
 
   Future<void> _performSearch() async {
@@ -35,49 +71,61 @@ class _SearchScreenState extends State<SearchScreen> {
     setState(() {
       _isSearching = true;
       _error = null;
+      _lastParsedParams = null;
     });
 
     try {
       if (_useNlp) {
-        // Added: NLP search via AI endpoint
-        final response = await _api.post('/nlp-search', data: {
-          'query': query,
+        final response = await _api.nlpSearch(query);
+        setState(() {
+          _results = response.results.map(_nlpItemToSummary).toList();
+          _lastParsedParams = response.parsedParams;
         });
-        final results = (response.data['results'] as List<dynamic>?)
-                ?.map((r) => MobileMessageSummary.fromJson(r as Map<String, dynamic>))
-                .toList() ??
-            [];
-        setState(() => _results = results);
       } else {
-        // Added: Standard IMAP search
-        final response = await _api.get('/search', queryParams: {
-          'q': query,
-          'folder': 'INBOX',
-        });
-        final results = (response.data as List<dynamic>?)
-                ?.map((r) => MobileMessageSummary.fromJson(r as Map<String, dynamic>))
-                .toList() ??
-            [];
+        final results = await _api.standardSearch(query: query);
         setState(() => _results = results);
       }
-    } catch (e) {
+    } catch (_) {
       setState(() => _error = 'Search failed. Try again.');
     } finally {
-      setState(() => _isSearching = false);
+      if (mounted) setState(() => _isSearching = false);
     }
+  }
+
+  void _openHistory() {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => SearchHistorySheet(
+        searchApi: _api,
+        onSelect: (entry) {
+          _searchController.text = entry.queryText;
+          setState(() => _useNlp = true);
+          _performSearch();
+        },
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final parsed = _lastParsedParams;
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('Search'),
+        actions: [
+          IconButton(
+            key: const Key('search_history_button'),
+            icon: const Icon(Icons.history),
+            tooltip: 'Search history',
+            onPressed: _openHistory,
+          ),
+        ],
       ),
       body: Column(
         children: [
-          // Added: Search input
           Padding(
             padding: const EdgeInsets.all(16),
             child: Column(
@@ -96,7 +144,10 @@ class _SearchScreenState extends State<SearchScreen> {
                             icon: const Icon(Icons.clear),
                             onPressed: () {
                               _searchController.clear();
-                              setState(() => _results = []);
+                              setState(() {
+                                _results = const [];
+                                _lastParsedParams = null;
+                              });
                             },
                           )
                         : null,
@@ -107,7 +158,6 @@ class _SearchScreenState extends State<SearchScreen> {
                 const SizedBox(height: 8),
                 Row(
                   children: [
-                    // Added: Toggle between standard and NLP search
                     FilterChip(
                       label: const Text('AI Search'),
                       selected: _useNlp,
@@ -122,6 +172,7 @@ class _SearchScreenState extends State<SearchScreen> {
                     ),
                     const Spacer(),
                     FilledButton.tonal(
+                      key: const Key('search_submit_button'),
                       onPressed: _isSearching ? null : _performSearch,
                       child: _isSearching
                           ? const SizedBox(
@@ -137,14 +188,16 @@ class _SearchScreenState extends State<SearchScreen> {
             ),
           ),
 
-          // Added: Error display
           if (_error != null)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Text(_error!, style: TextStyle(color: theme.colorScheme.error)),
             ),
 
-          // Added: Results list
+          // Added: Show AI's parsed interpretation after an NLP search.
+          if (parsed != null && !parsed.isEmpty)
+            ParsedParamsBanner(params: parsed),
+
           Expanded(
             child: _results.isEmpty && !_isSearching
                 ? Center(
