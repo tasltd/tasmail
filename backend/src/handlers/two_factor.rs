@@ -8,6 +8,7 @@ use uuid::Uuid;
 
 use crate::error::AppError;
 use crate::services::auth_service::Claims;
+use crate::services::db_session;
 use crate::services::totp_service;
 use crate::state::AppState;
 
@@ -64,19 +65,27 @@ pub async fn enroll(
 
     // Generate and store backup codes
     let backup_codes = totp_service::generate_backup_codes();
-    // Delete old codes first
-    sqlx::query("DELETE FROM backup_codes WHERE mailbox_id = $1")
-        .bind(mailbox_id)
-        .execute(&state.db)
-        .await?;
-
-    for code in &backup_codes {
-        let hash = totp_service::hash_backup_code(code);
-        sqlx::query("INSERT INTO backup_codes (mailbox_id, code_hash) VALUES ($1, $2)")
+    // Fix: TMAIL-282 — backup_codes has FORCE RLS and the policy's `WITH CHECK`
+    // clause rejects every INSERT unless `app.mailbox_id` is set on the
+    // connection running the statement. Same shape as TMAIL-209's sms_otp_codes
+    // fix and TMAIL-198's audit-log fix. Without the pinned connection the
+    // INSERT raised "new row violates row-level security policy" and the whole
+    // enroll endpoint returned 500.
+    {
+        let mut conn = db_session::acquire_with_rls(&state, &claims).await?;
+        sqlx::query("DELETE FROM backup_codes WHERE mailbox_id = $1")
             .bind(mailbox_id)
-            .bind(&hash)
-            .execute(&state.db)
+            .execute(&mut *conn)
             .await?;
+
+        for code in &backup_codes {
+            let hash = totp_service::hash_backup_code(code);
+            sqlx::query("INSERT INTO backup_codes (mailbox_id, code_hash) VALUES ($1, $2)")
+                .bind(mailbox_id)
+                .bind(&hash)
+                .execute(&mut *conn)
+                .await?;
+        }
     }
 
     Ok((
@@ -163,11 +172,16 @@ pub async fn disable(
     .execute(&state.db)
     .await?;
 
-    // Delete backup codes
-    sqlx::query("DELETE FROM backup_codes WHERE mailbox_id = $1")
-        .bind(mailbox_id)
-        .execute(&state.db)
-        .await?;
+    // Fix: TMAIL-282 — backup_codes is RLS-protected; the DELETE policy's USING
+    // clause also evaluates against `app.mailbox_id`. Without the pinned
+    // connection no rows match and the codes leak past disable.
+    {
+        let mut conn = db_session::acquire_with_rls(&state, &claims).await?;
+        sqlx::query("DELETE FROM backup_codes WHERE mailbox_id = $1")
+            .bind(mailbox_id)
+            .execute(&mut *conn)
+            .await?;
+    }
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -190,11 +204,15 @@ pub async fn status(
     .await?
     .ok_or_else(|| AppError::NotFound("Mailbox not found".to_string()))?;
 
+    // Fix: TMAIL-282 — RLS hides backup_codes rows from any connection that
+    // doesn't have `app.mailbox_id` set, so the status endpoint was always
+    // reporting `backup_codes_remaining: 0` even after a successful enroll.
+    let mut conn = db_session::acquire_with_rls(&state, &claims).await?;
     let remaining: (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM backup_codes WHERE mailbox_id = $1 AND used = false"
     )
     .bind(mailbox_id)
-    .fetch_one(&state.db)
+    .fetch_one(&mut *conn)
     .await?;
 
     Ok(Json(TwoFactorStatus {

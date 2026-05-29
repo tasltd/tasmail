@@ -5,6 +5,11 @@ import { twoFactorApi } from '../../api/two-factor';
 import type { TwoFactorStatus, EnrollResponse } from '../../api/two-factor';
 // TMAIL-209: SMS OTP as an alternate / supplementary 2FA factor.
 import { smsOtpApi, type SmsOtpStatus } from '../../api/sms-otp';
+// TMAIL-282: WebAuthn passkeys live alongside TOTP and SMS OTP under the
+// single Security panel. PasskeyManager was previously orphaned (no menu
+// entry, no AppShell mount). E2E navigation must reach it via menu clicks,
+// not direct URLs, so we embed it here.
+import { PasskeyManager } from './PasskeyManager';
 
 export function TwoFactorManager() {
   const queryClient = useQueryClient();
@@ -179,6 +184,14 @@ export function TwoFactorManager() {
 
       {/* TMAIL-209: SMS OTP as a supplementary 2FA factor — independent of TOTP. */}
       <SmsOtpSection />
+
+      {/* TMAIL-282: WebAuthn / FIDO2 passkeys — supplementary factor, independent of TOTP + SMS. */}
+      <section
+        data-testid="passkey-section"
+        style={{ marginTop: '32px', borderTop: '1px solid var(--color-border, #e5e7eb)', paddingTop: '24px' }}
+      >
+        <PasskeyManager />
+      </section>
     </div>
   );
 }
