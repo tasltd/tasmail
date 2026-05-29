@@ -69,11 +69,16 @@ pub struct ImapService {
     /// callers can use `connect_user(&svc)` instead of forwarding the user's TASMail
     /// account password (which is NOT their IMAP password under the BYOK model).
     user_credentials: Option<(String, String)>,
+    /// TMAIL-283: per-user resolved trash folder name (e.g. "Deleted Items" on
+    /// Stalwart, "[Gmail]/Trash" on Gmail). Sourced from `imap_configurations.trash_folder`
+    /// at `for_user()` time. `None` (legacy / self-host) keeps the hardcoded "Trash"
+    /// default so existing Dovecot deployments are unaffected.
+    user_trash_folder: Option<String>,
 }
 
 impl ImapService {
     pub fn new(config: ImapConfig) -> Self {
-        Self { config, user_credentials: None }
+        Self { config, user_credentials: None, user_trash_folder: None }
     }
 
     /// PURPOSE: Factory that loads the user's default IMAP server config from the
@@ -121,10 +126,22 @@ impl ImapService {
             tls: matches!(cfg.encryption.as_str(), "ssl"),
             master_password: None,
         };
+        // TMAIL-283: stash the configured trash folder so delete_message can
+        // honour it instead of hardcoding "Trash" (which doesn't exist on
+        // Stalwart, Gmail, Outlook, ProtonMail Bridge — see folders-messages-2026-05.md finding #7).
+        let user_trash_folder = cfg.trash_folder.clone();
         Ok(Self {
             config: imap_cfg,
             user_credentials: Some((cfg.username.clone(), password)),
+            user_trash_folder,
         })
+    }
+
+    /// PURPOSE: Resolve the effective trash folder name for the current service.
+    /// Returns the per-user configured value when set (BYOK), else the legacy
+    /// hardcoded "Trash" so existing Dovecot self-host deployments keep working.
+    pub fn trash_folder(&self) -> &str {
+        self.user_trash_folder.as_deref().unwrap_or("Trash")
     }
 
     /// PURPOSE: Convenience method for the BYOK path. Connects using the credentials
@@ -429,6 +446,12 @@ impl ImapService {
     }
 
     /// Delete a message (move to Trash or permanent delete)
+    ///
+    /// TMAIL-283: trash folder name is resolved via `self.trash_folder()` which
+    /// honours the per-user `imap_configurations.trash_folder` (Stalwart
+    /// "Deleted Items", Gmail "[Gmail]/Trash", etc.) and falls back to "Trash"
+    /// for legacy self-host deployments. Deleting *from* the resolved trash
+    /// folder is a permanent expunge; from any other folder it's a move.
     pub async fn delete_message(
         &self,
         username: &str,
@@ -436,8 +459,9 @@ impl ImapService {
         folder: &str,
         uid: u32,
     ) -> Result<(), AppError> {
-        if folder == "Trash" {
-            // Permanent delete from Trash
+        let trash = self.trash_folder();
+        if folder == trash {
+            // Permanent delete from the trash folder.
             let mut session = self.connect(username, password).await?;
             session
                 .select(folder)
@@ -463,8 +487,8 @@ impl ImapService {
             let _ = session.logout().await;
             Ok(())
         } else {
-            // Move to Trash
-            self.move_message(username, password, folder, uid, "Trash")
+            // Move to the resolved trash folder.
+            self.move_message(username, password, folder, uid, trash)
                 .await
         }
     }
@@ -897,6 +921,38 @@ mod tests {
         let refs_str = extract_header(&parsed, "References").unwrap();
         let refs: Vec<&str> = refs_str.split_whitespace().collect();
         assert_eq!(refs, vec!["<a@ex.com>", "<b@ex.com>", "<c@ex.com>"]);
+    }
+
+    #[test]
+    fn test_trash_folder_defaults_to_legacy_name() {
+        // Self-host / legacy path: no per-user config — trash_folder() must
+        // return "Trash" so existing Dovecot deployments keep working.
+        let cfg = ImapConfig {
+            host: "127.0.0.1".to_string(),
+            port: 993,
+            tls: true,
+            master_password: None,
+        };
+        let svc = ImapService::new(cfg);
+        assert_eq!(svc.trash_folder(), "Trash");
+    }
+
+    #[test]
+    fn test_trash_folder_honours_per_user_override() {
+        // BYOK path: when user_trash_folder is set (Stalwart "Deleted Items",
+        // Gmail "[Gmail]/Trash", etc.) the service uses it instead of "Trash".
+        let cfg = ImapConfig {
+            host: "127.0.0.1".to_string(),
+            port: 993,
+            tls: true,
+            master_password: None,
+        };
+        let svc = ImapService {
+            config: cfg,
+            user_credentials: Some(("u".to_string(), "p".to_string())),
+            user_trash_folder: Some("Deleted Items".to_string()),
+        };
+        assert_eq!(svc.trash_folder(), "Deleted Items");
     }
 
     #[test]
