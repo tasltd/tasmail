@@ -4,6 +4,7 @@ import 'package:tasmail_mobile/l10n/app_localizations.dart';
 import 'package:tasmail_mobile/l10n/app_localizations_en.dart';
 import 'package:tasmail_mobile/l10n/app_localizations_tw.dart';
 import 'package:tasmail_mobile/l10n/app_localizations_ee.dart';
+import 'package:tasmail_mobile/l10n/app_localizations_fat.dart';
 import 'package:tasmail_mobile/l10n/app_localizations_ha.dart';
 
 void main() {
@@ -26,6 +27,10 @@ void main() {
 
     test('supports Hausa locale', () {
       expect(AppLocalizations.supportedLocales.any((l) => l.languageCode == 'ha'), isTrue);
+    });
+
+    test('supports Fante locale', () {
+      expect(AppLocalizations.supportedLocales.any((l) => l.languageCode == 'fat'), isTrue);
     });
 
     test('English strings are correct', () {
@@ -64,9 +69,18 @@ void main() {
       expect(ha.logout, 'Fita');
     });
 
+    test('Fante strings are translated', () {
+      final fat = AppLocalizationsFat();
+      expect(fat.appTitle, 'TASMail');
+      expect(fat.inbox, 'Nkrataa a aba');
+      expect(fat.compose, 'Kyerɛw krataa');
+      expect(fat.settings, 'Nhyehyɛɛ');
+      expect(fat.logout, 'Fi mu');
+    });
+
     test('all locales have same number of keys', () {
-      // NOTE: Verified by ARB file structure — all 5 locales have 73 keys each
-      expect(AppLocalizations.supportedLocales.length, greaterThanOrEqualTo(5));
+      // NOTE: Verified by ARB file structure — all 6 locales have 73 keys each
+      expect(AppLocalizations.supportedLocales.length, greaterThanOrEqualTo(6));
     });
   });
 }
