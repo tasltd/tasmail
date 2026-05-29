@@ -2,7 +2,7 @@
 
 > **Parent epic:** [TMAIL-241 — Modularisation, static-types, performance & scalability assessment (cross-feature)](https://cim.techatscale.io/projects/TMAIL/issues/241)
 > **Cycle:** May 2026 (`-2026-05.md` suffix)
-> **Status:** in progress — 16 of 22 child assessments landed; 6 still queued.
+> **Status:** in progress — 17 of 22 child assessments landed; 5 still queued.
 
 This index points at every per-feature assessment produced under TMAIL-241. Each
 report is a point-in-time audit at HEAD around late-May 2026 against four axes:
@@ -48,12 +48,12 @@ follow-up child tasks (recorded in the per-report **Follow-up tasks** section).
 | 13 | TMAIL-254 | SPA frontend (api client, hooks, stores, components, settings managers) | [spa-frontend-2026-05.md](spa-frontend-2026-05.md) | In Review |
 | 14 | TMAIL-255 | Alt-UI shadcn theme at `/modern/` | [alt-ui-2026-05.md](alt-ui-2026-05.md) | In Review |
 | 15 | TMAIL-256 | Migration imports (IMAP, MBOX, PST) — _duplicate of TMAIL-252_ | [migration-imports-2026-05.md](migration-imports-2026-05.md) | In Review |
-| 16 | TMAIL-257 | Frontend types & API contract parity (Rust ↔ TS ↔ Dart) — _duplicate of TMAIL-262_ | _pending_ | Backlog |
+| 16 | TMAIL-257 | Frontend types & API contract parity (Rust ↔ TS ↔ Dart) — _duplicate of TMAIL-262_ | [frontend-types-parity-2026-05.md](frontend-types-parity-2026-05.md) | In Review |
 | 17 | TMAIL-258 | Frontend state management (Zustand stores, TanStack Query, derived state) | [frontend-state-2026-05.md](frontend-state-2026-05.md) | In Review |
 | 18 | TMAIL-259 | Frontend bundle size, code splitting & lazy loading | [frontend-bundle-2026-05.md](frontend-bundle-2026-05.md) | In Review |
 | 19 | TMAIL-260 | Frontend accessibility (WCAG 2.1 AA, keyboard nav, ARIA, focus management) | [frontend-a11y-2026-05.md](frontend-a11y-2026-05.md) | In Review |
 | 20 | TMAIL-261 | Frontend PWA, offline cache & service worker | [frontend-pwa-offline-2026-05.md](frontend-pwa-offline-2026-05.md) | In Review |
-| 21 | TMAIL-262 | Frontend types & API contract parity (Rust ↔ TS ↔ Dart) | _pending_ | In Review |
+| 21 | TMAIL-262 | Frontend types & API contract parity (Rust ↔ TS ↔ Dart) | [frontend-types-parity-2026-05.md](frontend-types-parity-2026-05.md) | In Review |
 | 22 | TMAIL-263 | Frontend rendering performance (virtualisation, memo, profiler) | [frontend-render-perf-2026-05.md](frontend-render-perf-2026-05.md) | In Review |
 
 ---
@@ -66,10 +66,9 @@ two pairs of duplicate tickets need parent-level consolidation:
 - **Migration imports** — TMAIL-252 (backend axis) and TMAIL-256 (frontend axis)
   share a single landed report at `migration-imports-2026-05.md`. Close one as a
   duplicate of the other when triaging.
-- **Frontend types & API contract parity** — TMAIL-257 (backlog) and TMAIL-262
-  (in review). Both target the same report (`frontend-types-parity-2026-05.md`,
-  not yet written). Close one as duplicate, land the report under whichever
-  ticket remains.
+- **Frontend types & API contract parity** — TMAIL-257 and TMAIL-262. Single
+  report [frontend-types-parity-2026-05.md](frontend-types-parity-2026-05.md)
+  now landed; close one of the two tickets as a duplicate of the other.
 
 The four genuinely missing backend reports are queued (priority=low) and will be
 picked up by the auto-fix queue in order:
