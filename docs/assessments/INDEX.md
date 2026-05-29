@@ -53,7 +53,7 @@ follow-up child tasks (recorded in the per-report **Follow-up tasks** section).
 | 18 | TMAIL-259 | Frontend bundle size, code splitting & lazy loading | [frontend-bundle-2026-05.md](frontend-bundle-2026-05.md) | In Review |
 | 19 | TMAIL-260 | Frontend accessibility (WCAG 2.1 AA, keyboard nav, ARIA, focus management) | [frontend-a11y-2026-05.md](frontend-a11y-2026-05.md) | In Review |
 | 20 | TMAIL-261 | Frontend PWA, offline cache & service worker | [frontend-pwa-offline-2026-05.md](frontend-pwa-offline-2026-05.md) | In Review |
-| 21 | TMAIL-262 | Frontend types & API contract parity (Rust ↔ TS ↔ Dart) | [frontend-types-parity-2026-05.md](frontend-types-parity-2026-05.md) | In Review |
+| 21 | TMAIL-262 | Frontend types & API contract parity (Rust ↔ TS ↔ Dart) | [frontend-types-parity-2026-05.md](frontend-types-parity-2026-05.md) (also linked from pointer stub [types-contract-parity-2026-05.md](types-contract-parity-2026-05.md) under the filename quoted in the ticket body) | In Review |
 | 22 | TMAIL-263 | Frontend rendering performance (virtualisation, memo, profiler) | [frontend-render-perf-2026-05.md](frontend-render-perf-2026-05.md) | In Review |
 
 ---
