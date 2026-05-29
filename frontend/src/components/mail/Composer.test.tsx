@@ -1,7 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, act } from '@testing-library/react';
+import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+// Added (TMAIL-89): the Composer now writes drafts to IndexedDB via the
+// offline-drafts module. Jsdom doesn't ship `indexedDB`, so polyfill it.
+import 'fake-indexeddb/auto';
 import { Composer } from './Composer';
+import { offlineCache } from '../../utils/offline-cache';
+import { clearSessionKey } from '../../utils/offline-encryption';
 
 // Mock TipTap editor
 vi.mock('@tiptap/react', () => ({
@@ -38,6 +43,61 @@ vi.mock('../../stores/mailStore', () => ({
   useMailStore: (selector: (s: Record<string, unknown>) => unknown) =>
     selector({ setViewMode: mockSetViewMode }),
 }));
+
+// Added (TMAIL-89): partial mock of offline-drafts so the auto-save tests
+// don't deadlock fake-indexeddb against vitest fake timers. We keep all the
+// pure helpers (statusBadge, applyEdits, createEmptyDraft, …) intact and only
+// replace the IndexedDB-backed persistence with in-memory stubs.
+vi.mock('../../utils/offline-drafts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../utils/offline-drafts')>();
+  const memDrafts = new Map<string, import('../../utils/offline-drafts').OfflineDraft>();
+  return {
+    ...actual,
+    saveDraftLocal: async (draft: import('../../utils/offline-drafts').OfflineDraft) => {
+      memDrafts.set(draft.localId, draft);
+    },
+    loadDraft: async (localId: string) => memDrafts.get(localId) ?? null,
+    deleteDraftLocal: async (localId: string) => {
+      memDrafts.delete(localId);
+    },
+    listLocalDrafts: async () => Array.from(memDrafts.values()),
+    addAttachment: async (draft: import('../../utils/offline-drafts').OfflineDraft, file: { name: string; type: string; size: number; blob: Blob }) => {
+      const attachment = {
+        id: `att-${memDrafts.size}-${file.name}`,
+        filename: file.name,
+        mimeType: file.type,
+        size: file.size,
+        addedAt: Date.now(),
+      };
+      const next = { ...draft, attachments: [...draft.attachments, attachment], lastEditedAt: Date.now() };
+      return { attachment, draft: next };
+    },
+    removeAttachment: async (draft: import('../../utils/offline-drafts').OfflineDraft, attachmentId: string) =>
+      ({ ...draft, attachments: draft.attachments.filter((a) => a.id !== attachmentId), lastEditedAt: Date.now() }),
+    loadAttachmentBlob: async () => null,
+    syncOne: async (
+      draft: import('../../utils/offline-drafts').OfflineDraft,
+      ctx: import('../../utils/offline-drafts').SyncContext,
+    ) => {
+      try {
+        const result = await ctx.postDraft(draft);
+        if (result.status === 'ok') {
+          return { ...draft, status: 'synced' as const, syncedVersion: draft.lastEditedAt, lastSyncedAt: Date.now() };
+        }
+        return { ...draft, status: 'conflict' as const, serverConflictVersion: result.serverVersion };
+      } catch (e) {
+        return { ...draft, status: 'error' as const, errorMessage: e instanceof Error ? e.message : 'err' };
+      }
+    },
+    _resetAttachmentsForTests: async () => {
+      memDrafts.clear();
+    },
+  };
+});
+
+// NOTE: must come after the vi.mock above so the test imports the stubbed
+// version, not the real IDB one.
+const { _resetAttachmentsForTests } = await import('../../utils/offline-drafts');
 
 // Added: Mock calendar API for the Schedule Meeting modal flow (TMAIL-127)
 const mockCreateEvent = vi.fn();
@@ -280,8 +340,13 @@ describe('Composer', () => {
 });
 
 describe('Composer auto-save drafts', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
+    // Reset IndexedDB between tests so the offline draft module starts from
+    // a clean slate (TMAIL-89).
+    await offlineCache.clearAll();
+    await clearSessionKey();
+    await _resetAttachmentsForTests();
     vi.useFakeTimers();
   });
 
@@ -314,7 +379,11 @@ describe('Composer auto-save drafts', () => {
     });
 
     await act(async () => {
-      vi.advanceTimersByTime(5000);
+      // TMAIL-89: advanceTimersByTimeAsync drains microtasks between fake
+      // timer ticks so the refactored saveDraftNow's IDB writes resolve.
+      // runAllTimersAsync would infinite-loop against useOnlineStatus's 30s
+      // setInterval, so we explicitly advance only the 5s debounce window.
+      await vi.advanceTimersByTimeAsync(5000);
     });
 
     expect(mockSaveDraft).toHaveBeenCalledWith(
@@ -368,7 +437,8 @@ describe('Composer auto-save drafts', () => {
     expect(mockSaveDraft).not.toHaveBeenCalled();
 
     await act(async () => {
-      vi.advanceTimersByTime(3000);
+      // TMAIL-89: as above, drain microtasks for the async IDB pipeline.
+      await vi.advanceTimersByTimeAsync(3000);
     });
 
     // Now 5s since last change, should save with latest value
@@ -378,5 +448,60 @@ describe('Composer auto-save drafts', () => {
         to: ['b@test.com'],
       }),
     );
+  });
+});
+
+// Added (TMAIL-89): offline draft + status indicator + attachment behaviour.
+describe('Composer offline drafts (TMAIL-89)', () => {
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    await _resetAttachmentsForTests();
+  });
+
+  it('renders the "Saved locally" status pill on first mount', async () => {
+    render(<Composer />, { wrapper });
+    const pill = await screen.findByTestId('draft-sync-status');
+    expect(pill.textContent).toMatch(/saved locally/i);
+  });
+
+  it('flips the status pill to "Synced to server" after a successful sync', async () => {
+    mockSaveDraft.mockResolvedValue(undefined);
+    render(<Composer />, { wrapper });
+
+    fireEvent.change(screen.getByPlaceholderText('recipient@example.com'), {
+      target: { value: 'sync@example.com' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('Subject'), {
+      target: { value: 'Status pill check' },
+    });
+
+    // Click "Save draft now" to bypass the 5s debounce — same code path as
+    // the debounced timer, just fires immediately.
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText('Save draft now'));
+    });
+
+    await waitFor(() => expect(mockSaveDraft).toHaveBeenCalled());
+    await waitFor(() => {
+      const pill = screen.getByTestId('draft-sync-status');
+      expect(pill.textContent).toMatch(/synced to server/i);
+    });
+  });
+
+  it('exposes an attachment picker that queues files in the draft', async () => {
+    render(<Composer />, { wrapper });
+
+    const input = screen.getByTestId('composer-attachment-input') as HTMLInputElement;
+    const file = new File(['hello bytes'], 'note.txt', { type: 'text/plain' });
+
+    await act(async () => {
+      // Simulate the user picking a file by setting the input's files via
+      // Object.defineProperty (jsdom doesn't allow direct assignment).
+      Object.defineProperty(input, 'files', { value: [file], writable: false });
+      fireEvent.change(input);
+    });
+
+    const list = await screen.findByTestId('composer-attachment-list');
+    expect(list).toHaveTextContent('note.txt');
   });
 });

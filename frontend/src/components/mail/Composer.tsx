@@ -15,9 +15,28 @@ import { LargeFileAttacher } from './LargeFileAttacher';
 import { RecipientAutocomplete } from './RecipientAutocomplete';
 // Added: Schedule Meeting modal launched from the composer toolbar (TMAIL-127)
 import { ScheduleMeetingModal } from './ScheduleMeetingModal';
+// Added (TMAIL-89): offline-first draft persistence + reconnect sync.
+import {
+  type OfflineDraft,
+  type OfflineDraftAttachment,
+  createEmptyDraft,
+  applyEdits,
+  saveDraftLocal,
+  loadDraft,
+  addAttachment,
+  removeAttachment,
+  statusBadge,
+  syncOne,
+  newLocalId,
+  AttachmentQuotaError,
+  isDirty as isDraftDirty,
+  markError,
+} from '../../utils/offline-drafts';
+import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 
 export function Composer() {
   const setViewMode = useMailStore((s) => s.setViewMode);
+  const isOnline = useOnlineStatus();
   const [to, setTo] = useState('');
   const [cc, setCc] = useState('');
   const [subject, setSubject] = useState('');
@@ -35,6 +54,15 @@ export function Composer() {
   const [showMeetingModal, setShowMeetingModal] = useState(false);
   const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const undoTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Added (TMAIL-89): offline draft state. `draftRef` is the source of truth
+  // for what's currently in IndexedDB; React state holds form fields for the
+  // editor. We keep a stable localId across the Composer's mount so reload =
+  // restore.
+  const draftRef = useRef<OfflineDraft>(createEmptyDraft());
+  const [attachments, setAttachments] = useState<OfflineDraftAttachment[]>([]);
+  const [draftSyncStatus, setDraftSyncStatus] = useState<OfflineDraft['status']>('local');
+  const [draftAttachmentError, setDraftAttachmentError] = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const editor = useEditor({
     extensions: [
@@ -45,30 +73,118 @@ export function Composer() {
     content: '',
   });
 
-  // Added: Debounced auto-save draft (5 second delay after last change)
+  // Added (TMAIL-89): build a snapshot of the current form state as an
+  // OfflineDraft and persist it locally. Local writes are cheap and happen
+  // immediately on every edit so a crash / reload never loses keystrokes.
+  const persistLocalDraft = useCallback(async (): Promise<OfflineDraft> => {
+    const snapshot = applyEdits(draftRef.current, {
+      to,
+      cc,
+      subject,
+      htmlBody: editor?.getHTML() || '',
+      textBody: editor?.getText() || '',
+    });
+    draftRef.current = snapshot;
+    setDraftSyncStatus(snapshot.status);
+    await saveDraftLocal(snapshot);
+    return snapshot;
+  }, [to, cc, subject, editor]);
+
+  // Added: Debounced server-side draft save. Writes locally first (always),
+  // then — only if online and the draft has real content — pushes to
+  // /api/drafts. When offline, the local copy is the only persistence; the
+  // reconnect effect below replays it.
   const saveDraftNow = useCallback(async () => {
+    // NOTE: Keep the original to/subject guard so a totally empty composer
+    // doesn't generate phantom drafts. Editor content alone isn't a strong
+    // enough signal — see the "does not auto-save when both to and subject
+    // are empty" test.
     if (!to.trim() && !subject.trim()) return;
     setDraftStatus('saving');
-    try {
-      await saveDraft({
-        to: to.split(',').map((s) => s.trim()).filter(Boolean),
-        cc: cc ? cc.split(',').map((s) => s.trim()).filter(Boolean) : undefined,
-        subject: subject || '(no subject)',
-        html_body: editor?.getHTML() || undefined,
-        text_body: editor?.getText() || undefined,
-      });
+    const snapshot = await persistLocalDraft();
+
+    if (!navigator.onLine) {
+      // Stay 'local' — reconnect effect will pick this up.
       setDraftStatus('saved');
-    } catch {
-      setDraftStatus('idle');
+      setDraftSyncStatus(snapshot.status);
+      return;
     }
-  }, [to, cc, subject, editor]);
+
+    const result = await syncOne(snapshot, {
+      postDraft: async (d) => {
+        await saveDraft({
+          to: d.to.split(',').map((s) => s.trim()).filter(Boolean),
+          cc: d.cc ? d.cc.split(',').map((s) => s.trim()).filter(Boolean) : undefined,
+          subject: d.subject || '(no subject)',
+          html_body: d.htmlBody || undefined,
+          text_body: d.textBody || undefined,
+        });
+        return { status: 'ok' };
+      },
+    });
+    draftRef.current = result;
+    setDraftSyncStatus(result.status);
+    setDraftStatus(result.status === 'synced' ? 'saved' : 'idle');
+    // `cc` and `editor` are read inside the early-return guard via to/subject —
+    // persistLocalDraft already owns the rest. The exhaustive-deps lint wants
+    // us to declare what's read at this scope.
+  }, [to, subject, persistLocalDraft]);
 
   const scheduleDraftSave = useCallback(() => {
     if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
+    // Fire-and-forget the immediate local save so reload-protection is instant.
+    void persistLocalDraft();
     draftTimerRef.current = setTimeout(() => {
       saveDraftNow();
     }, 5000);
-  }, [saveDraftNow]);
+  }, [saveDraftNow, persistLocalDraft]);
+
+  // Added (TMAIL-89): on mount, look for a draftId in the URL and rehydrate.
+  // Lets a reload restore exactly what the user was working on.
+  useEffect(() => {
+    const search = typeof window !== 'undefined' ? window.location.search : '';
+    const draftId = new URLSearchParams(search).get('draftId');
+    if (!draftId) {
+      // Persist the freshly-created empty draft so its localId becomes
+      // restorable via ?draftId= once the user types anything.
+      draftRef.current = createEmptyDraft(newLocalId());
+      return;
+    }
+    (async () => {
+      const restored = await loadDraft(draftId);
+      if (!restored) {
+        draftRef.current = createEmptyDraft(draftId);
+        return;
+      }
+      draftRef.current = restored;
+      setTo(restored.to);
+      setCc(restored.cc);
+      setSubject(restored.subject);
+      setAttachments(restored.attachments);
+      setDraftSyncStatus(restored.status);
+      if (editor && restored.htmlBody) {
+        editor.commands.setContent(restored.htmlBody);
+      }
+    })();
+    // NOTE: We deliberately do not list `editor` here — we run this once on
+    // mount; editor content is set inside the effect when available.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Added (TMAIL-89): when connectivity returns, flush any dirty local draft
+  // to the server so the badge eventually reads "Synced to server".
+  // We only fire on the edge offline→online — not on initial mount — so a
+  // freshly-opened Composer with an empty draft does NOT spam /api/drafts.
+  const wasOfflineRef = useRef(false);
+  useEffect(() => {
+    const wasOffline = wasOfflineRef.current;
+    wasOfflineRef.current = !isOnline;
+    if (!isOnline || !wasOffline) return;
+    if (!isDraftDirty(draftRef.current)) return;
+    void saveDraftNow();
+    // We only want to react to the online edge, not to every saveDraftNow change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOnline]);
 
   // Trigger auto-save on field changes
   useEffect(() => {
@@ -172,6 +288,47 @@ export function Composer() {
     setError(msg);
   }, []);
 
+  // Added (TMAIL-89): attachment picker — queues files as Blobs in the offline
+  // attachment store. The reconnect sync flow will upload them once the
+  // server-side draft endpoint accepts attachments (currently the backend
+  // stores the meta on the IMAP draft; uploaded bytes ride along when the
+  // server adds /api/drafts attachment support).
+  const handleAttachFiles = useCallback(async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    setDraftAttachmentError('');
+    let next = await persistLocalDraft();
+    for (const file of Array.from(files)) {
+      try {
+        const result = await addAttachment(next, {
+          name: file.name,
+          type: file.type,
+          size: file.size,
+          blob: file,
+        });
+        next = result.draft;
+      } catch (err) {
+        if (err instanceof AttachmentQuotaError) {
+          setDraftAttachmentError(err.message);
+        } else {
+          next = markError(next, err instanceof Error ? err.message : 'Attachment failed');
+        }
+      }
+    }
+    draftRef.current = next;
+    setAttachments(next.attachments);
+    setDraftSyncStatus(next.status);
+    await saveDraftLocal(next);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  }, [persistLocalDraft]);
+
+  const handleRemoveAttachment = useCallback(async (attachmentId: string) => {
+    const next = await removeAttachment(draftRef.current, attachmentId);
+    draftRef.current = next;
+    setAttachments(next.attachments);
+    setDraftSyncStatus(next.status);
+    await saveDraftLocal(next);
+  }, []);
+
   const handleScheduleSend = async () => {
     if (!to.trim() || !scheduleDate) {
       setError('Recipients and schedule date required');
@@ -211,6 +368,33 @@ export function Composer() {
         <span role="status" aria-live="polite" style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>
           {draftStatus === 'saving' && 'Saving draft...'}
           {draftStatus === 'saved' && 'Draft saved'}
+        </span>
+        {/* Added (TMAIL-89): offline-vs-synced sync-status pill. Lives next to
+            the existing saving/saved indicator so screen reader users hear both
+            the in-flight transition AND the persistent status. */}
+        <span
+          data-testid="draft-sync-status"
+          aria-live="polite"
+          aria-label={`Draft status: ${statusBadge(draftSyncStatus).label}`}
+          title={statusBadge(draftSyncStatus).label}
+          style={{
+            fontSize: '12px',
+            marginLeft: '8px',
+            padding: '2px 8px',
+            borderRadius: '999px',
+            background:
+              statusBadge(draftSyncStatus).tone === 'good' ? 'var(--color-success-bg, #e6f4ea)' :
+              statusBadge(draftSyncStatus).tone === 'warn' ? 'var(--color-warn-bg, #fdf3d8)' :
+              statusBadge(draftSyncStatus).tone === 'error' ? 'var(--color-error-bg, #fde8e8)' :
+              'var(--color-bg-subtle, #f0f0f0)',
+            color:
+              statusBadge(draftSyncStatus).tone === 'good' ? 'var(--color-success-fg, #1e7a36)' :
+              statusBadge(draftSyncStatus).tone === 'warn' ? 'var(--color-warn-fg, #8a6d1c)' :
+              statusBadge(draftSyncStatus).tone === 'error' ? 'var(--color-error-fg, #9b2c2c)' :
+              'var(--color-text-secondary)',
+          }}
+        >
+          {statusBadge(draftSyncStatus).label}
         </span>
         {/* Added (TMAIL-260): aria-label so SR users hear the action; title kept for mouse hover */}
         <button className="btn btn--icon" onClick={saveDraftNow} title="Save draft now" aria-label="Save draft now">
@@ -259,6 +443,66 @@ export function Composer() {
             placeholder="Subject"
           />
         </div>
+      </div>
+
+      {/* Added (TMAIL-89): offline attachment picker + list. Files go straight
+          into IndexedDB so they survive reloads; the existing LargeFileAttacher
+          remains the path for big-file uploads that should bypass IMAP draft
+          size limits. */}
+      <div className="composer__attachments" style={{ padding: '8px 16px', borderTop: '1px solid var(--color-border)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            data-testid="composer-attachment-input"
+            style={{ display: 'none' }}
+            onChange={(e) => handleAttachFiles(e.target.files)}
+          />
+          <button
+            className="btn btn--secondary btn--sm"
+            data-testid="composer-attach-btn"
+            onClick={() => fileInputRef.current?.click()}
+            type="button"
+          >
+            <Paperclip size={14} />
+            Attach files
+          </button>
+          {attachments.length > 0 && (
+            <span style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>
+              {attachments.length} attachment{attachments.length === 1 ? '' : 's'} queued
+            </span>
+          )}
+        </div>
+        {draftAttachmentError && (
+          <div role="alert" style={{ fontSize: '12px', color: 'var(--color-error-fg, #9b2c2c)', marginTop: '4px' }}>
+            {draftAttachmentError}
+          </div>
+        )}
+        {attachments.length > 0 && (
+          <ul data-testid="composer-attachment-list" style={{ listStyle: 'none', padding: 0, margin: '8px 0 0', display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+            {attachments.map((a) => (
+              <li
+                key={a.id}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: '6px',
+                  background: 'var(--color-bg-subtle, #f4f4f4)', borderRadius: '12px', padding: '4px 10px', fontSize: '12px',
+                }}
+              >
+                <span title={a.filename}>{a.filename}</span>
+                <span style={{ color: 'var(--color-text-secondary)' }}>({(a.size / 1024).toFixed(1)} KB)</span>
+                <button
+                  type="button"
+                  aria-label={`Remove attachment ${a.filename}`}
+                  onClick={() => handleRemoveAttachment(a.id)}
+                  style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, color: 'inherit' }}
+                >
+                  <X size={12} />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
 
       <div className="composer__editor">
