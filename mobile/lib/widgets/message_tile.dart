@@ -20,6 +20,12 @@ class MessageTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isUnread = !message.isRead;
+    // Fix: guard against null/empty `from` — substring(0,1) on `message.from!`
+    // would NPE for senderless/malformed messages slipping past the API layer.
+    final fromValue = message.from;
+    final avatarInitial = (fromValue != null && fromValue.isNotEmpty)
+        ? fromValue.substring(0, 1).toUpperCase()
+        : '?';
 
     return ListTile(
       onTap: onTap,
@@ -29,9 +35,7 @@ class MessageTile extends StatelessWidget {
             ? theme.colorScheme.primary
             : theme.colorScheme.surfaceContainerHighest,
         child: Text(
-          (message.from ?? '?').isNotEmpty
-              ? (message.from!).substring(0, 1).toUpperCase()
-              : '?',
+          avatarInitial,
           style: TextStyle(
             color: isUnread
                 ? theme.colorScheme.onPrimary
