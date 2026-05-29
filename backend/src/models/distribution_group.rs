@@ -26,11 +26,18 @@ pub struct GroupMember {
     pub added_at: chrono::DateTime<chrono::Utc>,
 }
 
+// Fix (TMAIL-286): domain_id was mandatory on the request, but the SPA
+// (frontend/src/components/settings/GroupManager.tsx) never had a way to
+// resolve the user's domain, so it submitted an empty string and the request
+// failed with a Uuid parse error before the handler ran. Making it optional
+// lets the handler fall back to the owner's mailbox.domain_id, which is the
+// right behaviour for non-admin users who only have one domain anyway.
 #[derive(Debug, Deserialize)]
 pub struct CreateGroupRequest {
     pub name: String,
     pub address: String,
-    pub domain_id: Uuid,
+    #[serde(default)]
+    pub domain_id: Option<Uuid>,
     pub description: Option<String>,
     pub allow_external: Option<bool>,
 }
@@ -58,17 +65,21 @@ pub struct GroupWithCount {
 }
 
 impl DistributionGroup {
+    // Changed (TMAIL-286): callers now resolve the domain_id from the owning
+    // mailbox when the request didn't pin one. The signature takes the
+    // resolved Uuid explicitly so model/handler responsibilities stay clean.
     pub async fn create(
         pool: &PgPool,
         req: &CreateGroupRequest,
         owner_id: Uuid,
+        resolved_domain_id: Uuid,
     ) -> Result<DistributionGroup, sqlx::Error> {
         sqlx::query_as::<_, DistributionGroup>(
             "INSERT INTO distribution_groups (domain_id, name, address, description, owner_mailbox_id, allow_external)
              VALUES ($1, $2, $3, $4, $5, $6)
              RETURNING *"
         )
-        .bind(req.domain_id)
+        .bind(resolved_domain_id)
         .bind(&req.name)
         .bind(&req.address)
         .bind(&req.description)
@@ -177,8 +188,34 @@ mod tests {
         let req: CreateGroupRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.name, "Engineering");
         assert_eq!(req.address, "eng@example.com");
+        assert_eq!(
+            req.domain_id,
+            Some(Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap()),
+        );
         assert!(req.description.is_none());
         assert!(req.allow_external.is_none());
+    }
+
+    // Added (TMAIL-286): regression for the SPA path where the user has no
+    // way to pick a domain — request must still deserialise so the handler
+    // can fall back to the owning mailbox's domain_id.
+    #[test]
+    fn test_create_group_request_without_domain_id() {
+        let json = r#"{"name":"Engineering","address":"eng@example.com"}"#;
+        let req: CreateGroupRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.name, "Engineering");
+        assert!(req.domain_id.is_none());
+    }
+
+    #[test]
+    fn test_create_group_request_with_empty_string_domain_id_rejected() {
+        // Empty strings (what the SPA was sending) MUST be rejected — they
+        // are not a valid Uuid, and silently swallowing them would let
+        // garbage rows hit the FK. The handler's fallback only fires when
+        // the field is omitted (None), not when it's present but garbage.
+        let json = r#"{"name":"Engineering","address":"eng@example.com","domain_id":""}"#;
+        let err = serde_json::from_str::<CreateGroupRequest>(json).unwrap_err();
+        assert!(err.to_string().to_lowercase().contains("uuid"));
     }
 
     #[test]

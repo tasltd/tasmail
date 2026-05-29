@@ -10,6 +10,9 @@ use crate::models::distribution_group::{
     AddMemberRequest, CreateGroupRequest, DistributionGroup, GroupMember,
     UpdateGroupRequest,
 };
+// Added (TMAIL-286): need Mailbox to resolve the owner's domain_id when the
+// SPA omits it (the only domain a non-admin user has access to is their own).
+use crate::models::mailbox::Mailbox;
 use crate::services::auth_service::Claims;
 use crate::state::AppState;
 
@@ -43,7 +46,21 @@ pub async fn create_group(
         return Err(AppError::BadRequest("Invalid group address format".to_string()));
     }
 
-    let group = DistributionGroup::create(&state.db, &body, mailbox_id).await?;
+    // Fix (TMAIL-286): the SPA GroupManager had no way to look up the user's
+    // domain so it was sending an empty string. Falling back to the owner's
+    // mailbox.domain_id matches single-domain BYOK reality and avoids hitting
+    // the FK constraint with garbage. Admins on multi-domain deployments
+    // can still pin a domain explicitly in the request body.
+    let resolved_domain_id = if let Some(d) = body.domain_id {
+        d
+    } else {
+        let mailbox = Mailbox::find_by_id(&state.db, mailbox_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("Owner mailbox not found".to_string()))?;
+        mailbox.domain_id
+    };
+
+    let group = DistributionGroup::create(&state.db, &body, mailbox_id, resolved_domain_id).await?;
     Ok((StatusCode::CREATED, Json(group)))
 }
 
@@ -203,6 +220,18 @@ mod tests {
         assert_eq!(req.name, "Team");
         assert_eq!(req.address, "team@example.com");
         assert_eq!(req.description, Some("Dev team".to_string()));
+        assert!(req.domain_id.is_some());
+    }
+
+    // Added (TMAIL-286): companion test for the SPA path — request omits
+    // domain_id and the handler must accept it (the handler resolves the
+    // fallback before calling DistributionGroup::create).
+    #[test]
+    fn test_create_group_request_without_domain_id_deserialization() {
+        let json = r#"{"name": "Team", "address": "team@example.com"}"#;
+        let req: CreateGroupRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.name, "Team");
+        assert!(req.domain_id.is_none());
     }
 
     #[test]

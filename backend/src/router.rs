@@ -337,6 +337,10 @@ pub fn create_router(state: AppState) -> Router {
             put(handlers::sieve::update_rule).delete(handlers::sieve::delete_rule),
         )
         .route("/api/filters/reorder", post(handlers::sieve::reorder_rules))
+        // Added (TMAIL-286): rule match-test sandbox — dry-run a rule against
+        // a synthetic sample so the SPA can show a "would / would not match"
+        // preview before the user enables it on real traffic.
+        .route("/api/filters/{id}/test", post(handlers::sieve::test_rule))
         // Added: WebAuthn/FIDO2 passkey routes for TMAIL-83
         .route("/api/webauthn/register/begin", post(handlers::webauthn::register_begin))
         .route("/api/webauthn/register/complete", post(handlers::webauthn::register_complete))

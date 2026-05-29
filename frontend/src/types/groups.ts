@@ -22,7 +22,9 @@ export interface GroupMember {
 export interface CreateGroupRequest {
   name: string;
   address: string;
-  domain_id: string;
+  // Changed (TMAIL-286): optional — when omitted, backend resolves it from
+  // the owning mailbox.domain_id (matches single-domain BYOK reality).
+  domain_id?: string;
   description?: string;
   allow_external?: boolean;
 }

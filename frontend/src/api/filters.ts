@@ -45,22 +45,54 @@ export interface UpdateFilterRequest {
   stop_processing?: boolean;
 }
 
+// Fix (TMAIL-286): apiClient.request() already prepends API_BASE_URL ("/api"),
+// so paths must be relative — every other api module here uses '/<resource>'.
+// The previous '/api/filters' resolved to '/api/api/filters' → 404 on every
+// FilterManager CRUD call, leaving the whole Filters surface non-functional.
 export async function listFilters(): Promise<SieveRule[]> {
-  return apiClient.get('/api/filters');
+  return apiClient.get('/filters');
 }
 
 export async function createFilter(data: CreateFilterRequest): Promise<SieveRule> {
-  return apiClient.post('/api/filters', data);
+  return apiClient.post('/filters', data);
 }
 
 export async function updateFilter(id: string, data: UpdateFilterRequest): Promise<SieveRule> {
-  return apiClient.put(`/api/filters/${id}`, data);
+  return apiClient.put(`/filters/${id}`, data);
 }
 
 export async function deleteFilter(id: string): Promise<void> {
-  return apiClient.delete(`/api/filters/${id}`);
+  return apiClient.delete(`/filters/${id}`);
 }
 
 export async function reorderFilters(ruleIds: string[]): Promise<void> {
-  return apiClient.post('/api/filters/reorder', ruleIds);
+  return apiClient.post('/filters/reorder', ruleIds);
+}
+
+// Added (TMAIL-286): Test-match — evaluate the saved rule against a synthetic
+// sample message so users can sanity-check their filter before it goes live.
+export interface SampleMessage {
+  from?: string;
+  to?: string;
+  cc?: string;
+  subject?: string;
+  body?: string;
+  size?: number;
+}
+
+export interface ConditionMatch {
+  field: string;
+  operator: string;
+  value: string;
+  matched: boolean;
+}
+
+export interface RuleMatchResult {
+  matched: boolean;
+  match_mode: 'all' | 'any';
+  condition_results: ConditionMatch[];
+}
+
+export async function testFilter(id: string, sample: SampleMessage): Promise<RuleMatchResult> {
+  return apiClient.post<RuleMatchResult>(`/filters/${id}/test`, sample);
 }

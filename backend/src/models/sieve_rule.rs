@@ -62,6 +62,33 @@ pub struct UpdateSieveRule {
     pub stop_processing: Option<bool>,
 }
 
+// Added (TMAIL-286): Sample message payload + per-condition match breakdown
+// for the rule-test sandbox at `POST /api/filters/{id}/test`.
+#[derive(Debug, Deserialize, Default)]
+pub struct SampleMessage {
+    pub from: Option<String>,
+    pub to: Option<String>,
+    pub cc: Option<String>,
+    pub subject: Option<String>,
+    pub body: Option<String>,
+    pub size: Option<i64>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct ConditionMatchResult {
+    pub field: String,
+    pub operator: String,
+    pub value: String,
+    pub matched: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RuleMatchBreakdown {
+    pub matched: bool,
+    pub match_mode: String,
+    pub condition_results: Vec<ConditionMatchResult>,
+}
+
 /// Serializable response with parsed conditions/actions
 #[derive(Debug, Serialize)]
 pub struct SieveRuleResponse {
@@ -212,6 +239,57 @@ impl SieveRule {
             .await?;
         }
         Ok(())
+    }
+
+    // Added (TMAIL-286): per-condition breakdown for the sample-test
+    // endpoint. Re-uses `evaluate_condition` so the UI sandbox cannot drift
+    // from the production matcher.
+    pub fn evaluate_sample(&self, sample: &SampleMessage) -> RuleMatchBreakdown {
+        let conditions: Vec<RuleCondition> =
+            serde_json::from_value(self.conditions.clone()).unwrap_or_default();
+
+        let empty = String::new();
+        let from = sample.from.as_ref().unwrap_or(&empty);
+        let to = sample.to.as_ref().unwrap_or(&empty);
+        let cc = sample.cc.as_ref().unwrap_or(&empty);
+        let subject = sample.subject.as_ref().unwrap_or(&empty);
+        let body = sample.body.as_ref().unwrap_or(&empty);
+
+        let condition_results: Vec<ConditionMatchResult> = conditions
+            .iter()
+            .map(|c| {
+                let field_value = match c.field.as_str() {
+                    "from" => from.as_str(),
+                    "to" => to.as_str(),
+                    "cc" => cc.as_str(),
+                    "subject" => subject.as_str(),
+                    "body" => body.as_str(),
+                    _ => "",
+                };
+                let matched = evaluate_condition(field_value, &c.operator, &c.value);
+                ConditionMatchResult {
+                    field: c.field.clone(),
+                    operator: c.operator.clone(),
+                    value: c.value.clone(),
+                    matched,
+                }
+            })
+            .collect();
+
+        let matched = if condition_results.is_empty() {
+            false
+        } else {
+            match self.match_mode.as_str() {
+                "any" => condition_results.iter().any(|r| r.matched),
+                _ => condition_results.iter().all(|r| r.matched),
+            }
+        };
+
+        RuleMatchBreakdown {
+            matched,
+            match_mode: self.match_mode.clone(),
+            condition_results,
+        }
     }
 
     /// Evaluate whether an email matches this rule's conditions
@@ -429,5 +507,101 @@ mod tests {
         let conditions = vec![make_condition("from", "contains", "SPAM")];
         let rule = make_rule(conditions, "all", true);
         assert!(rule.matches_email("spam@bad.com", "me@me.com", "Hello", &[]));
+    }
+
+    // Added (TMAIL-286): tests for the sample-evaluation path used by the
+    // `POST /api/filters/{id}/test` endpoint. Cover the same shape the SPA
+    // sends: a few well-known fields, partial population, ALL vs ANY.
+    fn sample(from: &str, subject: &str, body: &str) -> SampleMessage {
+        SampleMessage {
+            from: Some(from.to_string()),
+            subject: Some(subject.to_string()),
+            body: Some(body.to_string()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_evaluate_sample_all_mode_all_match() {
+        let conditions = vec![
+            make_condition("from", "contains", "newsletter"),
+            make_condition("subject", "contains", "offer"),
+        ];
+        let rule = make_rule(conditions, "all", true);
+        let result = rule.evaluate_sample(&sample(
+            "newsletter@store.com",
+            "Special offer for you",
+            "Body content here",
+        ));
+        assert!(result.matched);
+        assert_eq!(result.condition_results.len(), 2);
+        assert!(result.condition_results.iter().all(|c| c.matched));
+    }
+
+    #[test]
+    fn test_evaluate_sample_all_mode_partial_fails() {
+        let conditions = vec![
+            make_condition("from", "contains", "newsletter"),
+            make_condition("subject", "contains", "offer"),
+        ];
+        let rule = make_rule(conditions, "all", true);
+        let result = rule.evaluate_sample(&sample(
+            "newsletter@store.com",
+            "Hello friend",
+            "Body content",
+        ));
+        assert!(!result.matched);
+        // Per-condition breakdown still flags WHICH one missed.
+        assert_eq!(result.condition_results[0].matched, true);
+        assert_eq!(result.condition_results[1].matched, false);
+    }
+
+    #[test]
+    fn test_evaluate_sample_any_mode_one_match() {
+        let conditions = vec![
+            make_condition("from", "contains", "spam"),
+            make_condition("subject", "contains", "free money"),
+        ];
+        let rule = make_rule(conditions, "any", true);
+        let result = rule.evaluate_sample(&sample(
+            "friend@ok.com",
+            "Get free money now!",
+            "Body",
+        ));
+        assert!(result.matched);
+        assert_eq!(result.match_mode, "any");
+        assert!(!result.condition_results[0].matched);
+        assert!(result.condition_results[1].matched);
+    }
+
+    #[test]
+    fn test_evaluate_sample_body_field() {
+        let conditions = vec![make_condition("body", "contains", "unsubscribe")];
+        let rule = make_rule(conditions, "all", true);
+        let yes = rule.evaluate_sample(&sample("a@b.c", "hi", "Please unsubscribe here"));
+        let no = rule.evaluate_sample(&sample("a@b.c", "hi", "Plain text only"));
+        assert!(yes.matched);
+        assert!(!no.matched);
+    }
+
+    #[test]
+    fn test_evaluate_sample_missing_field_treated_as_empty() {
+        let conditions = vec![make_condition("subject", "contains", "offer")];
+        let rule = make_rule(conditions, "all", true);
+        // Subject omitted entirely — treated as empty, so the contains check fails.
+        let result = rule.evaluate_sample(&SampleMessage {
+            from: Some("x@y.z".to_string()),
+            ..Default::default()
+        });
+        assert!(!result.matched);
+        assert!(!result.condition_results[0].matched);
+    }
+
+    #[test]
+    fn test_evaluate_sample_empty_conditions_never_matches() {
+        let rule = make_rule(vec![], "all", true);
+        let result = rule.evaluate_sample(&sample("from@x.com", "sub", "body"));
+        assert!(!result.matched);
+        assert!(result.condition_results.is_empty());
     }
 }

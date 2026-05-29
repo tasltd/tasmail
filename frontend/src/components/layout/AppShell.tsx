@@ -30,6 +30,9 @@ const GroupManager = lazy(() => import('../settings/GroupManager').then((m) => (
 const MigrationManager = lazy(() => import('../settings/MigrationManager').then((m) => ({ default: m.MigrationManager })));
 const LowBandwidthSettings = lazy(() => import('../settings/LowBandwidthSettings').then((m) => ({ default: m.LowBandwidthSettings })));
 const FilterManager = lazy(() => import('../settings/FilterManager').then((m) => ({ default: m.FilterManager })));
+// Added (TMAIL-286): TemplateManager was orphaned — file existed but no lazy
+// import, no viewMode branch, no sidebar entry. Wiring it in now.
+const TemplateManager = lazy(() => import('../settings/TemplateManager').then((m) => ({ default: m.TemplateManager })));
 const SharedMailboxManager = lazy(() => import('../settings/SharedMailboxManager').then((m) => ({ default: m.SharedMailboxManager })));
 const QueueManager = lazy(() => import('../settings/QueueManager').then((m) => ({ default: m.QueueManager })));
 const TaskManager = lazy(() => import('../settings/TaskManager').then((m) => ({ default: m.TaskManager })));
@@ -123,6 +126,8 @@ export function AppShell({ onLogout }: AppShellProps) {
               {viewMode === 'migration' && <MigrationManager />}
               {viewMode === 'bandwidth' && <LowBandwidthSettings />}
               {viewMode === 'filters' && <FilterManager />}
+              {/* Added (TMAIL-286): mount TemplateManager for the new 'templates' viewMode */}
+              {viewMode === 'templates' && <TemplateManager />}
               {viewMode === 'shared' && <SharedMailboxManager />}
               {viewMode === 'queue' && <QueueManager />}
               {viewMode === 'tasks' && <TaskManager />}

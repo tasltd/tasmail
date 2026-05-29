@@ -31,7 +31,9 @@ import type { AdvancedSearchParams } from '../api/messages';
 // Added: 'billing' view mode for Paystack/MoMo billing management (TMAIL-46)
 // Added: 'deliverability' view mode for email deliverability testing (TMAIL-39)
 // Added: 'push-devices' view mode for push notification device management (TMAIL-204)
-type ViewMode = 'list' | 'reader' | 'compose' | 'search' | 'signatures' | 'contacts' | 'security' | 'vacation' | 'groups' | 'migration' | 'bandwidth' | 'filters' | 'shared' | 'queue' | 'tasks' | 'webhooks' | 'branding' | 'retention' | 'hostnames' | 'shared-files' | 'bulk-import' | 'chat' | 'calendar' | 'ldap' | 'ai-config' | 'saml' | 'oidc' | 'ediscovery' | 'dlp' | 'dane' | 'smtp-config' | 'plugins' | 'contacts-app' | 'pop3' | 'archive' | 'activesync' | 'ollama' | 'dav-config' | 'spam' | 'billing' | 'deliverability' | 'push-devices';
+// Added (TMAIL-286): 'templates' — TemplateManager existed but the union, the
+// sidebar, and AppShell were all missing the wiring, so it was unreachable.
+type ViewMode = 'list' | 'reader' | 'compose' | 'search' | 'signatures' | 'contacts' | 'security' | 'vacation' | 'groups' | 'migration' | 'bandwidth' | 'filters' | 'shared' | 'queue' | 'tasks' | 'webhooks' | 'branding' | 'retention' | 'hostnames' | 'shared-files' | 'bulk-import' | 'chat' | 'calendar' | 'ldap' | 'ai-config' | 'saml' | 'oidc' | 'ediscovery' | 'dlp' | 'dane' | 'smtp-config' | 'plugins' | 'contacts-app' | 'pop3' | 'archive' | 'activesync' | 'ollama' | 'dav-config' | 'spam' | 'billing' | 'deliverability' | 'push-devices' | 'templates';
 
 interface MailState {
   selectedFolder: string;

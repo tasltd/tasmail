@@ -1,14 +1,22 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2, Edit2, ArrowLeft, ArrowUp, ArrowDown, Power } from 'lucide-react';
+import { Plus, Trash2, Edit2, ArrowLeft, ArrowUp, ArrowDown, Power, FlaskConical } from 'lucide-react';
 import {
   listFilters,
   createFilter,
   updateFilter,
   deleteFilter,
   reorderFilters,
+  testFilter,
 } from '../../api/filters';
-import type { SieveRule, RuleCondition, RuleAction, CreateFilterRequest } from '../../api/filters';
+import type {
+  SieveRule,
+  RuleCondition,
+  RuleAction,
+  CreateFilterRequest,
+  RuleMatchResult,
+  SampleMessage,
+} from '../../api/filters';
 import { useMailStore } from '../../stores/mailStore';
 import { LoadingSkeleton } from '../shared/LoadingSkeleton';
 
@@ -235,6 +243,15 @@ function FilterEditor({
 
 export function FilterManager() {
   const [editing, setEditing] = useState<SieveRule | 'new' | null>(null);
+  // Added (TMAIL-286): inline sandbox state — which rule is being tested,
+  // the synthetic message the user is composing, and the latest result.
+  const [testingRule, setTestingRule] = useState<SieveRule | null>(null);
+  const [sample, setSample] = useState<SampleMessage>({
+    from: '',
+    subject: '',
+    body: '',
+  });
+  const [matchResult, setMatchResult] = useState<RuleMatchResult | null>(null);
   const queryClient = useQueryClient();
   const setViewMode = useMailStore((s) => s.setViewMode);
 
@@ -272,6 +289,13 @@ export function FilterManager() {
   const reorderMutation = useMutation({
     mutationFn: reorderFilters,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['filters'] }),
+  });
+
+  // Added (TMAIL-286): test the saved rule against the sample message and
+  // store the per-condition breakdown so the UI can render the badge.
+  const testMutation = useMutation({
+    mutationFn: ({ id, data }: { id: string; data: SampleMessage }) => testFilter(id, data),
+    onSuccess: (result) => setMatchResult(result),
   });
 
   const handleSave = (data: CreateFilterRequest) => {
@@ -323,6 +347,104 @@ export function FilterManager() {
         </button>
       </div>
 
+      {/* Added (TMAIL-286): match-test sandbox. Lets the user feed a
+          synthetic message into the saved rule and see whether it would
+          match — without waiting for real mail to flow. */}
+      {testingRule && (
+        <div
+          data-testid="filter-test-sandbox"
+          style={{
+            marginBottom: '16px',
+            padding: '16px',
+            border: '1px solid var(--border)',
+            borderRadius: '8px',
+            background: 'var(--color-bg-secondary, #f9fafb)',
+          }}
+        >
+          <h3 style={{ marginBottom: '12px' }}>Test rule: {testingRule.name}</h3>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              testMutation.mutate({ id: testingRule.id, data: sample });
+            }}
+          >
+            <div className="composer__field">
+              <label>From</label>
+              <input
+                value={sample.from || ''}
+                onChange={(e) => setSample({ ...sample, from: e.target.value })}
+                placeholder="alice@example.com"
+                data-testid="filter-test-from"
+              />
+            </div>
+            <div className="composer__field">
+              <label>Subject</label>
+              <input
+                value={sample.subject || ''}
+                onChange={(e) => setSample({ ...sample, subject: e.target.value })}
+                placeholder="A test subject"
+                data-testid="filter-test-subject"
+              />
+            </div>
+            <div className="composer__field">
+              <label>Body</label>
+              <textarea
+                value={sample.body || ''}
+                onChange={(e) => setSample({ ...sample, body: e.target.value })}
+                placeholder="Body text — searched by 'body contains' conditions"
+                rows={3}
+                data-testid="filter-test-body"
+              />
+            </div>
+            <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+              <button
+                type="submit"
+                className="btn btn--primary"
+                disabled={testMutation.isPending}
+                data-testid="filter-test-run"
+              >
+                {testMutation.isPending ? 'Testing…' : 'Test Match'}
+              </button>
+              <button
+                type="button"
+                className="btn"
+                onClick={() => {
+                  setTestingRule(null);
+                  setMatchResult(null);
+                }}
+              >
+                Close
+              </button>
+            </div>
+          </form>
+          {matchResult && (
+            <div
+              data-testid="filter-test-result"
+              style={{ marginTop: '12px', padding: '12px', borderRadius: '6px', background: 'white' }}
+            >
+              <strong
+                data-testid="filter-test-verdict"
+                style={{
+                  color: matchResult.matched ? 'var(--success, #16a34a)' : 'var(--danger, #dc2626)',
+                }}
+              >
+                {matchResult.matched ? '✓ Would match' : '✗ Would not match'}
+              </strong>
+              <span style={{ marginLeft: '8px', color: 'var(--text-secondary)' }}>
+                (mode: {matchResult.match_mode})
+              </span>
+              <ul style={{ marginTop: '8px', paddingLeft: '20px', fontSize: '13px' }}>
+                {matchResult.condition_results.map((c, i) => (
+                  <li key={i} style={{ color: c.matched ? 'var(--success, #16a34a)' : 'var(--text-secondary)' }}>
+                    {c.matched ? '✓' : '✗'} {c.field} {c.operator} "{c.value}"
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+
       {sortedRules.length === 0 ? (
         <p style={{ textAlign: 'center', color: 'var(--text-secondary)', padding: '40px 0' }}>
           No filter rules yet. Create one to automatically organize your email.
@@ -367,12 +489,43 @@ export function FilterManager() {
                   {rule.stop_processing && ' • stops'}
                 </div>
               </div>
+              {/* Added (TMAIL-286): "Active" badge so users can tell at a glance
+                  which rules will fire against incoming mail. Pair with the
+                  Power toggle for round-trip visual feedback. */}
+              {rule.enabled && (
+                <span
+                  data-testid={`filter-active-badge-${rule.id}`}
+                  style={{
+                    fontSize: '11px',
+                    background: 'var(--success, #16a34a)',
+                    color: 'white',
+                    padding: '2px 8px',
+                    borderRadius: '10px',
+                    fontWeight: 600,
+                  }}
+                >
+                  Active
+                </span>
+              )}
               <button
                 className="btn btn--icon"
                 onClick={() => toggleMutation.mutate({ id: rule.id, enabled: !rule.enabled })}
                 title={rule.enabled ? 'Disable' : 'Enable'}
               >
                 <Power size={16} color={rule.enabled ? 'var(--success)' : 'var(--text-secondary)'} />
+              </button>
+              {/* Added (TMAIL-286): match-test sandbox trigger */}
+              <button
+                className="btn btn--icon"
+                onClick={() => {
+                  setTestingRule(rule);
+                  setMatchResult(null);
+                  setSample({ from: '', subject: '', body: '' });
+                }}
+                title="Test against a sample message"
+                data-testid={`filter-test-btn-${rule.id}`}
+              >
+                <FlaskConical size={16} />
               </button>
               <button className="btn btn--icon" onClick={() => setEditing(rule)} title="Edit">
                 <Edit2 size={16} />

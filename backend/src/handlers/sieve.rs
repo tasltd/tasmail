@@ -6,7 +6,10 @@ use axum::{
 use uuid::Uuid;
 
 use crate::error::AppError;
-use crate::models::sieve_rule::{CreateSieveRule, SieveRule, SieveRuleResponse, UpdateSieveRule};
+use crate::models::sieve_rule::{
+    CreateSieveRule, RuleMatchBreakdown, SampleMessage, SieveRule, SieveRuleResponse,
+    UpdateSieveRule,
+};
 use crate::services::auth_service::Claims;
 use crate::state::AppState;
 
@@ -109,6 +112,23 @@ pub async fn reorder_rules(
 
     SieveRule::reorder(&state.db, mailbox_id, &rule_ids).await?;
     Ok(StatusCode::OK)
+}
+
+/// Added (TMAIL-286): POST /api/filters/{id}/test — dry-run the rule against
+/// a synthetic message so the SPA can render a "would match / would not match"
+/// preview. The match logic reuses the same evaluator that runs in production
+/// so the sandbox and the live filter cannot drift.
+pub async fn test_rule(
+    State(state): State<AppState>,
+    axum::Extension(claims): axum::Extension<Claims>,
+    Path(id): Path<Uuid>,
+    Json(sample): Json<SampleMessage>,
+) -> Result<Json<RuleMatchBreakdown>, AppError> {
+    let mailbox_id = parse_mailbox_id(&claims)?;
+    let rule = SieveRule::find_by_id(&state.db, id, mailbox_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Filter rule not found".to_string()))?;
+    Ok(Json(rule.evaluate_sample(&sample)))
 }
 
 #[cfg(test)]

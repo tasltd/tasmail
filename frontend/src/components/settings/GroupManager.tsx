@@ -33,12 +33,14 @@ export function GroupManager() {
   const handleCreate = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newGroup.name || !newGroup.address) return;
-    // NOTE: domain_id needs to come from user's domain — using placeholder
+    // Fix (TMAIL-286): previously sent domain_id: '' which the backend
+    // rejected as an invalid Uuid before the handler even ran. Backend now
+    // resolves the domain from the owner's mailbox when omitted (the only
+    // domain a non-admin BYOK user can have a group in anyway).
     createMutation.mutate({
       name: newGroup.name,
       address: newGroup.address,
       description: newGroup.description || undefined,
-      domain_id: '', // Added: Will be resolved from user's primary domain
     });
   };
 
