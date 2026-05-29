@@ -2,7 +2,7 @@
 
 > **Parent epic:** [TMAIL-241 — Modularisation, static-types, performance & scalability assessment (cross-feature)](https://cim.techatscale.io/projects/TMAIL/issues/241)
 > **Cycle:** May 2026 (`-2026-05.md` suffix)
-> **Status:** in progress — 19 of 22 child assessments landed; 3 still queued.
+> **Status:** in progress — 20 of 22 child assessments landed; 2 still queued.
 
 This index points at every per-feature assessment produced under TMAIL-241. Each
 report is a point-in-time audit at HEAD around late-May 2026 against four axes:
@@ -33,7 +33,7 @@ follow-up child tasks (recorded in the per-report **Follow-up tasks** section).
 | 3 | TMAIL-244 | Compose, Drafts, Send & Scheduled Send | [compose-send-2026-05.md](compose-send-2026-05.md) | In Review |
 | 4 | TMAIL-245 | Search, Filters & Templates | _pending_ | Backlog |
 | 5 | TMAIL-246 | Attachments, Shared Files & Quota | [attachments-storage-2026-05.md](attachments-storage-2026-05.md) | In Review |
-| 6 | TMAIL-247 | Calendar & Contacts | _pending_ | Backlog |
+| 6 | TMAIL-247 | Calendar & Contacts | [calendar-contacts-2026-05.md](calendar-contacts-2026-05.md) | In Review |
 | 7 | TMAIL-248 | Phishing, DLP & Anti-Spam scanners | [security-scanners-2026-05.md](security-scanners-2026-05.md) | In Review |
 | 8 | TMAIL-249 | AI subsystem (Ollama, embeddings, BYOK AI, smart reply, summarization) | [ai-subsystem-2026-05.md](ai-subsystem-2026-05.md) | In Review |
 | 9 | TMAIL-250 | Billing & Payment Providers (Paystack / Mastercard / Cybersource / Bank Transfer) | [billing-2026-05.md](billing-2026-05.md) | In Review |
@@ -83,7 +83,7 @@ the 10s undo window), see §1 of that report.
 - TMAIL-246 → [attachments-storage-2026-05.md](attachments-storage-2026-05.md) ✅ (landed
   under the ticket-named filename `attachments-storage-2026-05.md` rather than the earlier
   placeholder `attachments-quota-2026-05.md`)
-- TMAIL-247 → `calendar-contacts-2026-05.md`
+- TMAIL-247 → [calendar-contacts-2026-05.md](calendar-contacts-2026-05.md) ✅
 
 ---
 
