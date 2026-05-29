@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import 'fake-indexeddb/auto';
 import { backgroundSync } from './background-sync';
 
@@ -64,6 +64,77 @@ describe('backgroundSync', () => {
       await backgroundSync.clearAll();
       const actions = await backgroundSync.getPending();
       expect(actions).toEqual([]);
+    });
+  });
+
+  describe('getPendingCount', () => {
+    it('returns 0 when queue is empty', async () => {
+      expect(await backgroundSync.getPendingCount()).toBe(0);
+    });
+
+    it('returns exact queue size', async () => {
+      await backgroundSync.enqueue('send', { to: ['a@b.c'], subject: '1' });
+      await backgroundSync.enqueue('move', { folder: 'INBOX', uid: 1, toFolder: 'Trash' });
+      await backgroundSync.enqueue('delete', { folder: 'INBOX', uid: 2 });
+      expect(await backgroundSync.getPendingCount()).toBe(3);
+    });
+  });
+
+  describe('subscribe (TMAIL-88)', () => {
+    it('fires listener on enqueue', async () => {
+      const listener = vi.fn();
+      const unsubscribe = backgroundSync.subscribe(listener);
+      await backgroundSync.enqueue('delete', { folder: 'INBOX', uid: 1 });
+      expect(listener).toHaveBeenCalled();
+      unsubscribe();
+    });
+
+    it('fires listener on clearAll', async () => {
+      await backgroundSync.enqueue('delete', { folder: 'INBOX', uid: 1 });
+      const listener = vi.fn();
+      const unsubscribe = backgroundSync.subscribe(listener);
+      await backgroundSync.clearAll();
+      expect(listener).toHaveBeenCalled();
+      unsubscribe();
+    });
+
+    it('does not fire after unsubscribe', async () => {
+      const listener = vi.fn();
+      const unsubscribe = backgroundSync.subscribe(listener);
+      unsubscribe();
+      await backgroundSync.enqueue('delete', { folder: 'INBOX', uid: 1 });
+      expect(listener).not.toHaveBeenCalled();
+    });
+
+    it('isolates a faulty listener from the rest', async () => {
+      const good = vi.fn();
+      const bad = vi.fn(() => { throw new Error('boom'); });
+      // Silence the expected console.error noise
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const u1 = backgroundSync.subscribe(bad);
+      const u2 = backgroundSync.subscribe(good);
+      await backgroundSync.enqueue('delete', { folder: 'INBOX', uid: 1 });
+      expect(good).toHaveBeenCalled();
+      expect(bad).toHaveBeenCalled();
+      errSpy.mockRestore();
+      u1(); u2();
+    });
+  });
+
+  describe('LWW order (TMAIL-88)', () => {
+    it('getPending returns actions sorted by createdAt ascending', async () => {
+      // Force three distinct createdAt by mocking Date.now between enqueues.
+      let t = 1_000_000;
+      const dateSpy = vi.spyOn(Date, 'now').mockImplementation(() => t);
+
+      t = 3000; await backgroundSync.enqueue('send', { to: ['c'], subject: '3rd' });
+      t = 1000; await backgroundSync.enqueue('send', { to: ['a'], subject: '1st' });
+      t = 2000; await backgroundSync.enqueue('send', { to: ['b'], subject: '2nd' });
+
+      const actions = await backgroundSync.getPending();
+      expect(actions.map((a) => a.payload.subject)).toEqual(['1st', '2nd', '3rd']);
+
+      dateSpy.mockRestore();
     });
   });
 

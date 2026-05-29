@@ -12,6 +12,8 @@ import { KeyboardShortcutHelp } from '../shared/KeyboardShortcutHelp';
 import { useResponsive } from '../../hooks/useResponsive';
 // Added (TMAIL-32): two-way sync between search state and the URL query string.
 import { useSearchUrlSync } from '../../hooks/useSearchUrlSync';
+// Added (TMAIL-88): "Pending sync: N actions" banner for offline queue visibility.
+import { PendingSyncBanner } from '../shared/PendingSyncBanner';
 
 // Changed (TMAIL-259): Every Settings manager + Composer + SearchResults moved
 // to React.lazy() so the initial mailbox bundle ships only the list/reader
@@ -84,6 +86,8 @@ export function AppShell({ onLogout }: AppShellProps) {
   return (
     <div className={`app-shell ${sidebarOpen ? '' : 'app-shell--sidebar-collapsed'}`}>
       <TopBar onLogout={onLogout} />
+      {/* Added (TMAIL-88): banner shows queued offline actions; renders null when empty. */}
+      <PendingSyncBanner />
       <div className="app-shell__body">
         {/* Changed: Show sidebar overlay only on mobile; desktop always shows sidebar inline (TMAIL-33) */}
         {sidebarOpen && (
