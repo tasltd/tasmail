@@ -87,12 +87,16 @@ class _EmailRecipientFieldState extends State<EmailRecipientField> {
     return await widget.suggestionService.suggest(token);
   }
 
-  void _onSelected(ContactSuggestion suggestion) {
-    final newText = applySelection(widget.controller.text, suggestion);
-    widget.controller.value = TextEditingValue(
-      text: newText,
-      selection: TextSelection.collapsed(offset: newText.length),
-    );
+  // Changed: TMAIL-148 follow-up — RawAutocomplete pushes
+  // `displayStringForOption(option)` into the controller BEFORE invoking
+  // `onSelected`, so reading `widget.controller.text` here always returned the
+  // bare suggestion text and earlier tokens (e.g. "first@example.com, ") were
+  // lost. Routing the prefix-preserving logic through `displayStringForOption`
+  // — which runs while the controller still holds the user's typed text — is
+  // the only place that can compose the right value before the autocomplete
+  // clobbers it.
+  String _displayStringForOption(ContactSuggestion suggestion) {
+    return applySelection(widget.controller.text, suggestion);
   }
 
   @override
@@ -101,8 +105,7 @@ class _EmailRecipientFieldState extends State<EmailRecipientField> {
       textEditingController: widget.controller,
       focusNode: _focusNode,
       optionsBuilder: _optionsBuilder,
-      displayStringForOption: (s) => s.formatted(),
-      onSelected: _onSelected,
+      displayStringForOption: _displayStringForOption,
       fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
         return TextField(
           key: widget.fieldKey,

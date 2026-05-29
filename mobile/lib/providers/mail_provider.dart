@@ -231,4 +231,68 @@ class MailProvider extends ChangeNotifier {
       // NOTE: Non-critical, will sync on next load
     }
   }
+
+  // Added: Mark message as unread for TMAIL-148 swipe-action support
+  // PURPOSE: Backs the "Mark unread" swipe action. Goes through the canonical
+  //          /flag endpoint (POST {flag: "\\Seen", add: false}) so IMAP \Seen
+  //          is cleared on the server, matching what the web SPA does.
+  Future<bool> markAsUnread(String folder, int uid) async {
+    try {
+      await _api.post(
+        '/folders/$folder/messages/$uid/flag',
+        data: {'flag': r'\Seen', 'add': false},
+      );
+      final index = _messages.indexWhere((m) => m.uid == uid && m.folder == folder);
+      if (index != -1) {
+        final old = _messages[index];
+        _messages[index] = MobileMessageSummary(
+          uid: old.uid,
+          folder: old.folder,
+          from: old.from,
+          subject: old.subject,
+          date: old.date,
+          isRead: false,
+          isFlagged: old.isFlagged,
+          hasAttachment: old.hasAttachment,
+        );
+        notifyListeners();
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  // Added: Set the IMAP \Flagged bit explicitly for TMAIL-148.
+  // PURPOSE: The legacy `toggleFlag(...)` above hits a PUT endpoint the backend
+  //          never exposed; the swipe-action wiring needs a path that actually
+  //          mutates server state. This method goes through POST /flag with the
+  //          documented {flag, add} payload that flag_message() in
+  //          backend/src/handlers/messages.rs accepts.
+  Future<bool> setFlagged(String folder, int uid, bool flagged) async {
+    try {
+      await _api.post(
+        '/folders/$folder/messages/$uid/flag',
+        data: {'flag': r'\Flagged', 'add': flagged},
+      );
+      final index = _messages.indexWhere((m) => m.uid == uid && m.folder == folder);
+      if (index != -1) {
+        final old = _messages[index];
+        _messages[index] = MobileMessageSummary(
+          uid: old.uid,
+          folder: old.folder,
+          from: old.from,
+          subject: old.subject,
+          date: old.date,
+          isRead: old.isRead,
+          isFlagged: flagged,
+          hasAttachment: old.hasAttachment,
+        );
+        notifyListeners();
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
 }

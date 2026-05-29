@@ -66,6 +66,12 @@ class SettingsScreen extends StatelessWidget {
             _SettingItem(Icons.label, 'Labels & Folders', '/settings/folders'),
             _SettingItem(Icons.filter_list, 'Filters', '/settings/filters'),
             _SettingItem(Icons.reply_all, 'Auto Reply', '/settings/auto-reply'),
+            // Added: TMAIL-148 — configurable inbox swipe actions
+            _SettingItem(
+              Icons.swipe,
+              'Swipe Actions',
+              '/settings/swipe-actions',
+            ),
           ]),
 
           _buildSection(context, 'Security', [
@@ -133,9 +139,11 @@ class SettingsScreen extends StatelessWidget {
               title: Text(item.label),
               trailing: const Icon(Icons.chevron_right, size: 20),
               onTap: () {
-                // Changed: Wired Biometric Lock route for TMAIL-142; other sub-screens
-                // still show the "coming soon" placeholder until they ship.
-                if (item.route == '/settings/biometric') {
+                // Changed: Wired Biometric Lock (TMAIL-142) and Swipe Actions
+                // (TMAIL-148) routes; other sub-screens still show the
+                // "coming soon" placeholder until they ship.
+                if (item.route == '/settings/biometric' ||
+                    item.route == '/settings/swipe-actions') {
                   Navigator.pushNamed(context, item.route);
                   return;
                 }

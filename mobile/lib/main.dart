@@ -16,6 +16,9 @@ import 'screens/message/message_screen.dart';
 import 'screens/compose/compose_screen.dart';
 // Added: Biometric Lock settings route for TMAIL-142
 import 'screens/settings/biometric_settings_screen.dart';
+// Added: Configurable swipe actions for TMAIL-148
+import 'screens/settings/swipe_actions_screen.dart';
+import 'services/swipe_actions_service.dart';
 import 'models/email.dart';
 // Added: TMAIL-55 — native OS integration plumbing.
 import 'services/native/deep_link_service.dart';
@@ -67,6 +70,10 @@ class _TasMailAppState extends State<TasMailApp> {
       providers: [
         ChangeNotifierProvider(create: (_) => AuthProvider()..checkAuth()),
         ChangeNotifierProvider(create: (_) => MailProvider()),
+        // Added: TMAIL-148 — configurable swipe actions. Service hydrates from
+        //        secure storage on first read; defaults match the pre-148
+        //        behaviour so nothing flashes weird on cold start.
+        ChangeNotifierProvider(create: (_) => SwipeActionsService()..load()),
       ],
       child: Consumer<AuthProvider>(
         builder: (context, auth, _) {
@@ -132,6 +139,16 @@ class _TasMailAppState extends State<TasMailApp> {
                 case '/settings/biometric':
                   return MaterialPageRoute(
                     builder: (_) => const BiometricSettingsScreen(),
+                  );
+                // Added: Configurable swipe actions route for TMAIL-148
+                case '/settings/swipe-actions':
+                  return MaterialPageRoute(
+                    builder: (ctx) => SwipeActionsScreen(
+                      service: Provider.of<SwipeActionsService>(
+                        ctx,
+                        listen: false,
+                      ),
+                    ),
                   );
                 default:
                   return null;

@@ -1,6 +1,10 @@
 // Added: Widget tests for InboxScreen swipe gestures (TMAIL-54)
-// PURPOSE: Verify bidirectional swipe — left=delete, right=archive — calls
-//          the matching MailProvider methods and renders the right snackbar.
+// Changed: TMAIL-148 — extended to cover configurable swipe actions sourced
+//          from SwipeActionsService (archive / delete / mark-unread / star).
+// PURPOSE: Verify bidirectional swipe — left=delete, right=archive — calls the
+//          matching MailProvider methods and renders the right snackbar, and
+//          that picking a non-default action (markUnread, toggleFlag) routes
+//          through the correct provider method without dismissing the tile.
 // EXTERNAL: Uses a FakeMailProvider that overrides the network-touching
 //          methods so the test is hermetic (no dio, no real HTTP).
 
@@ -10,6 +14,8 @@ import 'package:provider/provider.dart';
 import 'package:tasmail_mobile/models/email.dart';
 import 'package:tasmail_mobile/providers/mail_provider.dart';
 import 'package:tasmail_mobile/screens/inbox/inbox_screen.dart';
+import 'package:tasmail_mobile/services/swipe_actions_service.dart';
+import 'package:tasmail_mobile/services/swipe_preferences.dart';
 
 /// Records `deleteMessage` / `archiveMessage` / `moveMessage` calls so the
 /// swipe tests can assert what the screen actually did, without hitting dio.
@@ -17,15 +23,16 @@ class FakeMailProvider extends MailProvider {
   final List<MobileMessageSummary> seeded;
   bool archiveResult = true;
   bool deleteResult = true;
+  bool markUnreadResult = true;
+  bool setFlaggedResult = true;
   final List<(String, int, String)> moveCalls = [];
   final List<(String, int)> archiveCalls = [];
   final List<(String, int)> deleteCalls = [];
+  final List<(String, int)> markUnreadCalls = [];
+  final List<(String, int, bool)> setFlaggedCalls = [];
 
   FakeMailProvider({required this.seeded});
 
-  // Override the inbox getter via a backing list. Because MailProvider
-  // stores messages in a private field we can't touch directly, we expose
-  // the list through `_messages` by re-emitting it via notifyListeners.
   @override
   List<MobileMessageSummary> get messages => _seededView;
 
@@ -43,24 +50,16 @@ class FakeMailProvider extends MailProvider {
   String get selectedFolder => 'INBOX';
 
   @override
-  Future<void> loadInbox({bool refresh = false}) async {
-    // no-op: messages are seeded
-  }
+  Future<void> loadInbox({bool refresh = false}) async {}
 
   @override
-  Future<void> loadUnreadCount() async {
-    // no-op
-  }
+  Future<void> loadUnreadCount() async {}
 
   @override
-  Future<void> loadFolders() async {
-    // no-op
-  }
+  Future<void> loadFolders() async {}
 
   @override
-  Future<void> markAsRead(String folder, int uid) async {
-    // no-op
-  }
+  Future<void> markAsRead(String folder, int uid) async {}
 
   @override
   Future<bool> deleteMessage(String folder, int uid) async {
@@ -87,14 +86,60 @@ class FakeMailProvider extends MailProvider {
     archiveCalls.add((folder, uid));
     return moveMessage(folder, uid, 'Archive');
   }
+
+  @override
+  Future<bool> markAsUnread(String folder, int uid) async {
+    markUnreadCalls.add((folder, uid));
+    return markUnreadResult;
+  }
+
+  @override
+  Future<bool> setFlagged(String folder, int uid, bool flagged) async {
+    setFlaggedCalls.add((folder, uid, flagged));
+    return setFlaggedResult;
+  }
+}
+
+/// In-memory SwipeActionsService that returns whatever prefs the test seeds it
+/// with — no flutter_secure_storage round-trip needed.
+class StubSwipeActionsService extends SwipeActionsService {
+  SwipePreferences _seed;
+
+  StubSwipeActionsService(this._seed);
+
+  @override
+  SwipePreferences get preferences => _seed;
+
+  @override
+  bool get isLoaded => true;
+
+  @override
+  Future<SwipePreferences> load() async => _seed;
+
+  @override
+  Future<SwipePreferences> save(SwipePreferences next) async {
+    _seed = next;
+    notifyListeners();
+    return _seed;
+  }
 }
 
 void main() {
-  // NOTE: NoSplash.splashFactory avoids loading the ink_sparkle.frag shader,
-  //       which fails to decode in Flutter 3.44+ widget tests.
-  Widget createTestWidget(FakeMailProvider provider) {
-    return ChangeNotifierProvider<MailProvider>.value(
-      value: provider,
+  Widget createTestWidget(
+    FakeMailProvider provider, {
+    StubSwipeActionsService? swipeService,
+  }) {
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider<MailProvider>.value(value: provider),
+        // PURPOSE: TMAIL-148 — the screen pulls swipe prefs from this service
+        // when present; if absent, the InboxScreen falls back to the
+        // hardcoded defaults so the original test cases still pass.
+        if (swipeService != null)
+          ChangeNotifierProvider<SwipeActionsService>.value(
+            value: swipeService,
+          ),
+      ],
       child: MaterialApp(
         theme: ThemeData(splashFactory: NoSplash.splashFactory),
         home: const InboxScreen(),
@@ -125,7 +170,7 @@ void main() {
     ),
   ];
 
-  group('InboxScreen swipe gestures (TMAIL-54)', () {
+  group('InboxScreen swipe gestures — defaults (TMAIL-54)', () {
     testWidgets('renders message tiles for seeded inbox', (tester) async {
       final provider = FakeMailProvider(seeded: fixtureMessages);
       await tester.pumpWidget(createTestWidget(provider));
@@ -141,7 +186,6 @@ void main() {
       await tester.pumpWidget(createTestWidget(provider));
       await tester.pump();
 
-      // Swipe the first tile from right to left -> endToStart -> delete.
       await tester.drag(find.text('Hello'), const Offset(-500, 0));
       await tester.pumpAndSettle();
 
@@ -157,7 +201,6 @@ void main() {
       await tester.pumpWidget(createTestWidget(provider));
       await tester.pump();
 
-      // Swipe the first tile from left to right -> startToEnd -> archive.
       await tester.drag(find.text('Hello'), const Offset(500, 0));
       await tester.pumpAndSettle();
 
@@ -180,7 +223,6 @@ void main() {
 
       expect(provider.archiveCalls, [('INBOX', 101)]);
       expect(find.text('Archive failed'), findsOneWidget);
-      // NOTE: failure path renders no Undo action and the tile must stay put
       expect(find.text('Undo'), findsNothing);
       expect(find.text('Hello'), findsOneWidget);
     });
@@ -191,6 +233,108 @@ void main() {
       await tester.pump();
 
       expect(find.byKey(const Key('compose_fab')), findsOneWidget);
+    });
+  });
+
+  group('InboxScreen swipe gestures — configurable (TMAIL-148)', () {
+    testWidgets('swipe-right honours markUnread when configured', (tester) async {
+      final provider = FakeMailProvider(seeded: fixtureMessages);
+      final swipe = StubSwipeActionsService(
+        const SwipePreferences(
+          rightAction: SwipeAction.markUnread,
+          leftAction: SwipeAction.delete,
+        ),
+      );
+
+      await tester.pumpWidget(
+        createTestWidget(provider, swipeService: swipe),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.drag(find.text('Hello'), const Offset(500, 0));
+      await tester.pumpAndSettle();
+
+      expect(provider.markUnreadCalls, [('INBOX', 101)]);
+      expect(provider.archiveCalls, isEmpty);
+      expect(provider.deleteCalls, isEmpty);
+      expect(find.text('Marked as unread'), findsOneWidget);
+      // Non-destructive: tile must stay
+      expect(find.text('Hello'), findsOneWidget);
+    });
+
+    testWidgets('swipe-left honours toggleFlag when configured', (tester) async {
+      final provider = FakeMailProvider(seeded: fixtureMessages);
+      final swipe = StubSwipeActionsService(
+        const SwipePreferences(
+          rightAction: SwipeAction.archive,
+          leftAction: SwipeAction.toggleFlag,
+        ),
+      );
+
+      await tester.pumpWidget(
+        createTestWidget(provider, swipeService: swipe),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.drag(find.text('Hello'), const Offset(-500, 0));
+      await tester.pumpAndSettle();
+
+      expect(provider.setFlaggedCalls, [('INBOX', 101, true)]);
+      expect(provider.deleteCalls, isEmpty);
+      expect(find.text('Message starred'), findsOneWidget);
+      expect(find.text('Hello'), findsOneWidget);
+    });
+
+    testWidgets('setting an action to none disables that swipe direction',
+        (tester) async {
+      final provider = FakeMailProvider(seeded: fixtureMessages);
+      final swipe = StubSwipeActionsService(
+        const SwipePreferences(
+          rightAction: SwipeAction.none,
+          leftAction: SwipeAction.delete,
+        ),
+      );
+
+      await tester.pumpWidget(
+        createTestWidget(provider, swipeService: swipe),
+      );
+      await tester.pumpAndSettle();
+
+      // Try to swipe right (disabled) — should be a no-op.
+      await tester.drag(find.text('Hello'), const Offset(500, 0));
+      await tester.pumpAndSettle();
+
+      expect(provider.archiveCalls, isEmpty);
+      expect(provider.markUnreadCalls, isEmpty);
+      expect(find.text('Hello'), findsOneWidget);
+
+      // Swipe left (still wired to delete) — should fire.
+      await tester.drag(find.text('Hello'), const Offset(-500, 0));
+      await tester.pumpAndSettle();
+      expect(provider.deleteCalls, [('INBOX', 101)]);
+    });
+
+    testWidgets('swipe-right delete works when configured for both sides',
+        (tester) async {
+      final provider = FakeMailProvider(seeded: fixtureMessages);
+      final swipe = StubSwipeActionsService(
+        const SwipePreferences(
+          rightAction: SwipeAction.delete,
+          leftAction: SwipeAction.delete,
+        ),
+      );
+
+      await tester.pumpWidget(
+        createTestWidget(provider, swipeService: swipe),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.drag(find.text('Hello'), const Offset(500, 0));
+      await tester.pumpAndSettle();
+
+      expect(provider.deleteCalls, [('INBOX', 101)]);
+      expect(find.text('Message deleted'), findsOneWidget);
+      expect(find.text('Hello'), findsNothing);
     });
   });
 }
