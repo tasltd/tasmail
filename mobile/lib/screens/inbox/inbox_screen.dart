@@ -193,6 +193,11 @@ class _InboxScreenState extends State<InboxScreen> {
     final swipe = _watchSwipeService();
     final prefs = swipe?.preferences ?? const SwipePreferences();
 
+    // Changed: TMAIL-149 — the Compose FAB now lives on the HomeScreen
+    //          Scaffold (so it's visible across all bottom-nav tabs, not just
+    //          the Inbox). Keeping a second FAB here caused two widgets to
+    //          share the `compose_fab` key when InboxScreen rendered inside
+    //          HomeScreen's IndexedStack.
     return Scaffold(
       appBar: AppBar(
         title: Text(mail.selectedFolder == 'INBOX'
@@ -200,11 +205,6 @@ class _InboxScreenState extends State<InboxScreen> {
             : mail.selectedFolder),
       ),
       body: _buildBody(mail, prefs),
-      floatingActionButton: FloatingActionButton(
-        key: const Key('compose_fab'),
-        onPressed: () => Navigator.pushNamed(context, '/compose'),
-        child: const Icon(Icons.edit),
-      ),
     );
   }
 

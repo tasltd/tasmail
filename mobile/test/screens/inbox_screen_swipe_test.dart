@@ -227,12 +227,17 @@ void main() {
       expect(find.text('Hello'), findsOneWidget);
     });
 
-    testWidgets('compose FAB is present on the inbox', (tester) async {
+    // Changed: TMAIL-149 — the Compose FAB moved from InboxScreen to
+    //          HomeScreen so it's visible on every bottom-nav tab. When the
+    //          InboxScreen is rendered standalone (as in this test), it
+    //          intentionally has no FAB of its own. The home-shell FAB is
+    //          covered by test/screens/home_screen_test.dart.
+    testWidgets('inbox standalone no longer owns the compose FAB', (tester) async {
       final provider = FakeMailProvider(seeded: fixtureMessages);
       await tester.pumpWidget(createTestWidget(provider));
       await tester.pump();
 
-      expect(find.byKey(const Key('compose_fab')), findsOneWidget);
+      expect(find.byKey(const Key('compose_fab')), findsNothing);
     });
   });
 
