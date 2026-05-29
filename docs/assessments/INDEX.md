@@ -2,7 +2,7 @@
 
 > **Parent epic:** [TMAIL-241 — Modularisation, static-types, performance & scalability assessment (cross-feature)](https://cim.techatscale.io/projects/TMAIL/issues/241)
 > **Cycle:** May 2026 (`-2026-05.md` suffix)
-> **Status:** in progress — 20 of 22 child assessments landed; 2 still queued.
+> **Status:** in progress — 21 of 22 child assessments landed; 1 still queued.
 
 This index points at every per-feature assessment produced under TMAIL-241. Each
 report is a point-in-time audit at HEAD around late-May 2026 against four axes:
@@ -31,7 +31,7 @@ follow-up child tasks (recorded in the per-report **Follow-up tasks** section).
 | 1 | TMAIL-242 | Auth & Identity (login, 2FA, SAML, OIDC, LDAP, WebAuthn) | [auth-2026-05.md](auth-2026-05.md) | In Review |
 | 2 | TMAIL-243 | Folders & Messages (IMAP read/list/move/flag/delete) | [folders-messages-2026-05.md](folders-messages-2026-05.md) | In Review |
 | 3 | TMAIL-244 | Compose, Drafts, Send & Scheduled Send | [compose-send-2026-05.md](compose-send-2026-05.md) | In Review |
-| 4 | TMAIL-245 | Search, Filters & Templates | _pending_ | Backlog |
+| 4 | TMAIL-245 | Search, Filters & Templates | [search-filters-templates-2026-05.md](search-filters-templates-2026-05.md) | In Review |
 | 5 | TMAIL-246 | Attachments, Shared Files & Quota | [attachments-storage-2026-05.md](attachments-storage-2026-05.md) | In Review |
 | 6 | TMAIL-247 | Calendar & Contacts | [calendar-contacts-2026-05.md](calendar-contacts-2026-05.md) | In Review |
 | 7 | TMAIL-248 | Phishing, DLP & Anti-Spam scanners | [security-scanners-2026-05.md](security-scanners-2026-05.md) | In Review |
@@ -79,7 +79,7 @@ production-breaking send-path bug (`EmailScheduler` uses a hardcoded
 the 10s undo window), see §1 of that report.
 
 - TMAIL-244 → [compose-send-2026-05.md](compose-send-2026-05.md) ✅
-- TMAIL-245 → `search-filters-templates-2026-05.md`
+- TMAIL-245 → [search-filters-templates-2026-05.md](search-filters-templates-2026-05.md) ✅ (surfaced 4 P0s: advanced-search params dropped server-side, NLP search returns empty without executing, Sieve rule engine never fires, and a template XSS + cross-tenant `is_shared` leak that should ship as one atomic SECURITY commit)
 - TMAIL-246 → [attachments-storage-2026-05.md](attachments-storage-2026-05.md) ✅ (landed
   under the ticket-named filename `attachments-storage-2026-05.md` rather than the earlier
   placeholder `attachments-quota-2026-05.md`)
@@ -110,7 +110,7 @@ TMAIL-241 transitions to Done when:
 - [x] Every feature area has a child ticket raised.
 - [x] This index exists and points at every report (placeholder rows for the
       five still-pending areas, which the queue workers will fill in).
-- [ ] All 22 children are Done (18 in review, 3 still pending — see above).
+- [ ] All 22 children are Done (19 in review, 2 still pending — see above).
 - [ ] All follow-up child tickets raised by the per-area reports are at least
       triaged (Done or explicitly deferred with a target cycle).
 
