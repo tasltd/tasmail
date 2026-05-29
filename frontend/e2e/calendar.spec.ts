@@ -176,8 +176,12 @@ test.describe('TMAIL-287 Calendar sweep', () => {
     );
 
     await page.goto('/login', { waitUntil: 'domcontentloaded', timeout: 45_000 });
-    await page.waitForURL(/\/app/, { timeout: 30_000 });
-    await expect(page.locator('.sidebar')).toBeVisible({ timeout: 20_000 });
+    // The redirect /login → /app fires after first React render reads the
+    // localStorage tokens. Over the tunnel the first render can take a while —
+    // 45s gives headroom for the cold-Vite path. If the redirect never fires
+    // (e.g. SPA boot failed) the sidebar visibility check below catches it.
+    await page.waitForURL(/\/app/, { timeout: 45_000 });
+    await expect(page.locator('.sidebar')).toBeVisible({ timeout: 30_000 });
   }
 
   async function clickSidebar(page: Page, label: string) {
@@ -459,13 +463,13 @@ test.describe('TMAIL-287 Calendar sweep', () => {
     await page.locator(`[data-testid="event-row"][data-event-title="Sweep Meeting ${RUN_TAG}"]`).click();
     const shareSection = page.locator('[data-testid="public-share-section"]');
     await expect(shareSection).toBeVisible({ timeout: 10_000 });
-    // Use the aria-label rather than a positional selector — the checkbox is
-    // wrapped in a <label> with other content, and a plain `.check()` over
-    // the SSH tunnel was occasionally racing the React onChange handler.
+    // The checkbox is a controlled React input — its `checked` follows
+    // eventDetail.public_enabled, which only flips after the PUT /events/{id}
+    // round-trip + TanStack Query refetch. Use plain click() rather than
+    // check() so we don't fight Playwright's checkbox-state assertion; rely on
+    // the conditionally-rendered URL section below as the readiness signal.
     const toggle = shareSection.getByLabel(/external participants to book/i);
-    await toggle.check({ timeout: 10_000 });
-    // Confirm React state reflected the change before we look for the URL.
-    await expect(toggle).toBeChecked();
+    await toggle.click({ timeout: 10_000 });
 
     // The URL appears.
     const urlCode = page.locator('[data-testid="public-share-url"]');
@@ -509,28 +513,35 @@ test.describe('TMAIL-287 Calendar sweep', () => {
   });
 
   // ──────────────────────────────────────────────────────────────────────
-  // 10) Cancel event from the list — DELETE button on the row → 204 →
-  //     event no longer in the list.
+  // 10) Cancel event from the list — DELETE button on the row triggers a
+  //     SOFT delete (status → 'cancelled' per models/calendar_event.rs::cancel).
+  //     Row stays visible but is dimmed (opacity 0.6) and the status badge
+  //     flips to 'cancelled'. API GET still returns the row with the new
+  //     status.
   // ──────────────────────────────────────────────────────────────────────
-  test('cancel event: list shrinks + API confirms gone', async ({ page, takeScreenshot }) => {
+  test('cancel event: row dims + status flips to cancelled', async ({ page, takeScreenshot }) => {
     const beforeList = (await (await api.get('/api/calendar/events', { headers: orgAuth })).json()) as CalendarEvent[];
     const target = beforeList.find((e) => e.title === `Sweep Meeting ${RUN_TAG}`);
-    expect(target, 'event still exists before delete').toBeTruthy();
+    expect(target, 'event still exists before cancel').toBeTruthy();
+    expect(target!.status).toBe('tentative');
 
     await loginAsAPI(page, ORG_EMAIL, PASSWORD);
     await clickSidebar(page, 'Calendar');
 
     const row = page.locator(`[data-testid="event-row"][data-event-title="Sweep Meeting ${RUN_TAG}"]`);
     await expect(row).toBeVisible();
-    // Click the trash icon button inside the row.
     await row.locator('button.btn--danger').click();
 
-    // Row disappears from the list.
-    await expect(row).toHaveCount(0, { timeout: 10_000 });
+    // Wait for the row to reflect the new status — the badge inside the row
+    // re-renders to "cancelled" once cancelMut.onSuccess invalidates the
+    // ['calendar-events'] query and TanStack Query refetches.
+    await expect(row.locator('span', { hasText: 'cancelled' })).toBeVisible({ timeout: 15_000 });
     await takeScreenshot(page, 'calendar/13-event-list-after-cancel');
 
-    // API GET confirms 404 on the deleted event.
+    // API GET confirms the soft-delete landed.
     const finalCheck = await api.get(`/api/calendar/events/${target!.id}`, { headers: orgAuth });
-    expect(finalCheck.status()).toBe(404);
+    expect(finalCheck.status()).toBe(200);
+    const finalEvent = (await finalCheck.json()) as CalendarEventWithAttendees;
+    expect(finalEvent.status).toBe('cancelled');
   });
 });
