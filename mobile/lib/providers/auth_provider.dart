@@ -1,4 +1,8 @@
 // Added: Authentication state provider for TMAIL-141
+// Changed: TMAIL-150 — accept an optional `onAuthenticated` hook so the FCM
+//          bootstrap can register the device token after every successful
+//          login + cold-start session resume. Hook stays optional so existing
+//          tests don't need updating.
 // PURPOSE: Manages login/logout state, token persistence, and user info
 // EXTERNAL: Uses ApiClient for HTTP calls, FlutterSecureStorage for token persistence
 
@@ -8,15 +12,28 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../api/api_client.dart';
 import '../models/auth.dart';
 
+// PURPOSE: Callback fired after a successful login or session-resume. Used by
+//          main.dart to kick off `FcmBootstrap.register()` so the backend
+//          knows where to deliver pushes for this device.
+typedef AuthenticatedCallback = Future<void> Function();
+
 class AuthProvider extends ChangeNotifier {
   final ApiClient _api = ApiClient();
   final FlutterSecureStorage _storage = const FlutterSecureStorage();
+
+  // Added: TMAIL-150 — optional post-auth hook. Failures are swallowed so a
+  //        broken push registration can never block the user from using the
+  //        app.
+  final AuthenticatedCallback? _onAuthenticated;
 
   bool _isAuthenticated = false;
   // Changed: Start as false, only set true during checkAuth/login
   bool _isLoading = false;
   UserInfo? _user;
   String? _error;
+
+  AuthProvider({AuthenticatedCallback? onAuthenticated})
+      : _onAuthenticated = onAuthenticated;
 
   bool get isAuthenticated => _isAuthenticated;
   bool get isLoading => _isLoading;
@@ -45,6 +62,24 @@ class AuthProvider extends ChangeNotifier {
     } finally {
       _isLoading = false;
       notifyListeners();
+      // Added: TMAIL-150 — fire post-auth hook AFTER notifying listeners so
+      //        the UI can route off the splash screen first. Errors here are
+      //        non-fatal (push registration is best-effort).
+      if (_isAuthenticated) {
+        await _fireAuthenticated();
+      }
+    }
+  }
+
+  // PURPOSE: TMAIL-150 — invoke the optional post-auth hook. Swallows errors
+  //          so a flaky FCM token fetch can't lock the user out of the app.
+  Future<void> _fireAuthenticated() async {
+    final hook = _onAuthenticated;
+    if (hook == null) return;
+    try {
+      await hook();
+    } catch (_) {
+      // Intentionally silent — push registration is non-critical.
     }
   }
 
@@ -80,6 +115,9 @@ class AuthProvider extends ChangeNotifier {
         _isAuthenticated = true;
         _isLoading = false;
         notifyListeners();
+        // Added: TMAIL-150 — register device for push immediately after the
+        //        access token is on disk so /push/register auth succeeds.
+        await _fireAuthenticated();
         return true;
       }
 

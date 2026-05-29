@@ -24,10 +24,40 @@ import 'models/email.dart';
 import 'services/native/deep_link_service.dart';
 import 'services/native/intent_dispatcher.dart';
 import 'services/native/share_intent_service.dart';
+// Added: TMAIL-150 — FCM bootstrap (token registration + tap navigation).
+//        Default token provider is a no-op until firebase_messaging is wired
+//        per `docs/MOBILE-FCM-SETUP.md`. Already plumbed into AuthProvider so
+//        flipping FCM on is a single-line provider swap below.
+import 'services/fcm_bootstrap.dart';
 
 // Added: TMAIL-55 — global navigator key so IntentDispatcher can push routes
 //        from outside the widget tree (cold-start share / mailto: handling).
+//        Reused by TMAIL-150 FcmBootstrap for cold-start notification taps.
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
+// Added: TMAIL-150 — process-wide FcmBootstrap. Holds the most recent
+//        registered token so repeat register() calls are idempotent across
+//        login/logout cycles. The navigator callback drives `/message` route
+//        pushes on notification tap via the global navigatorKey.
+//
+//        TO ENABLE REAL FCM (after Firebase project setup + `flutterfire
+//        configure` — see docs/MOBILE-FCM-SETUP.md): swap `tokenProvider:`
+//        to `() => FirebaseMessaging.instance.getToken()` and `refreshStream:`
+//        to `() => FirebaseMessaging.instance.onTokenRefresh`, then register
+//        the top-level background handler via
+//        `FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler)`
+//        in `main()` before `runApp`.
+final FcmBootstrap fcmBootstrap = FcmBootstrap(
+  navigator: (route, args) {
+    final nav = navigatorKey.currentState;
+    if (nav == null) return;
+    nav.pushNamed(route, arguments: args);
+  },
+  // Platform string sent to backend. Today we register as 'fcm' since the
+  // mobile app targets Android-first (Ghana market — TMAIL-49). iOS swap to
+  // 'apns' happens when the iOS build lands.
+  platform: FcmPlatformId.fcm,
+);
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -68,7 +98,17 @@ class _TasMailAppState extends State<TasMailApp> {
   Widget build(BuildContext context) {
     return MultiProvider(
       providers: [
-        ChangeNotifierProvider(create: (_) => AuthProvider()..checkAuth()),
+        // Changed: TMAIL-150 — pass FcmBootstrap.register as the post-auth
+        //          hook so a fresh login (or session resume) re-registers the
+        //          device with /api/push/register. Inert today (no token
+        //          provider), live the moment firebase_messaging is wired.
+        ChangeNotifierProvider(
+          create: (_) => AuthProvider(
+            onAuthenticated: () async {
+              await fcmBootstrap.register();
+            },
+          )..checkAuth(),
+        ),
         ChangeNotifierProvider(create: (_) => MailProvider()),
         // Added: TMAIL-148 — configurable swipe actions. Service hydrates from
         //        secure storage on first read; defaults match the pre-148

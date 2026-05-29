@@ -309,6 +309,7 @@ Detailed docs in `docs/`: `PRD.md`, `ARCHITECTURE.md`, `SSR.md` (SRS), `API-SPEC
 `BETA-LAUNCH-RUNBOOK.md` (4-week closed-beta launch + operations playbook — WhatsApp group, daily morning weather report, deliverability/perf/UX monitoring, weekly digests, exit interviews, graduation decision — TMAIL-47),
 `MOBILE-DISTRIBUTION-RUNBOOK.md` (Google Play Store + Huawei AppGallery distribution runbook — account setup, keystore ceremony, fastlane lanes, release procedure, store assets, submission checklists — TMAIL-56),
 `PRIVACY-POLICY-MOBILE.md` (mobile-app privacy policy text rendered at `/privacy-policy/mobile` and linked from Play + AppGallery listings — TMAIL-56),
+`MOBILE-FCM-SETUP.md` (Firebase Cloud Messaging operator setup runbook — Firebase project creation, FlutterFire CLI config, APNs key upload, the 3-edit code swap in `main.dart` that flips on real FCM — TMAIL-150),
 plus `docs/research/` (raw research notes), `docs/traceability/` (generated
 DOCX/PDF traceability reports — regenerated, don't hand-edit), and
 `docs/assessments/` (point-in-time audits, e.g. `frontend-render-perf-2026-05.md`).
