@@ -140,7 +140,7 @@ Standalone Vite + React app on top of shadcn/ui + Radix + Tailwind, **wired to t
 
 Build pipeline: `npm run build:alt-ui` (in `frontend/`, calls `scripts/build-alt-ui.sh`) installs deps, runs `vite build`, and copies the bundle into `frontend/public/modern/`. Vite serves it as static files; in production the same path goes through Apache → SSH tunnel → Vite. Re-run after any change to `themes/shadcn-prototype/src/`.
 
-Currently wired: EmailClient + EmailList + EmailReader + ComposeModal (folders, messages, send via scheduledApi). Not yet wired: CalendarView, AdminDashboard (still on `src/data/mockData.ts`). Routing uses `createHashRouter` so internal nav stays inside `/modern/index.html#/...` and doesn't get caught by Vite's SPA fallback. See `themes/shadcn-prototype/README.md` for the full status.
+All four surfaces are live-API-backed: EmailClient + EmailList + EmailReader + ComposeModal (folders, messages, send via scheduledApi, save-draft), CalendarView (`/api/calendar/events` per TMAIL-235/236/237), and AdminDashboard (`/api/admin/users`, `/api/admin/domains`, `/api/quota` per TMAIL-232/233). The legacy `themes/shadcn-prototype/src/data/mockData.ts` was removed in TMAIL-239 — only the typed view-model in `types/ui.ts` remains. Routing uses `createHashRouter` so internal nav stays inside `/modern/index.html#/...` and doesn't get caught by Vite's SPA fallback. End-to-end coverage lives in `frontend/e2e/alt-ui-modern.spec.ts` (TMAIL-292) and `frontend/e2e/specs/modern-ui-noreply-walkthrough.spec.ts`. See `themes/shadcn-prototype/README.md` for the full status.
 
 ## Configuration
 
