@@ -2,7 +2,7 @@
 
 > **Parent epic:** [TMAIL-241 — Modularisation, static-types, performance & scalability assessment (cross-feature)](https://cim.techatscale.io/projects/TMAIL/issues/241)
 > **Cycle:** May 2026 (`-2026-05.md` suffix)
-> **Status:** in progress — 17 of 22 child assessments landed; 5 still queued.
+> **Status:** in progress — 18 of 22 child assessments landed; 4 still queued.
 
 This index points at every per-feature assessment produced under TMAIL-241. Each
 report is a point-in-time audit at HEAD around late-May 2026 against four axes:
@@ -30,7 +30,7 @@ follow-up child tasks (recorded in the per-report **Follow-up tasks** section).
 |---|--------|------|--------|--------|
 | 1 | TMAIL-242 | Auth & Identity (login, 2FA, SAML, OIDC, LDAP, WebAuthn) | [auth-2026-05.md](auth-2026-05.md) | In Review |
 | 2 | TMAIL-243 | Folders & Messages (IMAP read/list/move/flag/delete) | [folders-messages-2026-05.md](folders-messages-2026-05.md) | In Review |
-| 3 | TMAIL-244 | Compose, Drafts, Send & Scheduled Send | _pending_ | Backlog |
+| 3 | TMAIL-244 | Compose, Drafts, Send & Scheduled Send | [compose-send-2026-05.md](compose-send-2026-05.md) | In Review |
 | 4 | TMAIL-245 | Search, Filters & Templates | _pending_ | Backlog |
 | 5 | TMAIL-246 | Attachments, Shared Files & Quota | _pending_ | Backlog |
 | 6 | TMAIL-247 | Calendar & Contacts | _pending_ | Backlog |
@@ -70,10 +70,15 @@ two pairs of duplicate tickets need parent-level consolidation:
   report [frontend-types-parity-2026-05.md](frontend-types-parity-2026-05.md)
   now landed; close one of the two tickets as a duplicate of the other.
 
-The four genuinely missing backend reports are queued (priority=low) and will be
-picked up by the auto-fix queue in order:
+The three genuinely missing backend reports are queued (priority=low) and will be
+picked up by the auto-fix queue in order. TMAIL-244 landed under the
+ticket-named filename `compose-send-2026-05.md` rather than the earlier
+placeholder `compose-drafts-2026-05.md`; the assessment surfaced a P0
+production-breaking send-path bug (`EmailScheduler` uses a hardcoded
+`"placeholder"` SMTP password — every SPA-initiated send silently fails after
+the 10s undo window), see §1 of that report.
 
-- TMAIL-244 → `compose-drafts-2026-05.md`
+- TMAIL-244 → [compose-send-2026-05.md](compose-send-2026-05.md) ✅
 - TMAIL-245 → `search-filters-templates-2026-05.md`
 - TMAIL-246 → `attachments-quota-2026-05.md`
 - TMAIL-247 → `calendar-contacts-2026-05.md`
@@ -103,7 +108,7 @@ TMAIL-241 transitions to Done when:
 - [x] Every feature area has a child ticket raised.
 - [x] This index exists and points at every report (placeholder rows for the
       five still-pending areas, which the queue workers will fill in).
-- [ ] All 22 children are Done (16 in review, 5 still pending — see above).
+- [ ] All 22 children are Done (17 in review, 4 still pending — see above).
 - [ ] All follow-up child tickets raised by the per-area reports are at least
       triaged (Done or explicitly deferred with a target cycle).
 
