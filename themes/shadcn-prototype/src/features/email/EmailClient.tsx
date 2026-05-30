@@ -15,7 +15,12 @@ import { EmailReader } from '@/features/email/EmailReader';
 import { ComposeModal } from '@/features/email/ComposeModal';
 import { fetchFolders } from '@/api/folders';
 import { fetchMessages, flagMessage } from '@/api/messages';
-import type { Folder as ServerFolder, MessageEnvelope, MessageListResponse } from '@/types/mail';
+import type {
+  Folder as ServerFolder,
+  FullMessage,
+  MessageEnvelope,
+  MessageListResponse,
+} from '@/types/mail';
 import type { Email, Folder as UiFolder } from '@/types/ui';
 
 // Added: TMAIL-315 — IMAP \Flagged keyword is what backs the alt-UI "starred"
@@ -55,21 +60,28 @@ export function EmailClient() {
     enabled: !!activeFolder,
   });
 
-  // Added: TMAIL-315 — star toggle mutation. Optimistically flips the IMAP
-  // \Flagged keyword on the matching envelope so the UI feels instant, then
-  // invalidates ['messages', folder] on settle so the real IMAP FLAGS reply
-  // becomes the source of truth.
+  // Added: TMAIL-315 / TMAIL-316 — star toggle mutation. Optimistically flips
+  // the IMAP \Flagged keyword on both the cached envelope list AND the cached
+  // full-message detail so the UI feels instant whether the click came from
+  // the EmailList row (TMAIL-315) or the EmailReader header (TMAIL-316). On
+  // settle, invalidate both ['messages', folder] and ['message', folder, uid]
+  // so the real IMAP FLAGS reply becomes the source of truth.
   const toggleStarMutation = useMutation({
     mutationFn: async ({ uid, currentlyStarred }: { uid: number; currentlyStarred: boolean }) =>
       flagMessage(activeFolder, uid, FLAG_STARRED, !currentlyStarred),
     onMutate: async ({ uid, currentlyStarred }) => {
-      const queryKey = ['messages', activeFolder];
-      await queryClient.cancelQueries({ queryKey });
-      const previous = queryClient.getQueryData<MessageListResponse>(queryKey);
-      if (previous?.messages) {
-        queryClient.setQueryData<MessageListResponse>(queryKey, {
-          ...previous,
-          messages: previous.messages.map((m) => {
+      const listKey = ['messages', activeFolder];
+      const detailKey = ['message', activeFolder, uid];
+      await queryClient.cancelQueries({ queryKey: listKey });
+      await queryClient.cancelQueries({ queryKey: detailKey });
+
+      const previousList = queryClient.getQueryData<MessageListResponse>(listKey);
+      const previousDetail = queryClient.getQueryData<FullMessage>(detailKey);
+
+      if (previousList?.messages) {
+        queryClient.setQueryData<MessageListResponse>(listKey, {
+          ...previousList,
+          messages: previousList.messages.map((m) => {
             if (m.uid !== uid) return m;
             const without = (m.flags ?? []).filter((f) => !f.includes('Flagged'));
             return {
@@ -79,17 +91,29 @@ export function EmailClient() {
           }),
         });
       }
-      return { previous };
+      if (previousDetail) {
+        const without = (previousDetail.flags ?? []).filter((f) => !f.includes('Flagged'));
+        queryClient.setQueryData<FullMessage>(detailKey, {
+          ...previousDetail,
+          flags: currentlyStarred ? without : [...without, FLAG_STARRED],
+        });
+      }
+
+      return { previousList, previousDetail, listKey, detailKey };
     },
     onError: (_err, _vars, ctx) => {
-      // Roll back to the snapshot taken in onMutate so the star reflects
+      // Roll back to the snapshots taken in onMutate so the star reflects
       // actual server state when the IMAP call fails.
-      if (ctx?.previous) {
-        queryClient.setQueryData(['messages', activeFolder], ctx.previous);
+      if (ctx?.previousList) {
+        queryClient.setQueryData(ctx.listKey, ctx.previousList);
+      }
+      if (ctx?.previousDetail) {
+        queryClient.setQueryData(ctx.detailKey, ctx.previousDetail);
       }
     },
-    onSettled: () => {
+    onSettled: (_data, _err, vars) => {
       queryClient.invalidateQueries({ queryKey: ['messages', activeFolder] });
+      queryClient.invalidateQueries({ queryKey: ['message', activeFolder, vars.uid] });
     },
   });
 
@@ -219,6 +243,9 @@ export function EmailClient() {
               uid={selectedUid}
               listItem={selectedEmail}
               onCompose={() => setIsComposing(true)}
+              onToggleStar={(uid, currentlyStarred) =>
+                toggleStarMutation.mutate({ uid, currentlyStarred })
+              }
             />
           </div>
         </div>

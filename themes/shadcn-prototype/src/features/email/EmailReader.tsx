@@ -17,9 +17,14 @@ interface EmailReaderProps {
   uid: number | null;
   listItem: Email | null;
   onCompose: () => void;
+  // Added: TMAIL-316 — star button in the reader header toggles the IMAP
+  // \Flagged keyword via the same /flag endpoint the EmailList star uses.
+  // EmailClient owns the mutation + cache invalidation; the reader stays
+  // presentational and just reports user intent (mirrors EmailList — TMAIL-315).
+  onToggleStar?: (uid: number, currentlyStarred: boolean) => void;
 }
 
-export function EmailReader({ folder, uid, listItem, onCompose }: EmailReaderProps) {
+export function EmailReader({ folder, uid, listItem, onCompose, onToggleStar }: EmailReaderProps) {
   const messageQuery = useQuery({
     queryKey: ['message', folder, uid],
     queryFn: () => fetchMessage(folder, uid!),
@@ -61,11 +66,23 @@ export function EmailReader({ folder, uid, listItem, onCompose }: EmailReaderPro
       <div className="border-b border-zinc-200 dark:border-zinc-800 p-4">
         <div className="flex items-start justify-between mb-4">
           <h2 className="text-2xl font-semibold flex-1">{subject}</h2>
-          <Button variant="ghost" size="icon">
+          {/* Added: TMAIL-316 — wired to /flag via EmailClient's mutation.
+              Native <button> + aria-pressed so screen readers announce the
+              toggle state, matching the EmailList pattern (TMAIL-315). */}
+          <button
+            type="button"
+            aria-pressed={isStarred}
+            aria-label={isStarred ? `Unstar email from ${from}` : `Star email from ${from}`}
+            disabled={uid == null || !onToggleStar}
+            onClick={() => {
+              if (uid != null) onToggleStar?.(uid, isStarred);
+            }}
+            className="inline-flex items-center justify-center size-9 rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
             <Star
               className={`size-5 ${isStarred ? 'fill-yellow-400 text-yellow-400' : 'text-zinc-400 hover:text-yellow-400'}`}
             />
-          </Button>
+          </button>
         </div>
 
         <div className="flex items-center gap-3 mb-4">
