@@ -1,4 +1,6 @@
 mod config;
+// Added (TMAIL-308): Multi-origin CORS parser with wildcard support.
+mod cors;
 mod error;
 mod handlers;
 mod middleware;

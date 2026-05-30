@@ -6,10 +6,13 @@ use axum::{
 use std::sync::Arc;
 use tower_http::compression::CompressionLayer;
 // Changed: Replaced `Any` origin with explicit allowed origins for CORS hardening (TMAIL-37)
-use tower_http::cors::{AllowOrigin, CorsLayer};
+// Changed (TMAIL-308): CORS_ORIGIN now parsed as a comma-separated list with wildcard
+// support — the actual `AllowOrigin` is built in `crate::cors::build_allow_origin`.
+use tower_http::cors::CorsLayer;
 use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
 
+use crate::cors::build_allow_origin;
 use crate::handlers;
 use crate::middleware::auth::auth_middleware;
 // Added: Prometheus request instrumentation middleware import (TMAIL-41)
@@ -22,17 +25,17 @@ use crate::middleware::security_headers::security_headers_middleware;
 use crate::state::AppState;
 
 pub fn create_router(state: AppState) -> Router {
-    // Changed: Restrict CORS to same-origin by default; configurable via CORS_ORIGIN env var (TMAIL-37)
-    // NOTE: In production, set CORS_ORIGIN to the exact frontend URL (e.g. "https://mail.example.com")
-    let allowed_origin = std::env::var("CORS_ORIGIN")
+    // Changed (TMAIL-308): CORS_ORIGIN supports a comma-separated list and a
+    // `*.subdomain` wildcard pattern. Production typically sets:
+    //   CORS_ORIGIN=https://mail.techatscale.io,https://*.tenants.tasmail.io
+    // Dev sets:
+    //   CORS_ORIGIN=http://localhost:5173,http://localhost:5273
+    // Parsing + AllowOrigin construction lives in `crate::cors`.
+    let allowed_origin_raw = std::env::var("CORS_ORIGIN")
         .unwrap_or_else(|_| "http://localhost:5173".to_string());
 
     let cors = CorsLayer::new()
-        .allow_origin(AllowOrigin::exact(
-            allowed_origin.parse().unwrap_or_else(|_| {
-                "http://localhost:5173".parse().unwrap()
-            }),
-        ))
+        .allow_origin(build_allow_origin(&allowed_origin_raw))
         .allow_methods([
             axum::http::Method::GET,
             axum::http::Method::POST,

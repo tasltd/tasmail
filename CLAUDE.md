@@ -157,7 +157,7 @@ Backend reads `config.toml` if present, otherwise falls back to environment vari
 | `SMTP_PORT` | 587 | SMTP submission port |
 | `JWT_SECRET` | dev-secret-change-in-production | JWT signing key |
 | `LOG_FORMAT` | (text) | Set to "json" for JSON logging |
-| `CORS_ORIGIN` | http://localhost:5173 | Allowed CORS origin |
+| `CORS_ORIGIN` | http://localhost:5173 | Allowed CORS origin(s). Comma-separated list supported, and entries may use `*.subdomain` wildcards (e.g. `https://mail.techatscale.io,https://*.tenants.tasmail.io`). See `backend/src/cors.rs`. |
 
 ## API Route Structure
 
