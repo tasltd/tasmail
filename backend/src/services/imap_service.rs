@@ -28,6 +28,18 @@ pub struct MessageEnvelope {
     pub size: Option<u32>,
 }
 
+/// Added (TMAIL-320): raw bytes of a single MIME part inside a message,
+/// resolved by the dotted `part_id` path the `Attachment` struct already
+/// exposes ("1", "2.1", …). Returned by `ImapService::get_message_part()`
+/// so the attachment-download handler can stream it back to the browser
+/// with the right Content-Type + Content-Disposition.
+#[derive(Debug, Clone)]
+pub struct MessagePart {
+    pub filename: String,
+    pub content_type: String,
+    pub bytes: Vec<u8>,
+}
+
 /// Represents a full message with body
 #[derive(Debug, Clone, Serialize)]
 pub struct FullMessage {
@@ -734,6 +746,63 @@ impl ImapService {
             references,
         })
     }
+
+    /// Added (TMAIL-320): fetch the raw bytes of a single MIME part inside a
+    /// message. The `part_id` is the dotted path the `extract_parts` walker
+    /// assigns ("1", "2.1", …) and is already returned to the SPA on every
+    /// `FullMessage.attachments` entry. We re-fetch the full message with
+    /// BODY[] here so we have the canonical raw bytes to walk — the IMAP
+    /// `BODY[PART]` fetch shape varies across servers and we'd still have to
+    /// parse the structure to know the content-type and filename, so a single
+    /// BODY[] + in-memory MIME walk is the cleanest path.
+    ///
+    /// Returns `NotFound` if the message exists but no part matches the
+    /// requested `part_id` (e.g. stale link, or the attachment list shifted
+    /// after a server-side rewrite).
+    pub async fn get_message_part(
+        &self,
+        username: &str,
+        password: &str,
+        folder: &str,
+        uid: u32,
+        part_id: &str,
+    ) -> Result<MessagePart, AppError> {
+        let mut session = self.connect(username, password).await?;
+
+        session
+            .select(folder)
+            .await
+            .map_err(|e| AppError::Imap(format!("SELECT failed: {}", e)))?;
+
+        // BODY.PEEK[] so we don't accidentally mark the message \Seen just
+        // because the user clicked Download. get_message() already sets \Seen
+        // when the body is opened in the reader; downloading an attachment
+        // should not change read state on its own.
+        let messages: Vec<_> = session
+            .uid_fetch(uid.to_string(), "(BODY.PEEK[])")
+            .await
+            .map_err(|e| AppError::Imap(format!("UID FETCH failed: {}", e)))?
+            .try_collect()
+            .await
+            .map_err(|e| AppError::Imap(format!("UID FETCH stream failed: {}", e)))?;
+
+        let _ = session.logout().await;
+
+        let msg = messages
+            .first()
+            .ok_or_else(|| AppError::NotFound("Message not found".to_string()))?;
+
+        let body_bytes = msg
+            .body()
+            .ok_or_else(|| AppError::Imap("No body in message".to_string()))?;
+
+        let parsed = mailparse::parse_mail(body_bytes)
+            .map_err(|e| AppError::Imap(format!("Mail parse failed: {}", e)))?;
+
+        find_part_by_id(&parsed, part_id, "").ok_or_else(|| {
+            AppError::NotFound(format!("Attachment part {} not found", part_id))
+        })
+    }
 }
 
 /// Format an IMAP address (from imap_proto) to a display string
@@ -809,6 +878,50 @@ fn extract_parts(
             extract_parts(part, text_body, html_body, attachments, &prefix);
         }
     }
+}
+
+/// Added (TMAIL-320): walk the MIME tree the same way `extract_parts` does
+/// and return the raw bytes + filename + content-type for the leaf whose
+/// dotted path matches `target_part_id`. Returns `None` if no leaf matches.
+///
+/// Path assignment MUST stay in sync with `extract_parts` above — both
+/// functions number top-level subparts 1..N and append ".M" on each level
+/// down — otherwise the SPA would receive a `part_id` for an attachment
+/// and find nothing when it asked for that part back.
+fn find_part_by_id(
+    mail: &mailparse::ParsedMail,
+    target_part_id: &str,
+    part_prefix: &str,
+) -> Option<MessagePart> {
+    if mail.subparts.is_empty() {
+        if part_prefix == target_part_id {
+            let disposition = mail.get_content_disposition();
+            let filename = disposition
+                .params
+                .get("filename")
+                .cloned()
+                .or_else(|| mail.ctype.params.get("name").cloned())
+                .unwrap_or_else(|| "attachment".to_string());
+            let bytes = mail.get_body_raw().unwrap_or_default();
+            return Some(MessagePart {
+                filename,
+                content_type: mail.ctype.mimetype.clone(),
+                bytes,
+            });
+        }
+        return None;
+    }
+    for (i, part) in mail.subparts.iter().enumerate() {
+        let prefix = if part_prefix.is_empty() {
+            format!("{}", i + 1)
+        } else {
+            format!("{}.{}", part_prefix, i + 1)
+        };
+        if let Some(found) = find_part_by_id(part, target_part_id, &prefix) {
+            return Some(found);
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -932,6 +1045,87 @@ mod tests {
         assert!(text.as_deref().unwrap().contains("Plain text part"));
         assert!(html.unwrap().contains("<p>HTML part</p>"));
         assert!(attachments.is_empty());
+    }
+
+    // Added (TMAIL-320): build a multipart/mixed email with one text part
+    // and one PDF attachment so we can assert find_part_by_id resolves
+    // the same dotted path that extract_parts assigns.
+    fn email_with_pdf_attachment() -> &'static str {
+        concat!(
+            "From: test@example.com\r\n",
+            "Subject: Has attachment\r\n",
+            "Content-Type: multipart/mixed; boundary=\"BOUNDARY\"\r\n",
+            "\r\n",
+            "--BOUNDARY\r\n",
+            "Content-Type: text/plain\r\n",
+            "\r\n",
+            "See attached.\r\n",
+            "--BOUNDARY\r\n",
+            "Content-Type: application/pdf; name=\"report.pdf\"\r\n",
+            "Content-Disposition: attachment; filename=\"report.pdf\"\r\n",
+            "Content-Transfer-Encoding: base64\r\n",
+            "\r\n",
+            "JVBERi0xLjQK\r\n",
+            "--BOUNDARY--\r\n",
+        )
+    }
+
+    #[test]
+    fn test_find_part_by_id_resolves_attachment() {
+        let parsed = mailparse::parse_mail(email_with_pdf_attachment().as_bytes()).unwrap();
+
+        // extract_parts and find_part_by_id MUST agree on numbering. Walk
+        // attachments first to grab whatever part_id was assigned, then ask
+        // find_part_by_id for that same part_id and assert the round-trip.
+        let mut text = None;
+        let mut html = None;
+        let mut attachments = Vec::new();
+        extract_parts(&parsed, &mut text, &mut html, &mut attachments, "");
+        assert_eq!(attachments.len(), 1, "expected one PDF attachment");
+        let att = &attachments[0];
+        assert_eq!(att.filename, "report.pdf");
+        assert_eq!(att.content_type, "application/pdf");
+        assert_eq!(att.part_id, "2", "PDF is the second top-level subpart");
+
+        let part = find_part_by_id(&parsed, &att.part_id, "")
+            .expect("find_part_by_id must resolve the same part_id extract_parts emitted");
+        assert_eq!(part.filename, "report.pdf");
+        assert_eq!(part.content_type, "application/pdf");
+        // Base64 "JVBERi0xLjQK" decodes to "%PDF-1.4\n" — confirms we
+        // returned the decoded body, not the base64-encoded source.
+        assert_eq!(part.bytes, b"%PDF-1.4\n");
+    }
+
+    #[test]
+    fn test_find_part_by_id_missing_returns_none() {
+        let parsed = mailparse::parse_mail(email_with_pdf_attachment().as_bytes()).unwrap();
+        assert!(find_part_by_id(&parsed, "9.9.9", "").is_none());
+    }
+
+    #[test]
+    fn test_find_part_by_id_falls_back_to_ctype_name() {
+        // When Content-Disposition is missing but Content-Type has a name=
+        // param we should still surface that as the download filename — some
+        // MTAs strip the disposition header.
+        let raw = concat!(
+            "From: test@example.com\r\n",
+            "Content-Type: multipart/mixed; boundary=\"B\"\r\n",
+            "\r\n",
+            "--B\r\n",
+            "Content-Type: text/plain\r\n",
+            "\r\n",
+            "body\r\n",
+            "--B\r\n",
+            "Content-Type: image/png; name=\"logo.png\"\r\n",
+            "Content-Transfer-Encoding: base64\r\n",
+            "\r\n",
+            "iVBORw0K\r\n",
+            "--B--\r\n",
+        );
+        let parsed = mailparse::parse_mail(raw.as_bytes()).unwrap();
+        let part = find_part_by_id(&parsed, "2", "").expect("part 2 resolves");
+        assert_eq!(part.filename, "logo.png");
+        assert_eq!(part.content_type, "image/png");
     }
 
     #[test]

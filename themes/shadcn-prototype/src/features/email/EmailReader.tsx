@@ -3,15 +3,16 @@
 // loading. HTML body is sanitized with DOMPurify (same contract the production
 // SPA uses) before insertion via the React-escape hatch — required because the
 // IMAP source HTML is the actual rendering target.
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import DOMPurify from 'dompurify';
 import { Reply, ReplyAll, Forward, Trash2, Archive, Star, Download } from 'lucide-react';
 import { format } from 'date-fns';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { fetchMessage } from '@/api/messages';
+import { downloadAttachment, fetchMessage } from '@/api/messages';
 import type { Email } from '@/types/ui';
-import type { FullMessage } from '@/types/mail';
+import type { Attachment, FullMessage } from '@/types/mail';
 import type { ReplyKind } from './replyContext';
 
 interface EmailReaderProps {
@@ -65,6 +66,50 @@ export function EmailReader({
     queryFn: () => fetchMessage(folder, uid!),
     enabled: uid != null,
   });
+
+  // Added (TMAIL-320): per-row download state so the user can see which
+  // attachment is fetching when multiple are present. We store the part_id of
+  // the active fetch (or 'error:<part_id>' on failure) — keeps the state
+  // shape tiny without pulling in a full mutation per row.
+  const [downloadingPartId, setDownloadingPartId] = useState<string | null>(null);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+
+  const handleDownloadAttachment = async (attachment: Attachment) => {
+    if (uid == null) return;
+    setDownloadingPartId(attachment.part_id);
+    setDownloadError(null);
+    try {
+      const { blob, filename } = await downloadAttachment(
+        folder,
+        uid,
+        attachment.part_id,
+        attachment.filename || 'attachment',
+      );
+      // Trigger a real browser download via a temporary object URL. Wrapped
+      // in try/finally so we always revoke the URL even if the synthetic
+      // click throws (some headless drivers reject programmatic clicks).
+      const objectUrl = URL.createObjectURL(blob);
+      try {
+        const a = document.createElement('a');
+        a.href = objectUrl;
+        a.download = filename;
+        a.rel = 'noopener';
+        // Some browsers (notably Firefox) ignore the click on a detached
+        // anchor — attach to the DOM for the click then remove.
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      } finally {
+        URL.revokeObjectURL(objectUrl);
+      }
+    } catch (err) {
+      setDownloadError(
+        err instanceof Error ? err.message : 'Failed to download attachment',
+      );
+    } finally {
+      setDownloadingPartId(null);
+    }
+  };
 
   if (uid == null) {
     return (
@@ -240,28 +285,55 @@ export function EmailReader({
                 <h3 className="text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-3">
                   Attachments ({attachments.length})
                 </h3>
-                {attachments.map((attachment, index) => (
+                {downloadError && (
                   <div
-                    key={index}
-                    className="flex items-center justify-between p-3 border border-zinc-200 dark:border-zinc-800 rounded-lg bg-zinc-50 dark:bg-zinc-900"
+                    role="alert"
+                    className="text-sm text-red-600 dark:text-red-400 mb-2"
                   >
-                    <div className="flex items-center gap-3">
-                      <div className="size-10 rounded bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">
-                        <Download className="size-5 text-blue-600 dark:text-blue-400" />
-                      </div>
-                      <div>
-                        <div className="font-medium text-sm">{attachment.filename ?? '(unnamed)'}</div>
-                        <div className="text-xs text-zinc-500">
-                          {attachment.size != null ? `${Math.round((attachment.size as number) / 1024)} KB` : ''}
+                    {downloadError}
+                  </div>
+                )}
+                {attachments.map((attachment, index) => {
+                  // Added (TMAIL-320): typed alias so the click handler gets
+                  // the same Attachment shape the API returns — keeps the
+                  // download call site short.
+                  const att = attachment as Attachment;
+                  const isDownloading = downloadingPartId === att.part_id;
+                  const filename = att.filename || '(unnamed)';
+                  return (
+                    <div
+                      key={att.part_id || index}
+                      className="flex items-center justify-between p-3 border border-zinc-200 dark:border-zinc-800 rounded-lg bg-zinc-50 dark:bg-zinc-900"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="size-10 rounded bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">
+                          <Download className="size-5 text-blue-600 dark:text-blue-400" />
+                        </div>
+                        <div>
+                          <div className="font-medium text-sm">{filename}</div>
+                          <div className="text-xs text-zinc-500">
+                            {att.size != null ? `${Math.round(att.size / 1024)} KB` : ''}
+                          </div>
                         </div>
                       </div>
+                      {/* Added (TMAIL-320): wires to GET /api/folders/{folder}
+                          /messages/{uid}/parts/{part_id} and triggers a real
+                          browser download via a blob URL. Disabled while a
+                          fetch is in flight so a double-click doesn't queue
+                          two downloads of the same part. */}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={isDownloading || uid == null}
+                        aria-label={`Download attachment ${filename}`}
+                        onClick={() => handleDownloadAttachment(att)}
+                      >
+                        <Download className="size-4 mr-2" />
+                        {isDownloading ? 'Downloading…' : 'Download'}
+                      </Button>
                     </div>
-                    <Button variant="outline" size="sm">
-                      <Download className="size-4 mr-2" />
-                      Download
-                    </Button>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </>

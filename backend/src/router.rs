@@ -131,6 +131,12 @@ pub fn create_router(state: AppState) -> Router {
             "/api/folders/{folder}/messages/{uid}",
             get(handlers::messages::get_message).delete(handlers::messages::delete_message),
         )
+        // Added (TMAIL-320): per-part download. SPA's EmailReader hits this with
+        // the dotted `part_id` it already has from FullMessage.attachments.
+        .route(
+            "/api/folders/{folder}/messages/{uid}/parts/{part_id}",
+            get(handlers::messages::download_message_part),
+        )
         .route("/api/messages/send", post(handlers::messages::send_message))
         .route("/api/drafts", post(handlers::messages::save_draft))
         .route("/api/search", get(handlers::messages::search_messages))

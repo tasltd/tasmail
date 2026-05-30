@@ -1,5 +1,6 @@
 import type { FullMessage, MessageListResponse, SearchResponse, SendEmailRequest } from '../types/mail';
-import { apiClient } from './client';
+import { API_BASE_URL } from './constants';
+import { ApiError, apiClient } from './client';
 
 // Added: Advanced search filter parameters for TMAIL-32
 export interface AdvancedSearchParams {
@@ -110,4 +111,61 @@ export interface SaveDraftRequest {
 
 export async function saveDraft(request: SaveDraftRequest): Promise<void> {
   await apiClient.post('/drafts', request);
+}
+
+// Added (TMAIL-320): fetch an attachment's raw bytes as a Blob so the
+// EmailReader Download button can save it to disk via a temporary object URL.
+// The shared ApiClient is JSON-only — for binary payloads we hand-roll the
+// fetch and re-use the bearer token the client already holds. Returns the
+// Blob plus the server-provided filename so the SPA doesn't have to re-derive
+// it from Content-Disposition.
+export async function downloadAttachment(
+  folder: string,
+  uid: number,
+  partId: string,
+  fallbackFilename: string,
+): Promise<{ blob: Blob; filename: string }> {
+  const headers: Record<string, string> = {};
+  const token = apiClient.getToken();
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+
+  const url = `${API_BASE_URL}/folders/${encodeURIComponent(
+    folder,
+  )}/messages/${uid}/parts/${encodeURIComponent(partId)}`;
+  const resp = await fetch(url, { headers });
+
+  if (!resp.ok) {
+    const body = await resp.text().catch(() => '');
+    throw new ApiError(resp.status, body || `attachment fetch failed`);
+  }
+
+  // RFC 6266: prefer filename* (UTF-8) over the ASCII filename fallback. Both
+  // are present because the backend emits both — see download_message_part.
+  const cd = resp.headers.get('content-disposition') ?? '';
+  const filename = parseContentDispositionFilename(cd) ?? fallbackFilename;
+
+  const blob = await resp.blob();
+  return { blob, filename };
+}
+
+// Exported so unit tests can exercise the RFC 6266 parsing without a network
+// round-trip — keeping it a top-level helper also matches the codebase's
+// "one concept per file is fine, but small pure helpers stay alongside their
+// only caller" convention (cf. parseReplyContext in replyContext.ts).
+export function parseContentDispositionFilename(
+  headerValue: string,
+): string | null {
+  if (!headerValue) return null;
+  // Prefer filename*=UTF-8'...'<percent-encoded> per RFC 5987.
+  const starMatch = headerValue.match(/filename\*\s*=\s*([^']*)'[^']*'([^;]+)/i);
+  if (starMatch) {
+    try {
+      return decodeURIComponent(starMatch[2].trim());
+    } catch {
+      // fall through to the plain filename= form
+    }
+  }
+  const plain = headerValue.match(/filename\s*=\s*"?([^";]+)"?/i);
+  if (plain) return plain[1].trim();
+  return null;
 }

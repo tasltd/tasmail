@@ -9,6 +9,10 @@ use crate::error::AppError;
 use crate::models::webhook::WebhookEvent;
 use crate::services::auth_service::Claims;
 use crate::services::imap_service::{FullMessage, ImapService};
+// Added (TMAIL-320): response types for streaming a single MIME part back to
+// the browser as a binary download.
+use axum::body::Body;
+use axum::http::{header, HeaderMap, HeaderValue, Response};
 use crate::services::smtp_service::{SendRequest, SmtpService};
 use crate::services::webhook_dispatcher;
 use crate::state::AppState;
@@ -119,6 +123,71 @@ pub async fn get_message(
         .await?;
 
     Ok(Json(message))
+}
+
+/// Added (TMAIL-320): GET /api/folders/{folder}/messages/{uid}/parts/{part_id}
+/// — stream the bytes of a single MIME part (typically an attachment) so the
+/// SPA's Download button can trigger a real browser download via a blob URL.
+///
+/// `part_id` is the dotted path the same MIME walker assigns when it
+/// populates `FullMessage.attachments` ("1", "2.1", …), so the SPA just
+/// hands back the value it already has on the attachment object — no
+/// separate lookup step.
+///
+/// We don't expose part bytes inline on `GET /messages/{uid}` because
+/// attachments can be tens of megabytes and the JSON envelope would balloon
+/// for every reader pane. This handler is the lazy fetch.
+pub async fn download_message_part(
+    State(state): State<AppState>,
+    axum::Extension(claims): axum::Extension<Claims>,
+    Path((folder, uid, part_id)): Path<(String, u32, String)>,
+) -> Result<Response<Body>, AppError> {
+    let mailbox_id: uuid::Uuid = claims
+        .sub
+        .parse()
+        .map_err(|_| AppError::Internal(anyhow::anyhow!("Invalid mailbox ID")))?;
+
+    let mailbox = crate::models::mailbox::Mailbox::find_by_id(&state.db, mailbox_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
+
+    let imap_service = ImapService::for_user(&state, mailbox.id).await?;
+    let (imap_user, imap_pass) = imap_service
+        .user_creds()
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("BYOK IMAP credentials missing")))?;
+
+    let part = imap_service
+        .get_message_part(imap_user, imap_pass, &folder, uid, &part_id)
+        .await?;
+
+    let mut headers = HeaderMap::new();
+    // application/octet-stream falls back when the source MIME type isn't a
+    // valid HeaderValue (e.g. malformed Content-Type from an upstream MTA).
+    let ct = HeaderValue::from_str(&part.content_type)
+        .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream"));
+    headers.insert(header::CONTENT_TYPE, ct);
+
+    // RFC 6266: filename* with UTF-8 + a quoted ASCII fallback so non-ASCII
+    // names survive both modern and legacy browsers. Doing both keeps the
+    // download experience predictable across the matrix.
+    let safe_filename = part.filename.replace(['\r', '\n', '"'], "_");
+    let ascii_filename: String = safe_filename
+        .chars()
+        .map(|c| if c.is_ascii() { c } else { '_' })
+        .collect();
+    let encoded = urlencoding::encode(&safe_filename);
+    let cd = format!(
+        "attachment; filename=\"{}\"; filename*=UTF-8''{}",
+        ascii_filename, encoded
+    );
+    if let Ok(v) = HeaderValue::from_str(&cd) {
+        headers.insert(header::CONTENT_DISPOSITION, v);
+    }
+    headers.insert(header::CONTENT_LENGTH, HeaderValue::from(part.bytes.len()));
+
+    let mut response = Response::new(Body::from(part.bytes));
+    *response.headers_mut() = headers;
+    Ok(response)
 }
 
 /// POST /api/messages/send — send an email

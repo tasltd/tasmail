@@ -45,6 +45,12 @@ KNOWN_NONSTATIC = {
     ("DELETE", "/api/folders/{folder}/messages/{uid}"),
     ("POST", "/api/folders/{folder}/messages/{uid}/flag"),
     ("POST", "/api/drafts"),
+    # TMAIL-320: per-MIME-part attachment download. Consumed by the alt-UI
+    # (themes/shadcn-prototype/src/api/messages.ts::downloadAttachment) via a
+    # hand-rolled fetch() because the shared ApiClient is JSON-only. The
+    # static scan only looks at frontend/src/, so the alt-UI consumer is
+    # invisible — register it here instead of widening the scan.
+    ("GET", "/api/folders/{folder}/messages/{uid}/parts/{part_id}"),
 }
 
 
