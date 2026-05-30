@@ -10,7 +10,14 @@ use crate::services::auth_service::{validate_access_token, Claims};
 use crate::state::AppState;
 
 /// Extract JWT claims from the Authorization header and inject into request extensions.
-/// Also sets PostgreSQL session variables for Row-Level Security enforcement.
+///
+/// Changed (TMAIL-309): this middleware no longer attempts to SET RLS session vars
+/// on a one-off pool connection — that pattern was a no-op because each handler
+/// query acquires a fresh connection. The actual RLS plumbing now lives in
+/// `middleware::rls_context::rls_context_middleware`, which runs immediately
+/// after this one and parks claims+state in request extensions so the
+/// `RlsConn` extractor can lazily acquire a primed connection per handler.
+///
 /// Changed: Checks Redis JWT blacklist before accepting a token (for immediate revocation on logout)
 pub async fn auth_middleware(
     State(state): State<AppState>,
@@ -35,38 +42,12 @@ pub async fn auth_middleware(
         return Err(AppError::Unauthorized("Token has been revoked".to_string()));
     }
 
-    // Added: Set RLS session variables for database-level row isolation
-    set_rls_context(&state, &claims).await?;
-
-    // Inject claims into request extensions for handlers to use
+    // Inject claims into request extensions for handlers to use.
+    // The downstream `rls_context_middleware` reads these claims to populate
+    // the RLS request context (see TMAIL-309).
     req.extensions_mut().insert(claims);
 
     Ok(next.run(req).await)
-}
-
-/// Set PostgreSQL session-level variables for RLS policy evaluation.
-/// Uses SET LOCAL so the settings are scoped to the current transaction.
-async fn set_rls_context(state: &AppState, claims: &Claims) -> Result<(), AppError> {
-    // NOTE: Using raw SQL with parameterized values is not possible for SET commands,
-    // so we validate the UUID format to prevent injection.
-    let mailbox_id = &claims.sub;
-    uuid::Uuid::parse_str(mailbox_id)
-        .map_err(|_| AppError::Internal(anyhow::anyhow!("Invalid mailbox ID format in claims")))?;
-
-    let is_admin = if claims.is_admin { "true" } else { "false" };
-
-    // TMAIL-161: This middleware no longer attempts to SET app.mailbox_id on the pool —
-    // the SET would land on a connection that the handler never sees, since each handler
-    // query acquires a fresh connection. RLS enforcement now lives in
-    // `services::db_session::acquire_with_rls(state, claims)` which handlers use when
-    // they want their queries scoped by RLS. Defense-in-depth audit confirmed that
-    // every protected handler today already includes explicit `WHERE user_id = $N`
-    // filters, so removing the no-op SET does not change observable behaviour.
-    //
-    // Variables `mailbox_id` and `is_admin` are kept above so future handler-side
-    // logging or rate limiting can pull them from the validated claims if needed.
-    let _ = (mailbox_id, is_admin);
-    Ok(())
 }
 
 /// Extract claims from request extensions (use in handlers)

@@ -20,6 +20,10 @@ use crate::middleware::metrics::metrics_middleware;
 // Added: Per-IP rate-limiter applied to anonymous auth endpoints (TMAIL-37).
 // Uses an in-memory sliding-window counter; tunable via env vars below.
 use crate::middleware::rate_limit::{rate_limit_middleware, RateLimiter};
+// Added (TMAIL-309): per-request RLS context middleware. Runs after
+// auth_middleware so handlers extracting `RlsConn` get a connection with
+// `app.current_user_id` / `app.mailbox_id` / `app.is_admin` already set.
+use crate::middleware::rls_context::rls_context_middleware;
 // Added: Security headers middleware import (TMAIL-37)
 use crate::middleware::security_headers::security_headers_middleware;
 use crate::state::AppState;
@@ -1041,6 +1045,18 @@ pub fn create_router(state: AppState) -> Router {
             "/api/admin/audit-log",
             get(handlers::admin::audit::list_audit_logs),
         )
+        // TMAIL-309: layer order matters. Tower layers run bottom-up, so the
+        // last `.layer(...)` call wraps the *outermost* handler — i.e. it runs
+        // FIRST on the request. We want:
+        //   1. auth_middleware (validates JWT, inserts Claims into extensions)
+        //   2. rls_context_middleware (reads Claims, parks RlsRequestContext)
+        //   3. handler (extracts RlsConn on demand)
+        // To get that order we add rls_context_middleware FIRST (inner) and
+        // auth_middleware SECOND (outer/runs first on the request).
+        .layer(axum_middleware::from_fn_with_state(
+            state.clone(),
+            rls_context_middleware,
+        ))
         .layer(axum_middleware::from_fn_with_state(
             state.clone(),
             auth_middleware,
