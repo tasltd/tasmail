@@ -14,11 +14,13 @@ use tower::ServiceExt;
 use uuid::Uuid;
 
 use tasmail::config::{
-    Config, DatabaseConfig, ImapConfig, JwtConfig, RedisConfig, ServerConfig, SmtpConfig, StorageConfig,
+    Config, DatabaseConfig, ImapConfig, JwtConfig, LockoutConfig, RedisConfig, ServerConfig,
+    SmtpConfig, StorageConfig,
 };
 use tasmail::router::create_router;
 use tasmail::services::auth_service::Claims;
 use tasmail::services::cache_service::CacheService;
+use tasmail::services::encryption::EncryptionService;
 use tasmail::state::AppState;
 
 // Added: Test JWT secret for router benchmarks — matches tests/common/mod.rs pattern
@@ -46,6 +48,9 @@ fn bench_config() -> Config {
             host: "127.0.0.1".to_string(),
             port: 587,
             tls: true,
+            notification_from: None,
+            notification_username: None,
+            notification_password: None,
         },
         jwt: JwtConfig {
             secret: BENCH_JWT_SECRET.to_string(),
@@ -60,6 +65,7 @@ fn bench_config() -> Config {
         billing: None,
         push: None,
         redis: RedisConfig::default(),
+        lockout: LockoutConfig::default(),
     }
 }
 
@@ -78,6 +84,9 @@ fn bench_app_state() -> AppState {
         // Added: No Prometheus metrics handle needed for bench routing tests
         metrics_handle: None,
         cache: CacheService::disabled(),
+        encryption: EncryptionService::from_jwt_secret(BENCH_JWT_SECRET),
+        // TMAIL-306: empty router holder — benches build the router fresh each iteration.
+        inner_router: std::sync::Arc::new(std::sync::OnceLock::new()),
     }
 }
 
@@ -90,6 +99,7 @@ fn bench_auth_token() -> String {
         sub: Uuid::new_v4().to_string(),
         username: "bench@example.com".to_string(),
         is_admin: false,
+        is_compliance_officer: false,
         exp: exp.timestamp() as usize,
         iat: now.timestamp() as usize,
     };

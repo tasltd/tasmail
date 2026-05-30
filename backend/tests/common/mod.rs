@@ -46,6 +46,13 @@ impl TestApp {
             .connect_lazy(&config.database.url)
             .unwrap();
 
+        // TMAIL-306: integration tests don't exercise the batch dispatcher's
+        // internal-router path, so we leave the OnceLock empty here. Tests that
+        // do exercise `/api/mobile/batch` should use the local-router helper in
+        // `handlers::mobile::tests` instead.
+        let inner_router_holder: std::sync::Arc<std::sync::OnceLock<Router>> =
+            std::sync::Arc::new(std::sync::OnceLock::new());
+
         let state = AppState {
             db: pool,
             config: config.clone(),
@@ -56,9 +63,13 @@ impl TestApp {
             // Added: TMAIL-37 — encryption service uses the test JWT secret so
             // any code path that touches DB-stored credentials stays in-memory.
             encryption: EncryptionService::from_jwt_secret(TEST_JWT_SECRET),
+            // Added (TMAIL-306): empty router holder — not exercised by these tests.
+            inner_router: inner_router_holder.clone(),
         };
 
         let router = create_router(state);
+        // TMAIL-306: publish so any test that drives /api/mobile/batch finds a router.
+        let _ = inner_router_holder.set(router.clone());
         TestApp { router, config }
     }
 

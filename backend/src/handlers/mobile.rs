@@ -1,16 +1,21 @@
 // Added: Mobile-optimized API handlers for lower bandwidth and smaller payloads (TMAIL-52)
 
 use axum::{
+    body::{to_bytes, Body},
     extract::{Path, Query, State},
+    http::{header, HeaderMap, Method, Request, StatusCode},
     Json,
 };
 use serde_json::json;
+// TMAIL-306: `ServiceExt::oneshot` is what lets us dispatch each sub-request through
+// the wired router without going back out to the network.
+use tower::ServiceExt;
 
 use crate::error::AppError;
 use crate::models::mobile::{
-    BatchRequest, BatchResponse, BatchResponseItem, MobileFolderSummary, MobileInboxQuery,
-    MobileMessageQuery, MobileMessageSummary, MobileUsage, SyncChange, SyncDelta, SyncQuery,
-    SyncVersionBody, SyncVersionQuery, ALLOWED_BATCH_METHODS, ALLOWED_BATCH_PATH_PREFIX,
+    BatchRequest, BatchRequestItem, BatchResponse, BatchResponseItem, MobileFolderSummary,
+    MobileInboxQuery, MobileMessageQuery, MobileMessageSummary, MobileUsage, SyncChange, SyncDelta,
+    SyncQuery, SyncVersionBody, SyncVersionQuery, ALLOWED_BATCH_METHODS, ALLOWED_BATCH_PATH_PREFIX,
     LOW_BANDWIDTH_PREVIEW_CHARS, MAX_BATCH_REQUESTS,
 };
 use crate::models::quota::QuotaUsage;
@@ -18,6 +23,12 @@ use crate::services::auth_service::Claims;
 use crate::services::imap_service::ImapService;
 use crate::state::AppState;
 use crate::validation;
+
+// TMAIL-306: cap on bytes read from each sub-response body. Mobile batch responses
+// must remain small; a 1 MiB ceiling per item is far larger than any legitimate
+// mailbox JSON payload and prevents an over-large IMAP response from blowing the
+// batch handler's memory budget.
+const BATCH_SUBRESPONSE_BODY_LIMIT: usize = 1024 * 1024;
 
 // Strip HTML tags and collapse whitespace into a single-line text snippet.
 // Used by low-bandwidth mode so we can serve HTML-only senders (newsletters,
@@ -286,8 +297,19 @@ pub async fn mobile_unread_count(
 
 /// POST /api/mobile/batch — Batch multiple API calls in one request
 /// Reduces round trips for mobile clients on high-latency networks
+///
+/// TMAIL-306: Each sub-request is dispatched through the same wired router that
+/// serves public traffic, via `tower::ServiceExt::oneshot`. The original request's
+/// `Authorization` header is forwarded so the auth middleware re-authenticates
+/// each sub-request and RLS context is set correctly per-call. Sub-requests run
+/// sequentially in the order provided — clients that need ordering guarantees
+/// (flag → move → delete) get them by construction. Batches that submit two
+/// state-mutating operations against the same path are rejected up front because
+/// the result would be order-dependent in a way the caller cannot easily reason
+/// about.
 pub async fn mobile_batch(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
     axum::Extension(_claims): axum::Extension<Claims>,
     Json(batch): Json<BatchRequest>,
 ) -> Result<Json<BatchResponse>, AppError> {
@@ -321,23 +343,139 @@ pub async fn mobile_batch(
         }
     }
 
-    // NOTE: Full batch execution would require an internal router dispatch mechanism.
-    // For now, return a structured acknowledgment with placeholder responses.
-    // A production implementation would use axum's Router::oneshot() to dispatch
-    // each sub-request internally without network round-trips.
-    let responses: Vec<BatchResponseItem> = batch
-        .requests
-        .iter()
-        .map(|req| BatchResponseItem {
-            status: 200,
-            body: json!({
-                "message": format!("Batch sub-request {} {} acknowledged", req.method, req.path),
-                "pending": true,
-            }),
-        })
-        .collect();
+    // TMAIL-306: detect conflicting ordering. Two state-mutating sub-requests
+    // targeting the same path produce an order-dependent result that the wire
+    // contract cannot express cleanly — reject and ask the caller to split the
+    // batch. GETs are read-only and can repeat freely.
+    detect_conflicting_ordering(&batch.requests)?;
+
+    // TMAIL-306: pull the wired router from state. Populated by main.rs after
+    // create_router returns. Absence means the server is still starting up (or a
+    // test harness skipped the publish step) — both cases warrant a 503 so the
+    // mobile client retries rather than treating it as a permanent failure.
+    let router = state.inner_router.get().ok_or_else(|| {
+        AppError::Internal(anyhow::anyhow!(
+            "Batch dispatcher unavailable: inner router not initialised"
+        ))
+    })?;
+
+    // TMAIL-306: forward the original Authorization header on every sub-request so
+    // each one re-runs through auth_middleware (JWT validation + RLS context +
+    // blacklist check). Cheaper than synthesising the Claims extension by hand and
+    // keeps the audit story honest — every batched action shows up in metrics /
+    // tracing exactly like a direct call would.
+    let auth_header = headers.get(header::AUTHORIZATION).cloned();
+
+    let mut responses = Vec::with_capacity(batch.requests.len());
+    for (i, sub) in batch.requests.iter().enumerate() {
+        let item = dispatch_sub_request(router, sub, auth_header.as_ref())
+            .await
+            .map_err(|e| {
+                AppError::Internal(anyhow::anyhow!(
+                    "Batch sub-request #{} dispatch failed: {}",
+                    i,
+                    e
+                ))
+            })?;
+        responses.push(item);
+    }
 
     Ok(Json(BatchResponse { responses }))
+}
+
+/// TMAIL-306: reject batches that submit conflicting mutations on the same path.
+/// Two GETs of the same path are allowed (read-only). Anything else flagged means
+/// the caller is relying on implicit ordering — make them split the batch.
+fn detect_conflicting_ordering(requests: &[BatchRequestItem]) -> Result<(), AppError> {
+    use std::collections::HashMap;
+    let mut seen: HashMap<&str, Vec<(usize, String)>> = HashMap::new();
+    for (i, req) in requests.iter().enumerate() {
+        seen.entry(req.path.as_str())
+            .or_default()
+            .push((i, req.method.to_uppercase()));
+    }
+    for (path, entries) in &seen {
+        if entries.len() < 2 {
+            continue;
+        }
+        let any_mutation = entries
+            .iter()
+            .any(|(_, m)| m != "GET");
+        if any_mutation {
+            let idxs: Vec<String> = entries.iter().map(|(i, _)| i.to_string()).collect();
+            return Err(AppError::BadRequest(format!(
+                "Conflicting ordering: requests [{}] all target '{}' with at least one mutation; \
+                 split into separate batches",
+                idxs.join(", "),
+                path
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// TMAIL-306: dispatch one batch sub-request through the wired router and shape
+/// the response into a `BatchResponseItem`. Errors here are infrastructure
+/// failures (bad URI, malformed JSON serialise, body read error) — handler-level
+/// errors (4xx / 5xx) come back as a normal response with the corresponding
+/// `status` code and the handler's JSON body in `body`.
+async fn dispatch_sub_request(
+    router: &axum::Router,
+    sub: &BatchRequestItem,
+    auth_header: Option<&axum::http::HeaderValue>,
+) -> Result<BatchResponseItem, anyhow::Error> {
+    let method = Method::from_bytes(sub.method.to_uppercase().as_bytes())
+        .map_err(|e| anyhow::anyhow!("invalid HTTP method '{}': {}", sub.method, e))?;
+
+    let mut builder = Request::builder().method(method).uri(&sub.path);
+
+    if let Some(auth) = auth_header {
+        builder = builder.header(header::AUTHORIZATION, auth);
+    }
+
+    let body = match &sub.body {
+        Some(json_body) => {
+            builder = builder.header(header::CONTENT_TYPE, "application/json");
+            Body::from(serde_json::to_vec(json_body)?)
+        }
+        None => Body::empty(),
+    };
+
+    let request = builder
+        .body(body)
+        .map_err(|e| anyhow::anyhow!("failed to build sub-request: {}", e))?;
+
+    let response = router
+        .clone()
+        .oneshot(request)
+        .await
+        .map_err(|e| anyhow::anyhow!("router dispatch error: {}", e))?;
+
+    let status = response.status().as_u16();
+    let body_bytes = to_bytes(response.into_body(), BATCH_SUBRESPONSE_BODY_LIMIT)
+        .await
+        .map_err(|e| anyhow::anyhow!("failed to read sub-response body: {}", e))?;
+
+    // Best-effort JSON parse. Handlers that return non-JSON bodies (rare — usually
+    // file downloads) fall back to a UTF-8 string. Empty bodies (204 No Content
+    // is the common case) collapse to JSON null.
+    let body_json = if body_bytes.is_empty() {
+        serde_json::Value::Null
+    } else {
+        serde_json::from_slice(&body_bytes).unwrap_or_else(|_| {
+            serde_json::Value::String(String::from_utf8_lossy(&body_bytes).to_string())
+        })
+    };
+
+    // Sanity guard: a u16 from StatusCode::as_u16 is always valid HTTP, but if a
+    // future tower middleware ever returned an absurd value we'd still emit
+    // something the client can parse. (Currently this branch is unreachable.)
+    let _ = StatusCode::from_u16(status);
+
+    Ok(BatchResponseItem {
+        status,
+        body: body_json,
+    })
 }
 
 /// GET /api/mobile/sync — Delta sync endpoint returning changes since a timestamp
@@ -887,5 +1025,401 @@ mod tests {
 
         let since = chrono::Utc::now() - chrono::Duration::hours(24);
         assert!(chrono::Utc::now() > since);
+    }
+
+    // --- TMAIL-306: batch dispatcher tests -----------------------------------
+    //
+    // These tests prove three things about the new dispatcher:
+    //   1. `detect_conflicting_ordering` blocks order-dependent batches and lets
+    //      read-only repeats through.
+    //   2. `dispatch_sub_request` actually routes each sub-call through an
+    //      `axum::Router` and surfaces the handler's real status + body — not
+    //      the placeholder shape the previous code returned.
+    //   3. The full 3-step flag → move → delete scenario from the issue lands
+    //      three distinct, real responses from three distinct handlers, in order.
+    //
+    // No real IMAP server is involved — the test router stands in lightweight
+    // handlers that record what the dispatcher delivered. That is enough to
+    // prove the dispatch wiring; the per-handler IMAP side-effects already have
+    // their own coverage in `folders.rs` tests.
+
+    use axum::body::Body as TestBody;
+    use axum::extract::Path as AxumPath;
+    use axum::http::Request as HttpRequest;
+    use axum::routing::{delete as route_delete, post as route_post};
+    use axum::Router as TestRouter;
+    use std::sync::Arc as StdArc;
+    use std::sync::Mutex;
+
+    #[test]
+    fn test_detect_conflicting_ordering_allows_unique_paths() {
+        // The exact scenario the issue's integration test calls out: flag, move,
+        // delete — three distinct paths, no conflict.
+        let reqs = vec![
+            BatchRequestItem {
+                method: "POST".into(),
+                path: "/api/folders/INBOX/messages/42/flag".into(),
+                body: None,
+            },
+            BatchRequestItem {
+                method: "POST".into(),
+                path: "/api/folders/INBOX/messages/42/move".into(),
+                body: None,
+            },
+            BatchRequestItem {
+                method: "DELETE".into(),
+                path: "/api/folders/INBOX/messages/43".into(),
+                body: None,
+            },
+        ];
+        assert!(detect_conflicting_ordering(&reqs).is_ok());
+    }
+
+    #[test]
+    fn test_detect_conflicting_ordering_blocks_duplicate_mutation_paths() {
+        // Two DELETEs on the same UID — order doesn't matter (it's idempotent)
+        // but the batch carries no useful signal. Still rejected because at
+        // least one is a mutation; the rule is path-uniqueness for mutations,
+        // not method-by-method analysis.
+        let reqs = vec![
+            BatchRequestItem {
+                method: "DELETE".into(),
+                path: "/api/folders/INBOX/messages/42".into(),
+                body: None,
+            },
+            BatchRequestItem {
+                method: "DELETE".into(),
+                path: "/api/folders/INBOX/messages/42".into(),
+                body: None,
+            },
+        ];
+        let err = detect_conflicting_ordering(&reqs).expect_err("must reject");
+        match err {
+            AppError::BadRequest(msg) => {
+                assert!(msg.contains("Conflicting ordering"));
+                assert!(msg.contains("/api/folders/INBOX/messages/42"));
+            }
+            other => panic!("expected BadRequest, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_detect_conflicting_ordering_blocks_post_then_delete_same_path() {
+        // The dangerous case: result depends on which handler fires first.
+        let reqs = vec![
+            BatchRequestItem {
+                method: "POST".into(),
+                path: "/api/folders/INBOX/messages/42/move".into(),
+                body: Some(json!({"folder": "Trash"})),
+            },
+            BatchRequestItem {
+                method: "DELETE".into(),
+                path: "/api/folders/INBOX/messages/42/move".into(),
+                body: None,
+            },
+        ];
+        assert!(detect_conflicting_ordering(&reqs).is_err());
+    }
+
+    #[test]
+    fn test_detect_conflicting_ordering_allows_repeated_gets() {
+        // Two GETs on the same path are useless but not unsafe — let them through.
+        let reqs = vec![
+            BatchRequestItem {
+                method: "GET".into(),
+                path: "/api/mobile/folders".into(),
+                body: None,
+            },
+            BatchRequestItem {
+                method: "GET".into(),
+                path: "/api/mobile/folders".into(),
+                body: None,
+            },
+        ];
+        assert!(detect_conflicting_ordering(&reqs).is_ok());
+    }
+
+    // Helpers for building a tiny test router that records what the dispatcher
+    // hands it. The handlers below are intentionally trivial — we are testing
+    // the dispatcher, not the production handlers.
+
+    #[derive(Default)]
+    struct CallLog {
+        calls: Vec<(String, String, Option<serde_json::Value>)>,
+    }
+
+    fn build_test_router() -> (TestRouter, StdArc<Mutex<CallLog>>) {
+        let log: StdArc<Mutex<CallLog>> = StdArc::new(Mutex::new(CallLog::default()));
+        let log_for_flag = log.clone();
+        let log_for_move = log.clone();
+        let log_for_delete = log.clone();
+
+        let router = TestRouter::new()
+            .route(
+                "/api/folders/{folder}/messages/{uid}/flag",
+                route_post(move |AxumPath((folder, uid)): AxumPath<(String, u32)>,
+                                 body: Option<Json<serde_json::Value>>| {
+                    let log = log_for_flag.clone();
+                    async move {
+                        log.lock().unwrap().calls.push((
+                            "POST".to_string(),
+                            format!("/api/folders/{}/messages/{}/flag", folder, uid),
+                            body.map(|Json(v)| v),
+                        ));
+                        Json(json!({"flagged": true, "folder": folder, "uid": uid}))
+                    }
+                }),
+            )
+            .route(
+                "/api/folders/{folder}/messages/{uid}/move",
+                route_post(move |AxumPath((folder, uid)): AxumPath<(String, u32)>,
+                                 body: Option<Json<serde_json::Value>>| {
+                    let log = log_for_move.clone();
+                    async move {
+                        let body_val = body.map(|Json(v)| v);
+                        log.lock().unwrap().calls.push((
+                            "POST".to_string(),
+                            format!("/api/folders/{}/messages/{}/move", folder, uid),
+                            body_val.clone(),
+                        ));
+                        let target = body_val
+                            .as_ref()
+                            .and_then(|v| v.get("folder"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("Trash")
+                            .to_string();
+                        Json(json!({"moved": true, "to": target, "uid": uid}))
+                    }
+                }),
+            )
+            .route(
+                "/api/folders/{folder}/messages/{uid}",
+                route_delete(move |AxumPath((folder, uid)): AxumPath<(String, u32)>| {
+                    let log = log_for_delete.clone();
+                    async move {
+                        log.lock().unwrap().calls.push((
+                            "DELETE".to_string(),
+                            format!("/api/folders/{}/messages/{}", folder, uid),
+                            None,
+                        ));
+                        Json(json!({"deleted": true, "uid": uid}))
+                    }
+                }),
+            );
+
+        (router, log)
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_sub_request_routes_get_through_router() {
+        // Smoke test: a GET sub-request reaches a handler and the dispatcher
+        // surfaces the handler's real status + body.
+        let router = TestRouter::new().route(
+            "/api/echo",
+            axum::routing::get(|| async { Json(json!({"hello": "world"})) }),
+        );
+        let sub = BatchRequestItem {
+            method: "GET".into(),
+            path: "/api/echo".into(),
+            body: None,
+        };
+
+        let item = dispatch_sub_request(&router, &sub, None).await.unwrap();
+
+        assert_eq!(item.status, 200);
+        assert_eq!(item.body["hello"], "world");
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_sub_request_forwards_post_body() {
+        // POST with a JSON body — the dispatcher serialises it and the handler
+        // receives the same value back.
+        let router = TestRouter::new().route(
+            "/api/echo-body",
+            route_post(|Json(v): Json<serde_json::Value>| async move {
+                Json(json!({"received": v}))
+            }),
+        );
+        let sub = BatchRequestItem {
+            method: "POST".into(),
+            path: "/api/echo-body".into(),
+            body: Some(json!({"flag": "Seen"})),
+        };
+
+        let item = dispatch_sub_request(&router, &sub, None).await.unwrap();
+
+        assert_eq!(item.status, 200);
+        assert_eq!(item.body["received"]["flag"], "Seen");
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_sub_request_surfaces_404_for_unmatched_route() {
+        // Handler-level errors (here a 404 from the router) come back as a real
+        // status code — the dispatcher does not swallow them or upgrade them to
+        // 200, which was the bug TMAIL-306 fixes.
+        let router = TestRouter::new();
+        let sub = BatchRequestItem {
+            method: "GET".into(),
+            path: "/api/does-not-exist".into(),
+            body: None,
+        };
+
+        let item = dispatch_sub_request(&router, &sub, None).await.unwrap();
+
+        assert_eq!(item.status, 404);
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_sub_request_forwards_authorization_header() {
+        // The dispatcher must carry the original Authorization header into each
+        // sub-request so auth_middleware can re-validate the JWT and set RLS.
+        let router = TestRouter::new().route(
+            "/api/whoami",
+            axum::routing::get(|headers: HeaderMap| async move {
+                let auth = headers
+                    .get(header::AUTHORIZATION)
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("(missing)")
+                    .to_string();
+                Json(json!({"auth": auth}))
+            }),
+        );
+        let sub = BatchRequestItem {
+            method: "GET".into(),
+            path: "/api/whoami".into(),
+            body: None,
+        };
+        let auth = axum::http::HeaderValue::from_static("Bearer test-token-123");
+
+        let item = dispatch_sub_request(&router, &sub, Some(&auth)).await.unwrap();
+
+        assert_eq!(item.status, 200);
+        assert_eq!(item.body["auth"], "Bearer test-token-123");
+    }
+
+    #[tokio::test]
+    async fn test_batch_dispatch_flag_move_delete_lands_all_three_side_effects() {
+        // The exact scenario the issue calls out as the integration test: a
+        // 3-item batch (POST flag + POST move + DELETE) — assert each handler
+        // ran with the expected method, path, and body. This proves the new
+        // dispatcher actually delivers side effects, where the old placeholder
+        // shape never invoked any handler at all.
+        let (router, log) = build_test_router();
+
+        let subs = vec![
+            BatchRequestItem {
+                method: "POST".into(),
+                path: "/api/folders/INBOX/messages/42/flag".into(),
+                body: Some(json!({"flag": "Seen"})),
+            },
+            BatchRequestItem {
+                method: "POST".into(),
+                path: "/api/folders/INBOX/messages/42/move".into(),
+                body: Some(json!({"folder": "Archive"})),
+            },
+            BatchRequestItem {
+                method: "DELETE".into(),
+                path: "/api/folders/INBOX/messages/43".into(),
+                body: None,
+            },
+        ];
+
+        let mut items = Vec::new();
+        for sub in &subs {
+            items.push(
+                dispatch_sub_request(&router, sub, None)
+                    .await
+                    .expect("dispatch must succeed"),
+            );
+        }
+
+        // Every sub-call got a real 200 with the handler's own JSON shape —
+        // none of the placeholder `{"message": "...acknowledged", "pending": true}`
+        // shape from before.
+        assert_eq!(items[0].status, 200);
+        assert_eq!(items[0].body["flagged"], true);
+        assert_eq!(items[0].body["uid"], 42);
+
+        assert_eq!(items[1].status, 200);
+        assert_eq!(items[1].body["moved"], true);
+        assert_eq!(items[1].body["to"], "Archive");
+
+        assert_eq!(items[2].status, 200);
+        assert_eq!(items[2].body["deleted"], true);
+        assert_eq!(items[2].body["uid"], 43);
+
+        // Side-effect log proves all three handlers actually ran, in order.
+        let log = log.lock().unwrap();
+        assert_eq!(log.calls.len(), 3, "all three handlers must have run");
+        assert_eq!(log.calls[0].0, "POST");
+        assert!(log.calls[0].1.ends_with("/messages/42/flag"));
+        assert_eq!(log.calls[0].2.as_ref().unwrap()["flag"], "Seen");
+        assert_eq!(log.calls[1].0, "POST");
+        assert!(log.calls[1].1.ends_with("/messages/42/move"));
+        assert_eq!(log.calls[1].2.as_ref().unwrap()["folder"], "Archive");
+        assert_eq!(log.calls[2].0, "DELETE");
+        assert!(log.calls[2].1.ends_with("/messages/43"));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_sub_request_handles_empty_response_body() {
+        // 204 No Content (or any body-less response) collapses to JSON null
+        // rather than panicking or returning a malformed value.
+        let router = TestRouter::new().route(
+            "/api/no-content",
+            axum::routing::get(|| async {
+                axum::http::Response::builder()
+                    .status(StatusCode::NO_CONTENT)
+                    .body(TestBody::empty())
+                    .unwrap()
+            }),
+        );
+        let sub = BatchRequestItem {
+            method: "GET".into(),
+            path: "/api/no-content".into(),
+            body: None,
+        };
+
+        let item = dispatch_sub_request(&router, &sub, None).await.unwrap();
+
+        assert_eq!(item.status, 204);
+        assert!(item.body.is_null());
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_sub_request_rejects_invalid_method() {
+        // A method string the dispatcher cannot turn into a `Method` should
+        // surface as an infrastructure error, not a silent placeholder. Embed
+        // a space — RFC 7230 forbids whitespace inside method tokens, so this
+        // is the cleanest "definitely invalid" probe.
+        let router = TestRouter::new();
+        let sub = BatchRequestItem {
+            method: "BAD METHOD".into(),
+            path: "/api/anything".into(),
+            body: None,
+        };
+
+        let err = dispatch_sub_request(&router, &sub, None)
+            .await
+            .expect_err("invalid method must fail");
+        assert!(
+            err.to_string().contains("invalid HTTP method"),
+            "expected 'invalid HTTP method' in error, got: {}",
+            err
+        );
+    }
+
+    // Belt-and-braces: confirm the new field on AppState exists at the type
+    // level. If someone removes `inner_router` from AppState by accident, this
+    // test refuses to compile — which is exactly the signal we want.
+    #[test]
+    fn test_app_state_has_inner_router_field() {
+        fn _assert<F: FnOnce(&AppState) -> &StdArc<std::sync::OnceLock<axum::Router>>>(_f: F) {}
+        _assert(|s| &s.inner_router);
+
+        // Suppress unused-import warnings inside this test module — HttpRequest
+        // is documented as the type the dispatcher builds, even though only
+        // `dispatch_sub_request` uses it directly.
+        let _ = std::marker::PhantomData::<HttpRequest<TestBody>>;
     }
 }

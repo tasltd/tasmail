@@ -120,6 +120,15 @@ async fn main() -> anyhow::Result<()> {
     // Added: Encryption service derived from JWT secret — used for DB-stored credentials
     let encryption = services::encryption::EncryptionService::from_jwt_secret(&config.jwt.secret);
 
+    // TMAIL-306: shared Arc<OnceLock<Router>> handle. The `state` field below holds
+    // one clone of this Arc; the router we build below captures another clone of the
+    // same Arc inside its state. After `create_router` returns, we `set()` the wired
+    // router on the OnceLock, which both observers then see. This lets the
+    // `/api/mobile/batch` handler dispatch sub-requests through the same router that
+    // serves public traffic without restructuring the startup order.
+    let inner_router_holder: std::sync::Arc<std::sync::OnceLock<axum::Router>> =
+        std::sync::Arc::new(std::sync::OnceLock::new());
+
     let state = AppState {
         db: pool,
         config,
@@ -129,9 +138,15 @@ async fn main() -> anyhow::Result<()> {
         cache,
         // Added: Encryption service for DB-stored payment credentials
         encryption,
+        // Added (TMAIL-306): empty-on-bootstrap, populated below for batch dispatch.
+        inner_router: inner_router_holder.clone(),
     };
 
     let app = router::create_router(state);
+    // TMAIL-306: publish the wired router so the batch handler can dispatch through
+    // the same middleware/handler chain. `set` is infallible here — we're the only
+    // writer and we hold the only Arc clone outside the router itself.
+    let _ = inner_router_holder.set(app.clone());
 
     tracing::info!("Listening on {}", addr);
 
