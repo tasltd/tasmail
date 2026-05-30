@@ -99,6 +99,13 @@ export interface SaveDraftRequest {
   subject: string;
   html_body?: string;
   text_body?: string;
+  // TMAIL-319: optional RFC 5322 §3.6.4 threading headers so a draft started
+  // from Reply / Reply All / Forward remembers which conversation it belongs
+  // to. The backend /api/drafts handler is welcome to ignore them today —
+  // the field exists so the wire shape is forward-compatible without a
+  // separate ComposeModal branch.
+  in_reply_to?: string;
+  references?: string[];
 }
 
 export async function saveDraft(request: SaveDraftRequest): Promise<void> {

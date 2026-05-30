@@ -49,6 +49,10 @@ pub async fn schedule_send(
         Utc::now() + Duration::seconds(delay)
     };
 
+    // TMAIL-319: thread reply/forward headers through to the persisted row
+    // so the background scheduler can stamp `In-Reply-To` + `References` on
+    // the outbound message. Compose-from-scratch leaves both unset.
+    let references = body.references.as_deref().unwrap_or(&[]);
     let email = ScheduledEmail::create(
         &state.db,
         mailbox_id,
@@ -59,6 +63,8 @@ pub async fn schedule_send(
         body.text_body.as_deref(),
         body.html_body.as_deref(),
         scheduled_at,
+        body.in_reply_to.as_deref(),
+        references,
     )
     .await?;
 

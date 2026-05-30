@@ -13,6 +13,7 @@ import { Sidebar } from '@/components/layout/Sidebar';
 import { EmailList } from '@/features/email/EmailList';
 import { EmailReader } from '@/features/email/EmailReader';
 import { ComposeModal } from '@/features/email/ComposeModal';
+import { buildReplyContext, type ReplyContext, type ReplyKind } from '@/features/email/replyContext';
 import { fetchFolders } from '@/api/folders';
 import { deleteMessage, fetchMessages, flagMessage, moveMessage } from '@/api/messages';
 import type {
@@ -65,6 +66,35 @@ export function EmailClient() {
   const [selectedUid, setSelectedUid] = useState<number | null>(null);
   const [isComposing, setIsComposing] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  // Added: TMAIL-319 — the active Reply / Reply All / Forward prefill payload
+  // for ComposeModal. EmailReader passes the loaded FullMessage + the kind
+  // (reply | replyAll | forward) when its toolbar buttons fire; we then build
+  // the ReplyContext here (so the helper stays a pure module call) and stash
+  // it for the composer to consume. `null` means "open a blank compose" — the
+  // sidebar's floating Compose button takes that path.
+  const [replyContext, setReplyContext] = useState<ReplyContext | null>(null);
+
+  // Added: TMAIL-319 — the logged-in user's own address. Used by the Reply All
+  // builder to filter the user out of `to` / `cc` so they don't email
+  // themselves a copy of their own reply. Pulled out of the JWT once at mount
+  // so the modal doesn't need to re-decode it.
+  const selfAddress = useMemo<string | null>(() => {
+    const token = typeof window !== 'undefined' ? window.localStorage.getItem('access_token') : null;
+    if (!token) return null;
+    try {
+      const [, payload] = token.split('.');
+      if (!payload) return null;
+      // JWT base64url → base64 then atob. Lossy decode (no UTF-8 reconstruction)
+      // is fine: email addresses are ASCII per RFC 5321 §4.5.3.
+      const json = atob(payload.replace(/-/g, '+').replace(/_/g, '/'));
+      const parsed = JSON.parse(json) as { email?: string; sub?: string };
+      return (parsed.email ?? null)?.toLowerCase() ?? null;
+    } catch {
+      // Malformed JWT — fall back gracefully; Reply All just won't filter
+      // self addresses, which is annoying but not broken.
+      return null;
+    }
+  }, []);
 
   const queryClient = useQueryClient();
 
@@ -284,6 +314,9 @@ export function EmailClient() {
             setSidebarOpen(false);
           }}
           onCompose={() => {
+            // Sidebar Compose button = blank compose. Drop any stale reply
+            // context so the modal opens with empty fields.
+            setReplyContext(null);
             setIsComposing(true);
             setSidebarOpen(false);
           }}
@@ -351,7 +384,20 @@ export function EmailClient() {
               folder={activeFolder}
               uid={selectedUid}
               listItem={selectedEmail}
-              onCompose={() => setIsComposing(true)}
+              // Added: TMAIL-319 — build the ReplyContext here so the helper
+              // stays a pure function and EmailClient owns "which compose are
+              // we in" state. `kind == null` means the caller wanted a blank
+              // compose (kept for shape-compatibility with the legacy zero-arg
+              // signature — currently unused by EmailReader but documented so
+              // future call sites have an obvious blank path).
+              onCompose={(kind: ReplyKind | null, message: FullMessage | null) => {
+                if (kind && message) {
+                  setReplyContext(buildReplyContext(message, kind, selfAddress));
+                } else {
+                  setReplyContext(null);
+                }
+                setIsComposing(true);
+              }}
               onToggleStar={(uid, currentlyStarred) =>
                 toggleStarMutation.mutate({ uid, currentlyStarred })
               }
@@ -375,7 +421,17 @@ export function EmailClient() {
         </div>
       </div>
 
-      <ComposeModal isOpen={isComposing} onClose={() => setIsComposing(false)} />
+      <ComposeModal
+        isOpen={isComposing}
+        // Drop the reply context on close so re-opening via the floating
+        // Compose button starts blank rather than re-prefilling the last
+        // reply.
+        onClose={() => {
+          setIsComposing(false);
+          setReplyContext(null);
+        }}
+        replyContext={replyContext}
+      />
     </div>
   );
 }

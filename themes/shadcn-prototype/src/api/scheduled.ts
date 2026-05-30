@@ -33,6 +33,12 @@ export interface ScheduleSendRequest {
   html_body?: string;
   scheduled_at?: string;
   delay_seconds?: number;
+  // TMAIL-319: optional RFC 5322 §3.6.4 threading headers populated by the
+  // Reply / Reply All / Forward path in the modern UI. The backend persists
+  // them on `scheduled_emails` (migration 077) and the email scheduler
+  // stamps them onto the outbound message via lettre's typed headers.
+  in_reply_to?: string;
+  references?: string[];
 }
 
 export const scheduledApi = {

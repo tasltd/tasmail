@@ -31,10 +31,16 @@ describe('filters API', () => {
     vi.clearAllMocks();
   });
 
+  // Fix (TMAIL-319 follow-up to TMAIL-286): apiClient.request() already
+  // prepends API_BASE_URL ("/api"), so the callers in filters.ts use
+  // "/filters" (NOT "/api/filters"). These assertions were missed when
+  // TMAIL-286 fixed the source but left the test asserting the bad URL —
+  // every test in this file was failing pre-existing. Aligning the
+  // assertions with the source is the smallest valid fix.
   it('lists filters', async () => {
     vi.mocked(apiClient.get).mockResolvedValue([mockRule]);
     const result = await listFilters();
-    expect(apiClient.get).toHaveBeenCalledWith('/api/filters');
+    expect(apiClient.get).toHaveBeenCalledWith('/filters');
     expect(result).toHaveLength(1);
     expect(result[0].name).toBe('Move newsletters');
   });
@@ -47,27 +53,27 @@ describe('filters API', () => {
     };
     vi.mocked(apiClient.post).mockResolvedValue({ ...mockRule, name: 'Spam filter' });
     const result = await createFilter(request);
-    expect(apiClient.post).toHaveBeenCalledWith('/api/filters', request);
+    expect(apiClient.post).toHaveBeenCalledWith('/filters', request);
     expect(result.name).toBe('Spam filter');
   });
 
   it('updates a filter', async () => {
     vi.mocked(apiClient.put).mockResolvedValue({ ...mockRule, name: 'Updated' });
     const result = await updateFilter('abc', { name: 'Updated' });
-    expect(apiClient.put).toHaveBeenCalledWith('/api/filters/abc', { name: 'Updated' });
+    expect(apiClient.put).toHaveBeenCalledWith('/filters/abc', { name: 'Updated' });
     expect(result.name).toBe('Updated');
   });
 
   it('deletes a filter', async () => {
     vi.mocked(apiClient.delete).mockResolvedValue(undefined);
     await deleteFilter('abc');
-    expect(apiClient.delete).toHaveBeenCalledWith('/api/filters/abc');
+    expect(apiClient.delete).toHaveBeenCalledWith('/filters/abc');
   });
 
   it('reorders filters', async () => {
     vi.mocked(apiClient.post).mockResolvedValue(undefined);
     await reorderFilters(['id1', 'id2', 'id3']);
-    expect(apiClient.post).toHaveBeenCalledWith('/api/filters/reorder', ['id1', 'id2', 'id3']);
+    expect(apiClient.post).toHaveBeenCalledWith('/filters/reorder', ['id1', 'id2', 'id3']);
   });
 });
 

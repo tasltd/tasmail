@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { X, Minimize2, Maximize2, Paperclip, Send, Save, Bold, Italic, Link as LinkIcon, List } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -6,10 +6,19 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { scheduledApi } from '@/api/scheduled';
 import { saveDraft } from '@/api/messages';
+import type { ReplyContext } from './replyContext';
 
 interface ComposeModalProps {
   isOpen: boolean;
   onClose: () => void;
+  // Added: TMAIL-319 — Reply / Reply All / Forward prefill payload built by
+  // EmailReader → buildReplyContext(). When non-null the modal opens with
+  // the recipients, subject (Re: / Fwd: prefix), and quoted body already
+  // populated, and stamps the In-Reply-To / References headers onto the
+  // outbound /api/messages/schedule request so downstream mail clients
+  // thread the conversation correctly (RFC 5322 §3.6.4).
+  // Null means a blank compose-from-scratch.
+  replyContext?: ReplyContext | null;
 }
 
 // TMAIL-219: send via scheduledApi.scheduleSend so the modern UI uses the
@@ -20,7 +29,7 @@ function splitAddrs(s: string): string[] {
   return s.split(/[,;]/).map((x) => x.trim()).filter(Boolean);
 }
 
-export function ComposeModal({ isOpen, onClose }: ComposeModalProps) {
+export function ComposeModal({ isOpen, onClose, replyContext = null }: ComposeModalProps) {
   const queryClient = useQueryClient();
   const [minimized, setMinimized] = useState(false);
   const [showCc, setShowCc] = useState(false);
@@ -33,6 +42,35 @@ export function ComposeModal({ isOpen, onClose }: ComposeModalProps) {
   const [error, setError] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<File[]>([]);
 
+  // Added: TMAIL-319 — re-seed the form state from `replyContext` whenever
+  // the modal opens (or the source message changes). Using an effect rather
+  // than `useState(() => fromReplyCtx)` so flipping between Reply / Reply All
+  // / Forward on the same modal instance re-prefills correctly. Reveals Cc
+  // automatically when the prefill includes any Cc addresses so the user
+  // sees them without hunting for the toggle.
+  useEffect(() => {
+    if (!isOpen) return;
+    if (replyContext) {
+      setTo(replyContext.to.join(', '));
+      setCc(replyContext.cc.join(', '));
+      setBcc('');
+      setSubject(replyContext.subject);
+      setBody(replyContext.body);
+      setShowCc(replyContext.cc.length > 0);
+      setShowBcc(false);
+    } else {
+      setTo('');
+      setCc('');
+      setBcc('');
+      setSubject('');
+      setBody('');
+      setShowCc(false);
+      setShowBcc(false);
+    }
+    setError(null);
+    setAttachments([]);
+  }, [isOpen, replyContext]);
+
   const sendMut = useMutation({
     mutationFn: () => scheduledApi.scheduleSend({
       to: splitAddrs(to),
@@ -41,6 +79,15 @@ export function ComposeModal({ isOpen, onClose }: ComposeModalProps) {
       subject,
       text_body: body || undefined,
       delay_seconds: 0,
+      // TMAIL-319: forward the threading headers from the open replyContext
+      // so the backend can persist them and the email scheduler can stamp
+      // In-Reply-To / References on the outbound message. Blank for a fresh
+      // compose so we don't emit phantom headers.
+      in_reply_to: replyContext?.inReplyTo ?? undefined,
+      references:
+        replyContext && replyContext.references.length > 0
+          ? replyContext.references
+          : undefined,
     }),
     onSuccess: () => {
       // Sent message lands in the user's Sent folder; bump folder counts so
@@ -64,6 +111,15 @@ export function ComposeModal({ isOpen, onClose }: ComposeModalProps) {
       cc: cc.trim() ? splitAddrs(cc) : undefined,
       subject: subject || '(no subject)',
       text_body: body || undefined,
+      // TMAIL-319: include the same threading headers on drafts so a draft
+      // started from Reply / Reply All / Forward keeps its conversation
+      // identity. The backend may not persist them yet — the modal stays
+      // forward-compatible without a separate branch.
+      in_reply_to: replyContext?.inReplyTo ?? undefined,
+      references:
+        replyContext && replyContext.references.length > 0
+          ? replyContext.references
+          : undefined,
     }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['folders'] });
@@ -97,7 +153,15 @@ export function ComposeModal({ isOpen, onClose }: ComposeModalProps) {
     return (
       <div className="fixed bottom-0 right-0 sm:right-4 w-full sm:w-80 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-t-lg shadow-2xl z-50">
         <div className="flex items-center justify-between p-3 border-b border-zinc-200 dark:border-zinc-800 cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-800" onClick={() => setMinimized(false)}>
-          <span className="font-medium">New Message</span>
+          {/* Added: TMAIL-319 — modal heading reflects the active intent so
+              the user (and screen readers) know whether this is a fresh
+              compose, a Reply, a Reply All, or a Forward. */}
+          <span className="font-medium">
+            {replyContext == null && 'New Message'}
+            {replyContext?.kind === 'reply' && 'Reply'}
+            {replyContext?.kind === 'replyAll' && 'Reply All'}
+            {replyContext?.kind === 'forward' && 'Forward'}
+          </span>
           <div className="flex items-center gap-1">
             <Button variant="ghost" size="icon" className="size-8">
               <Maximize2 className="size-4" />

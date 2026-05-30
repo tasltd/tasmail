@@ -11,12 +11,23 @@ import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { fetchMessage } from '@/api/messages';
 import type { Email } from '@/types/ui';
+import type { FullMessage } from '@/types/mail';
+import type { ReplyKind } from './replyContext';
 
 interface EmailReaderProps {
   folder: string;
   uid: number | null;
   listItem: Email | null;
-  onCompose: () => void;
+  // Changed: TMAIL-319 — onCompose now carries both the active intent
+  // (Reply / Reply All / Forward) AND the loaded FullMessage when one is
+  // available. EmailClient turns that into a ReplyContext via
+  // buildReplyContext() and hands it to ComposeModal as the prefill.
+  //
+  // The legacy zero-arg shape ("user clicked the floating Compose button")
+  // is preserved by passing both args as null/undefined — the reader's
+  // existing call sites in TopBar / sidebar continue to work without
+  // change.
+  onCompose: (kind: ReplyKind | null, message: FullMessage | null) => void;
   // Added: TMAIL-316 — star button in the reader header toggles the IMAP
   // \Flagged keyword via the same /flag endpoint the EmailList star uses.
   // EmailClient owns the mutation + cache invalidation; the reader stays
@@ -127,15 +138,43 @@ export function EmailReader({
         </div>
 
         <div className="flex items-center gap-1 sm:gap-2 flex-wrap">
-          <Button variant="outline" size="sm" onClick={onCompose}>
+          {/* Added: TMAIL-319 — Reply / Reply All / Forward each open the
+              composer with the loaded FullMessage so EmailClient can build a
+              ReplyContext prefill (recipients, Re: / Fwd: subject, quoted
+              body, In-Reply-To + References headers). Disabled while the
+              /api/folders/{folder}/messages/{uid} body is loading so the
+              prefill always reflects the real message — clicking before the
+              body arrives would prefill a "(loading…)" subject and an empty
+              quote, and there's no good way to retro-fix that once the modal
+              is open. Each button carries an aria-label so screen readers
+              announce both the action and the source sender. */}
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={m == null}
+            aria-label={`Reply to ${from}`}
+            onClick={() => onCompose('reply', m ?? null)}
+          >
             <Reply className="size-4 sm:mr-2" />
             <span className="hidden sm:inline">Reply</span>
           </Button>
-          <Button variant="outline" size="sm" onClick={onCompose}>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={m == null}
+            aria-label={`Reply all to ${from}`}
+            onClick={() => onCompose('replyAll', m ?? null)}
+          >
             <ReplyAll className="size-4 sm:mr-2" />
             <span className="hidden sm:inline">Reply All</span>
           </Button>
-          <Button variant="outline" size="sm" onClick={onCompose}>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={m == null}
+            aria-label={`Forward email from ${from}`}
+            onClick={() => onCompose('forward', m ?? null)}
+          >
             <Forward className="size-4 sm:mr-2" />
             <span className="hidden sm:inline">Forward</span>
           </Button>

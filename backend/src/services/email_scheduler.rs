@@ -111,6 +111,11 @@ impl EmailScheduler {
         };
         let smtp = SmtpService::new(smtp_runtime_cfg);
 
+        // TMAIL-319: forward the persisted reply/forward threading headers
+        // (set by the modern UI's Reply / Reply All / Forward path) so the
+        // outbound message ends up with the right In-Reply-To and References
+        // — otherwise mail clients downstream render replies as brand-new
+        // top-level threads.
         let request = SendRequest {
             to: email.to_addresses.clone(),
             cc: Some(email.cc_addresses.clone()),
@@ -118,6 +123,12 @@ impl EmailScheduler {
             subject: email.subject.clone(),
             text_body: email.text_body.clone(),
             html_body: email.html_body.clone(),
+            in_reply_to: email.in_reply_to.clone(),
+            references: if email.reference_ids.is_empty() {
+                None
+            } else {
+                Some(email.reference_ids.clone())
+            },
         };
 
         smtp.send(&from_address, &password, &request)

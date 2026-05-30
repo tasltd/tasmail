@@ -1,5 +1,8 @@
 use lettre::{
-    message::{header::ContentType, Mailbox as LettreMailbox, MultiPart, SinglePart},
+    message::{
+        header::{ContentType, InReplyTo, References},
+        Mailbox as LettreMailbox, MultiPart, SinglePart,
+    },
     transport::smtp::authentication::Credentials,
     AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor,
 };
@@ -8,7 +11,7 @@ use crate::config::SmtpConfig;
 use crate::error::AppError;
 
 /// Request to send an email
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, Default, serde::Deserialize)]
 pub struct SendRequest {
     pub to: Vec<String>,
     pub cc: Option<Vec<String>>,
@@ -16,6 +19,14 @@ pub struct SendRequest {
     pub subject: String,
     pub text_body: Option<String>,
     pub html_body: Option<String>,
+    // TMAIL-319: optional reply / forward threading headers (RFC 5322 §3.6.4).
+    // `in_reply_to` is the source message's `Message-Id`; `references` is the
+    // existing chain plus the source message id appended (so the next reply in
+    // the thread gets a complete history). Both are skipped on a fresh compose.
+    #[serde(default)]
+    pub in_reply_to: Option<String>,
+    #[serde(default)]
+    pub references: Option<Vec<String>>,
 }
 
 /// SMTP service for sending emails via Postfix
@@ -35,6 +46,43 @@ impl SmtpService {
         from_password: &str,
         request: &SendRequest,
     ) -> Result<(), AppError> {
+        let email = Self::build_outgoing_message(from_address, request)?;
+        let creds = Credentials::new(from_address.to_string(), from_password.to_string());
+
+        let transport = if self.config.tls {
+            AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&self.config.host)
+                .map_err(|e| AppError::Smtp(format!("SMTP transport error: {}", e)))?
+                .port(self.config.port)
+                .credentials(creds)
+                .build()
+        } else {
+            AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(&self.config.host)
+                .port(self.config.port)
+                .credentials(creds)
+                .build()
+        };
+
+        transport
+            .send(email)
+            .await
+            .map_err(|e| AppError::Smtp(format!("Failed to send email: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// PURPOSE: Build the lettre `Message` that `send()` will dial out, with
+    /// support for optional reply / forward threading headers. Extracted so
+    /// the address parsing, header stamping, and multipart shape are unit
+    /// testable without standing up an SMTP server (matches the pattern of
+    /// `build_imip_request_message`).
+    ///
+    /// CONSTRAINTS: Caller must have populated `request.to` with at least one
+    /// address; the rest of `request` is plain SendRequest semantics. Reply
+    /// headers (`in_reply_to`, `references`) are no-ops when None / empty.
+    pub fn build_outgoing_message(
+        from_address: &str,
+        request: &SendRequest,
+    ) -> Result<Message, AppError> {
         let from: LettreMailbox = from_address
             .parse()
             .map_err(|e| AppError::BadRequest(format!("Invalid from address: {}", e)))?;
@@ -68,7 +116,33 @@ impl SmtpService {
 
         builder = builder.subject(&request.subject);
 
-        let email = match (&request.text_body, &request.html_body) {
+        // TMAIL-319: stamp reply/forward threading headers when present. The
+        // composer fills these on Reply / Reply All / Forward so downstream
+        // mail clients render the message inside the existing conversation
+        // (RFC 5322 §3.6.4). Both are no-ops on a fresh compose.
+        if let Some(in_reply_to) = request.in_reply_to.as_deref() {
+            let trimmed = in_reply_to.trim();
+            if !trimmed.is_empty() {
+                builder = builder.header(InReplyTo::from(trimmed.to_string()));
+            }
+        }
+        if let Some(references) = request.references.as_deref() {
+            // RFC 5322 says References is a single header containing the
+            // whitespace-separated chain of message-ids — join with spaces
+            // rather than emitting multiple headers (some receiving MTAs
+            // only honour the first).
+            let joined = references
+                .iter()
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+                .join(" ");
+            if !joined.is_empty() {
+                builder = builder.header(References::from(joined));
+            }
+        }
+
+        match (&request.text_body, &request.html_body) {
             (Some(text), Some(html)) => builder
                 .multipart(
                     MultiPart::alternative()
@@ -83,43 +157,19 @@ impl SmtpService {
                                 .body(html.clone()),
                         ),
                 )
-                .map_err(|e| AppError::Smtp(format!("Failed to build email: {}", e)))?,
+                .map_err(|e| AppError::Smtp(format!("Failed to build email: {}", e))),
             (Some(text), None) => builder
                 .header(ContentType::TEXT_PLAIN)
                 .body(text.clone())
-                .map_err(|e| AppError::Smtp(format!("Failed to build email: {}", e)))?,
+                .map_err(|e| AppError::Smtp(format!("Failed to build email: {}", e))),
             (None, Some(html)) => builder
                 .header(ContentType::TEXT_HTML)
                 .body(html.clone())
-                .map_err(|e| AppError::Smtp(format!("Failed to build email: {}", e)))?,
-            (None, None) => {
-                return Err(AppError::BadRequest(
-                    "Email must have a text or HTML body".to_string(),
-                ));
-            }
-        };
-
-        let creds = Credentials::new(from_address.to_string(), from_password.to_string());
-
-        let transport = if self.config.tls {
-            AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&self.config.host)
-                .map_err(|e| AppError::Smtp(format!("SMTP transport error: {}", e)))?
-                .port(self.config.port)
-                .credentials(creds)
-                .build()
-        } else {
-            AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(&self.config.host)
-                .port(self.config.port)
-                .credentials(creds)
-                .build()
-        };
-
-        transport
-            .send(email)
-            .await
-            .map_err(|e| AppError::Smtp(format!("Failed to send email: {}", e)))?;
-
-        Ok(())
+                .map_err(|e| AppError::Smtp(format!("Failed to build email: {}", e))),
+            (None, None) => Err(AppError::BadRequest(
+                "Email must have a text or HTML body".to_string(),
+            )),
+        }
     }
 
     /// PURPOSE: Build the lettre `Message` for an outbound iMIP invitation
@@ -497,6 +547,110 @@ mod tests {
             "BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n",
         );
         assert!(matches!(res, Err(AppError::BadRequest(_))));
+    }
+
+    // Added (TMAIL-319): wire-format guard — a Reply / Reply All / Forward
+    // request from the modern UI MUST round-trip its threading headers. A
+    // serde rename or accidental rename of the field would silently disable
+    // threading without anyone noticing.
+    #[test]
+    fn send_request_deserialises_reply_headers() {
+        let json = r#"{
+            "to": ["alice@example.com"],
+            "subject": "Re: Hi",
+            "text_body": "Sure, sounds good.",
+            "in_reply_to": "<orig-1@example.com>",
+            "references": ["<thread-root@example.com>", "<orig-1@example.com>"]
+        }"#;
+        let req: SendRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.in_reply_to.as_deref(), Some("<orig-1@example.com>"));
+        let refs = req.references.expect("references must round-trip");
+        assert_eq!(refs.len(), 2);
+        assert_eq!(refs[0], "<thread-root@example.com>");
+        assert_eq!(refs[1], "<orig-1@example.com>");
+    }
+
+    // Added (TMAIL-319): the lettre `Message` produced by `build_outgoing_message`
+    // MUST carry the `In-Reply-To` and `References` headers when the request
+    // supplies them — otherwise sent replies show up as top-level threads in
+    // downstream mail clients (the exact bug TMAIL-319 fixes).
+    #[test]
+    fn build_outgoing_message_stamps_reply_threading_headers() {
+        let req = SendRequest {
+            to: vec!["alice@example.com".into()],
+            subject: "Re: Project update".into(),
+            text_body: Some("Sure, sounds good.\n\nOn Mon ... wrote:\n> original".into()),
+            in_reply_to: Some("<orig-1@example.com>".into()),
+            references: Some(vec![
+                "<thread-root@example.com>".into(),
+                "<orig-1@example.com>".into(),
+            ]),
+            ..Default::default()
+        };
+        let msg = SmtpService::build_outgoing_message("me@example.com", &req)
+            .expect("message build should succeed");
+        let raw = String::from_utf8(msg.formatted())
+            .expect("ASCII test fixture should format as UTF-8");
+        assert!(
+            raw.contains("In-Reply-To: <orig-1@example.com>"),
+            "In-Reply-To header missing:\n{}",
+            raw
+        );
+        assert!(
+            raw.contains(
+                "References: <thread-root@example.com> <orig-1@example.com>"
+            ),
+            "References header missing or wrongly delimited:\n{}",
+            raw
+        );
+    }
+
+    // Added (TMAIL-319): a brand-new compose (no reply context) must NOT emit
+    // empty / phantom threading headers — that's worse than missing because
+    // some MTAs reject empty header values outright.
+    #[test]
+    fn build_outgoing_message_omits_threading_headers_for_fresh_compose() {
+        let req = SendRequest {
+            to: vec!["alice@example.com".into()],
+            subject: "Hello".into(),
+            text_body: Some("Just saying hi.".into()),
+            ..Default::default()
+        };
+        let msg = SmtpService::build_outgoing_message("me@example.com", &req)
+            .expect("message build should succeed");
+        let raw = String::from_utf8(msg.formatted())
+            .expect("ASCII test fixture should format as UTF-8");
+        assert!(
+            !raw.contains("In-Reply-To:"),
+            "fresh compose must not emit In-Reply-To:\n{}",
+            raw
+        );
+        assert!(
+            !raw.contains("References:"),
+            "fresh compose must not emit References:\n{}",
+            raw
+        );
+    }
+
+    // Added (TMAIL-319): whitespace-only header values must be skipped — a
+    // composer bug that emits `in_reply_to: ""` should not poison the outbound
+    // message with an empty header.
+    #[test]
+    fn build_outgoing_message_skips_blank_reply_headers() {
+        let req = SendRequest {
+            to: vec!["alice@example.com".into()],
+            subject: "Hello".into(),
+            text_body: Some("Body".into()),
+            in_reply_to: Some("   ".into()),
+            references: Some(vec!["".into(), "   ".into()]),
+            ..Default::default()
+        };
+        let msg = SmtpService::build_outgoing_message("me@example.com", &req)
+            .expect("message build should succeed");
+        let raw = String::from_utf8(msg.formatted())
+            .expect("ASCII test fixture should format as UTF-8");
+        assert!(!raw.contains("In-Reply-To:"), "blank In-Reply-To must be skipped");
+        assert!(!raw.contains("References:"), "all-blank References must be skipped");
     }
 
     #[test]

@@ -270,6 +270,12 @@ async fn process_item(
             subject: item.subject.clone(),
             text_body: if item.body_text.is_empty() { None } else { Some(item.body_text.clone()) },
             html_body: if item.body_html.is_empty() { None } else { Some(item.body_html.clone()) },
+            // The email queue table doesn't currently persist reply / forward
+            // threading headers. New TMAIL-319 reply paths go through the
+            // scheduled_emails table; the queue path stays threadless until a
+            // matching schema migration lands here.
+            in_reply_to: None,
+            references: None,
         };
 
         smtp.send(&from_address, &password, &request)

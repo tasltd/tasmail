@@ -128,6 +128,9 @@ pub async fn submit_quote_request(
             subject: format!("New TASMail Enterprise quote request — {name}"),
             text_body: Some(summary),
             html_body: None,
+            // Notifications are not part of a thread.
+            in_reply_to: None,
+            references: None,
         })
         .await
         .map_err(|e| {
