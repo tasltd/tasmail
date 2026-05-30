@@ -48,8 +48,10 @@ class ApiClient {
         if (!retryText) return undefined as T;
         return JSON.parse(retryText) as T;
       }
-      // Refresh failed, redirect to login
-      window.location.href = '/login';
+      // Refresh failed, redirect to the Modern UI's native login (TMAIL-327).
+      // Using `window.location.hash` keeps us inside /modern/index.html
+      // instead of bouncing out to the classic SPA's /login URL.
+      window.location.hash = '#/login';
       throw new ApiError(401, 'Session expired');
     }
 
@@ -73,8 +75,14 @@ class ApiClient {
   }
 
   private async tryRefresh(): Promise<boolean> {
-    const refreshToken = localStorage.getItem('refresh_token');
+    // TMAIL-327: "remember me = off" puts the token pair in sessionStorage,
+    // so check both stores. Whichever store held the refresh token also
+    // gets the rotated tokens written back so the session boundary survives.
+    const fromLocal = localStorage.getItem('refresh_token');
+    const fromSession = sessionStorage.getItem('refresh_token');
+    const refreshToken = fromLocal || fromSession;
     if (!refreshToken) return false;
+    const store: Storage = fromLocal ? localStorage : sessionStorage;
 
     try {
       const response = await fetch(`${API_BASE_URL}/auth/refresh`, {
@@ -87,8 +95,8 @@ class ApiClient {
 
       const data = await response.json();
       this.accessToken = data.access_token;
-      localStorage.setItem('access_token', data.access_token);
-      localStorage.setItem('refresh_token', data.refresh_token);
+      store.setItem('access_token', data.access_token);
+      store.setItem('refresh_token', data.refresh_token);
       return true;
     } catch {
       return false;
