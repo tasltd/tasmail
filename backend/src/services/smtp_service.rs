@@ -1,7 +1,7 @@
 use lettre::{
     message::{
         header::{ContentType, InReplyTo, References},
-        Mailbox as LettreMailbox, MultiPart, SinglePart,
+        Attachment as LettreAttachment, Mailbox as LettreMailbox, MultiPart, SinglePart,
     },
     transport::smtp::authentication::Credentials,
     AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor,
@@ -9,6 +9,18 @@ use lettre::{
 
 use crate::config::SmtpConfig;
 use crate::error::AppError;
+
+/// TMAIL-321: a single binary attachment to be embedded as a MIME part on the
+/// outbound message. Carried in `SendRequest::attachments`. We hold the bytes
+/// in-memory here because the 25 MB total compose limit is small enough that
+/// streaming would buy nothing — and lettre's `MultiPart::mixed` API needs
+/// owned `Vec<u8>` anyway.
+#[derive(Debug, Clone)]
+pub struct OutgoingAttachment {
+    pub filename: String,
+    pub content_type: String,
+    pub data: Vec<u8>,
+}
 
 /// Request to send an email
 #[derive(Debug, Default, serde::Deserialize)]
@@ -27,6 +39,12 @@ pub struct SendRequest {
     pub in_reply_to: Option<String>,
     #[serde(default)]
     pub references: Option<Vec<String>>,
+    // TMAIL-321: file attachments to embed as MIME parts. Populated by the
+    // email_scheduler after loading bytes from disk; not deserialised over the
+    // wire (clients send pre-uploaded attachment IDs via
+    // /api/messages/schedule, not raw bytes).
+    #[serde(skip)]
+    pub attachments: Vec<OutgoingAttachment>,
 }
 
 /// SMTP service for sending emails via Postfix
@@ -142,34 +160,91 @@ impl SmtpService {
             }
         }
 
-        match (&request.text_body, &request.html_body) {
-            (Some(text), Some(html)) => builder
-                .multipart(
-                    MultiPart::alternative()
-                        .singlepart(
-                            SinglePart::builder()
-                                .header(ContentType::TEXT_PLAIN)
-                                .body(text.clone()),
-                        )
-                        .singlepart(
-                            SinglePart::builder()
-                                .header(ContentType::TEXT_HTML)
-                                .body(html.clone()),
-                        ),
-                )
-                .map_err(|e| AppError::Smtp(format!("Failed to build email: {}", e))),
-            (Some(text), None) => builder
-                .header(ContentType::TEXT_PLAIN)
-                .body(text.clone())
-                .map_err(|e| AppError::Smtp(format!("Failed to build email: {}", e))),
-            (None, Some(html)) => builder
-                .header(ContentType::TEXT_HTML)
-                .body(html.clone())
-                .map_err(|e| AppError::Smtp(format!("Failed to build email: {}", e))),
-            (None, None) => Err(AppError::BadRequest(
-                "Email must have a text or HTML body".to_string(),
-            )),
+        // TMAIL-321: when the request carries attachments we must wrap whatever
+        // body shape (plain only / html only / multipart/alternative) inside a
+        // top-level multipart/mixed so RFC 2183 attachment parts can ride
+        // alongside it. Compose-without-attachments keeps the pre-existing
+        // singlepart / alternative shape so historical wire compatibility is
+        // preserved.
+        let has_attachments = !request.attachments.is_empty();
+
+        if !has_attachments {
+            return match (&request.text_body, &request.html_body) {
+                (Some(text), Some(html)) => builder
+                    .multipart(
+                        MultiPart::alternative()
+                            .singlepart(
+                                SinglePart::builder()
+                                    .header(ContentType::TEXT_PLAIN)
+                                    .body(text.clone()),
+                            )
+                            .singlepart(
+                                SinglePart::builder()
+                                    .header(ContentType::TEXT_HTML)
+                                    .body(html.clone()),
+                            ),
+                    )
+                    .map_err(|e| AppError::Smtp(format!("Failed to build email: {}", e))),
+                (Some(text), None) => builder
+                    .header(ContentType::TEXT_PLAIN)
+                    .body(text.clone())
+                    .map_err(|e| AppError::Smtp(format!("Failed to build email: {}", e))),
+                (None, Some(html)) => builder
+                    .header(ContentType::TEXT_HTML)
+                    .body(html.clone())
+                    .map_err(|e| AppError::Smtp(format!("Failed to build email: {}", e))),
+                (None, None) => Err(AppError::BadRequest(
+                    "Email must have a text or HTML body".to_string(),
+                )),
+            };
         }
+
+        let body_part: MultiPart = match (&request.text_body, &request.html_body) {
+            (Some(text), Some(html)) => MultiPart::alternative()
+                .singlepart(
+                    SinglePart::builder()
+                        .header(ContentType::TEXT_PLAIN)
+                        .body(text.clone()),
+                )
+                .singlepart(
+                    SinglePart::builder()
+                        .header(ContentType::TEXT_HTML)
+                        .body(html.clone()),
+                ),
+            (Some(text), None) => MultiPart::alternative().singlepart(
+                SinglePart::builder()
+                    .header(ContentType::TEXT_PLAIN)
+                    .body(text.clone()),
+            ),
+            (None, Some(html)) => MultiPart::alternative().singlepart(
+                SinglePart::builder()
+                    .header(ContentType::TEXT_HTML)
+                    .body(html.clone()),
+            ),
+            (None, None) => {
+                return Err(AppError::BadRequest(
+                    "Email must have a text or HTML body".to_string(),
+                ));
+            }
+        };
+
+        let mut mixed = MultiPart::mixed().multipart(body_part);
+        for att in &request.attachments {
+            // NOTE: lettre's `Attachment::new(filename)` sets Content-Disposition
+            // to `attachment; filename="..."` automatically. We parse the
+            // content-type fall back to application/octet-stream if the upload
+            // record has a malformed value.
+            let content_type = ContentType::parse(&att.content_type)
+                .unwrap_or(ContentType::parse("application/octet-stream").unwrap());
+            mixed = mixed.singlepart(
+                LettreAttachment::new(att.filename.clone())
+                    .body(att.data.clone(), content_type),
+            );
+        }
+
+        builder
+            .multipart(mixed)
+            .map_err(|e| AppError::Smtp(format!("Failed to build email: {}", e)))
     }
 
     /// PURPOSE: Build the lettre `Message` for an outbound iMIP invitation
@@ -628,6 +703,142 @@ mod tests {
         assert!(
             !raw.contains("References:"),
             "fresh compose must not emit References:\n{}",
+            raw
+        );
+    }
+
+    // Added (TMAIL-321): when the composer attaches one or more files the
+    // outbound message MUST end up as multipart/mixed with one part per
+    // attachment, and the existing body shape (alternative or singlepart)
+    // becomes the first sub-part. Otherwise the Paperclip button would be a
+    // visual no-op — the body would send but the user's files would silently
+    // get dropped on the floor.
+    #[test]
+    fn build_outgoing_message_emits_multipart_mixed_with_attachments() {
+        let req = SendRequest {
+            to: vec!["alice@example.com".into()],
+            subject: "Report attached".into(),
+            text_body: Some("See attached PDF.".into()),
+            attachments: vec![OutgoingAttachment {
+                filename: "report.pdf".into(),
+                content_type: "application/pdf".into(),
+                data: b"%PDF-1.4 fake bytes".to_vec(),
+            }],
+            ..Default::default()
+        };
+        let msg = SmtpService::build_outgoing_message("me@example.com", &req)
+            .expect("message build with attachments should succeed");
+        let raw = String::from_utf8(msg.formatted())
+            .expect("ASCII fixture should format as UTF-8");
+
+        assert!(
+            raw.to_lowercase().contains("content-type: multipart/mixed"),
+            "expected top-level multipart/mixed wrapper, got:\n{}",
+            raw
+        );
+        assert!(
+            raw.contains("application/pdf"),
+            "attachment content-type missing:\n{}",
+            raw
+        );
+        assert!(
+            raw.to_lowercase().contains("content-disposition: attachment"),
+            "missing Content-Disposition: attachment for attached file:\n{}",
+            raw
+        );
+        assert!(
+            raw.contains("report.pdf"),
+            "attachment filename missing from headers:\n{}",
+            raw
+        );
+        // Body is still present alongside the attachment.
+        assert!(raw.contains("See attached PDF.") || raw.contains("U2VlIGF0dGFjaGVk"));
+    }
+
+    // Added (TMAIL-321): multiple attachments must each get their own
+    // singlepart inside the multipart/mixed wrapper so the receiving MUA
+    // can iterate them independently.
+    #[test]
+    fn build_outgoing_message_emits_one_part_per_attachment() {
+        let req = SendRequest {
+            to: vec!["alice@example.com".into()],
+            subject: "Two files".into(),
+            text_body: Some("Both attached.".into()),
+            attachments: vec![
+                OutgoingAttachment {
+                    filename: "a.txt".into(),
+                    content_type: "text/plain".into(),
+                    data: b"hello A".to_vec(),
+                },
+                OutgoingAttachment {
+                    filename: "b.txt".into(),
+                    content_type: "text/plain".into(),
+                    data: b"hello B".to_vec(),
+                },
+            ],
+            ..Default::default()
+        };
+        let msg = SmtpService::build_outgoing_message("me@example.com", &req).unwrap();
+        let raw = String::from_utf8(msg.formatted()).unwrap();
+
+        assert!(raw.contains("a.txt"), "filename a.txt missing:\n{}", raw);
+        assert!(raw.contains("b.txt"), "filename b.txt missing:\n{}", raw);
+        let disposition_count = raw
+            .to_lowercase()
+            .matches("content-disposition: attachment")
+            .count();
+        assert!(
+            disposition_count >= 2,
+            "expected at least 2 attachment dispositions, got {} in:\n{}",
+            disposition_count,
+            raw
+        );
+    }
+
+    // Added (TMAIL-321): malformed content-type strings from the attachments
+    // table must NOT crash the build — fall back to application/octet-stream
+    // so a corrupt DB row can never block legitimate sends.
+    #[test]
+    fn build_outgoing_message_falls_back_to_octet_stream_on_bad_content_type() {
+        let req = SendRequest {
+            to: vec!["alice@example.com".into()],
+            subject: "Bad content type".into(),
+            text_body: Some("Body".into()),
+            attachments: vec![OutgoingAttachment {
+                filename: "x.bin".into(),
+                content_type: "not a valid mime type".into(),
+                data: vec![0, 1, 2, 3],
+            }],
+            ..Default::default()
+        };
+        let msg = SmtpService::build_outgoing_message("me@example.com", &req)
+            .expect("must not error on malformed content type");
+        let raw = String::from_utf8(msg.formatted()).unwrap();
+        assert!(
+            raw.to_lowercase().contains("application/octet-stream"),
+            "expected octet-stream fallback in:\n{}",
+            raw
+        );
+    }
+
+    // Added (TMAIL-321): compose without attachments must stay byte-for-byte
+    // compatible with the pre-TMAIL-321 wire shape — no phantom
+    // multipart/mixed wrapper, no extra boundaries. Guards against accidental
+    // regressions in deliverability heuristics (some inbox providers score
+    // unnecessary multipart wrappers as suspicious).
+    #[test]
+    fn build_outgoing_message_without_attachments_skips_mixed_wrapper() {
+        let req = SendRequest {
+            to: vec!["alice@example.com".into()],
+            subject: "Plain only".into(),
+            text_body: Some("Just text.".into()),
+            ..Default::default()
+        };
+        let msg = SmtpService::build_outgoing_message("me@example.com", &req).unwrap();
+        let raw = String::from_utf8(msg.formatted()).unwrap();
+        assert!(
+            !raw.to_lowercase().contains("content-type: multipart/mixed"),
+            "no-attachment compose must not emit multipart/mixed:\n{}",
             raw
         );
     }

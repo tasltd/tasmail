@@ -276,6 +276,10 @@ async fn process_item(
             // matching schema migration lands here.
             in_reply_to: None,
             references: None,
+            // TMAIL-321: queue path doesn't carry attachments (the ComposeModal
+            // sends through scheduled_emails). Empty vec keeps the wire shape
+            // multipart-mixed-free for plain queue sends.
+            attachments: Vec::new(),
         };
 
         smtp.send(&from_address, &password, &request)

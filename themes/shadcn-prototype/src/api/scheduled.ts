@@ -39,6 +39,11 @@ export interface ScheduleSendRequest {
   // stamps them onto the outbound message via lettre's typed headers.
   in_reply_to?: string;
   references?: string[];
+  // TMAIL-321: IDs of attachments uploaded ahead of time via /api/attachments.
+  // Backend re-checks ownership and infection status before linking them to
+  // the scheduled row (migration 078) so the email_scheduler can rebuild a
+  // multipart/mixed payload at send time.
+  attachment_ids?: string[];
 }
 
 export const scheduledApi = {

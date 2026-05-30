@@ -131,6 +131,8 @@ pub async fn submit_quote_request(
             // Notifications are not part of a thread.
             in_reply_to: None,
             references: None,
+            // TMAIL-321: sales notifications never carry attachments.
+            attachments: Vec::new(),
         })
         .await
         .map_err(|e| {

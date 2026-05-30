@@ -79,6 +79,11 @@ async fn main() -> anyhow::Result<()> {
         std::sync::Arc::new(pool.clone()),
         config.jwt.clone(),
         5,
+        // TMAIL-321: scheduler needs the same on-disk attachment dir as the
+        // upload handler so it can re-read uploaded files when assembling the
+        // outbound multipart/mixed payload.
+        std::path::PathBuf::from(&config.storage.attachment_dir),
+        config.storage.clamav_socket.clone(),
     );
     scheduler.start();
 

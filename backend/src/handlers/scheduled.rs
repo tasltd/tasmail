@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::error::AppError;
+use crate::models::attachment::Attachment;
 use crate::models::scheduled_email::{CreateScheduledEmail, ScheduledEmail};
 use crate::services::auth_service::Claims;
 use crate::state::AppState;
@@ -49,6 +50,35 @@ pub async fn schedule_send(
         Utc::now() + Duration::seconds(delay)
     };
 
+    // TMAIL-321: validate attachment ownership BEFORE persisting the scheduled
+    // row. Each ID must (a) exist and (b) belong to the same mailbox sending
+    // the email — otherwise a user could trick the scheduler into attaching
+    // someone else's files. Also reject anything ClamAV has flagged as
+    // infected so we don't push known-bad payloads out via SMTP.
+    let attachment_ids: Vec<Uuid> = body.attachment_ids.clone().unwrap_or_default();
+    for attachment_id in &attachment_ids {
+        let attachment = Attachment::find_by_id(&state.db, *attachment_id)
+            .await?
+            .ok_or_else(|| {
+                AppError::BadRequest(format!("Attachment {} not found", attachment_id))
+            })?;
+        if attachment.mailbox_id != mailbox_id {
+            // NOTE: 404-shaped error on purpose — leaking "exists but not yours"
+            // would tell an attacker which IDs are in play. Mirrors the access
+            // model used by /api/attachments/{id}/download.
+            return Err(AppError::BadRequest(format!(
+                "Attachment {} not found",
+                attachment_id
+            )));
+        }
+        if attachment.scan_status == "infected" {
+            return Err(AppError::BadRequest(format!(
+                "Attachment {} ({}) was flagged as infected and cannot be sent",
+                attachment_id, attachment.filename
+            )));
+        }
+    }
+
     // TMAIL-319: thread reply/forward headers through to the persisted row
     // so the background scheduler can stamp `In-Reply-To` + `References` on
     // the outbound message. Compose-from-scratch leaves both unset.
@@ -67,6 +97,12 @@ pub async fn schedule_send(
         references,
     )
     .await?;
+
+    // TMAIL-321: persist the validated links so the email_scheduler can rebuild
+    // the multipart payload at send time. Order is preserved by `position`.
+    if !attachment_ids.is_empty() {
+        ScheduledEmail::attach_files(&state.db, email.id, &attachment_ids).await?;
+    }
 
     Ok((
         StatusCode::CREATED,

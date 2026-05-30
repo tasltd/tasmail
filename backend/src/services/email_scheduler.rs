@@ -1,12 +1,15 @@
 use sqlx::PgPool;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::config::JwtConfig;
 use crate::models::ai_config::derive_encryption_key;
+use crate::models::attachment::Attachment;
 use crate::models::mailbox::Mailbox;
 use crate::models::scheduled_email::ScheduledEmail;
 use crate::models::smtp_config::SmtpConfiguration;
-use crate::services::smtp_service::{SendRequest, SmtpService};
+use crate::services::attachment_service::AttachmentService;
+use crate::services::smtp_service::{OutgoingAttachment, SendRequest, SmtpService};
 
 /// Background service that polls for scheduled emails and sends them.
 ///
@@ -21,14 +24,26 @@ pub struct EmailScheduler {
     pool: Arc<PgPool>,
     jwt_config: JwtConfig,
     poll_interval_secs: u64,
+    // TMAIL-321: needed to load attachment bytes from disk so the outbound
+    // multipart/mixed payload can carry the user's files. Defaults to the
+    // attachment_dir configured for the API handler so uploaded files are
+    // visible to the scheduler without extra wiring.
+    attachment_service: AttachmentService,
 }
 
 impl EmailScheduler {
-    pub fn new(pool: Arc<PgPool>, jwt_config: JwtConfig, poll_interval_secs: u64) -> Self {
+    pub fn new(
+        pool: Arc<PgPool>,
+        jwt_config: JwtConfig,
+        poll_interval_secs: u64,
+        attachment_dir: PathBuf,
+        clamav_socket: Option<String>,
+    ) -> Self {
         Self {
             pool,
             jwt_config,
             poll_interval_secs,
+            attachment_service: AttachmentService::new(attachment_dir, clamav_socket),
         }
     }
 
@@ -111,6 +126,44 @@ impl EmailScheduler {
         };
         let smtp = SmtpService::new(smtp_runtime_cfg);
 
+        // TMAIL-321: hydrate any attachments the user pinned to this
+        // scheduled send. We refuse infected files at send time as a defence-
+        // in-depth check on top of the handler-side filter (the scan status
+        // can flip from `pending` to `infected` *between* schedule time and
+        // send time, so we re-check here).
+        let attachment_ids =
+            ScheduledEmail::list_attachment_ids(&self.pool, email.id).await?;
+        let mut outgoing_attachments: Vec<OutgoingAttachment> =
+            Vec::with_capacity(attachment_ids.len());
+        for attachment_id in attachment_ids {
+            let attachment = Attachment::find_by_id(&self.pool, attachment_id)
+                .await?
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Attachment {} linked to scheduled email {} no longer exists",
+                        attachment_id,
+                        email.id
+                    )
+                })?;
+            if attachment.scan_status == "infected" {
+                return Err(anyhow::anyhow!(
+                    "Refusing to send scheduled email {} — attachment {} ('{}') flagged infected",
+                    email.id,
+                    attachment.id,
+                    attachment.filename
+                ));
+            }
+            let bytes = self
+                .attachment_service
+                .read_file(&attachment.storage_path)
+                .await?;
+            outgoing_attachments.push(OutgoingAttachment {
+                filename: attachment.filename,
+                content_type: attachment.content_type,
+                data: bytes,
+            });
+        }
+
         // TMAIL-319: forward the persisted reply/forward threading headers
         // (set by the modern UI's Reply / Reply All / Forward path) so the
         // outbound message ends up with the right In-Reply-To and References
@@ -129,6 +182,7 @@ impl EmailScheduler {
             } else {
                 Some(email.reference_ids.clone())
             },
+            attachments: outgoing_attachments,
         };
 
         smtp.send(&from_address, &password, &request)

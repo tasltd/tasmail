@@ -45,6 +45,12 @@ pub struct CreateScheduledEmail {
     pub in_reply_to: Option<String>,
     #[serde(default, alias = "reference_ids")]
     pub references: Option<Vec<String>>,
+    // TMAIL-321: attachments uploaded ahead of time via POST /api/attachments.
+    // The composer uploads files first, then sends their IDs along with the
+    // message. The handler validates ownership before linking. Empty / missing
+    // means "no attachments" — matches the pre-existing wire shape.
+    #[serde(default)]
+    pub attachment_ids: Option<Vec<Uuid>>,
 }
 
 impl ScheduledEmail {
@@ -85,6 +91,52 @@ impl ScheduledEmail {
         .bind(in_reply_to)
         .bind(references)
         .fetch_one(pool)
+        .await
+    }
+
+    /// TMAIL-321: link a set of attachment IDs to a scheduled email in insertion
+    /// order. Caller must have already verified that each attachment belongs to
+    /// the same mailbox as the email; we deliberately do not re-check ownership
+    /// here so this helper stays cheap and unit-testable. Duplicates collapse
+    /// into a single junction row thanks to the composite PK.
+    pub async fn attach_files(
+        pool: &PgPool,
+        scheduled_email_id: Uuid,
+        attachment_ids: &[Uuid],
+    ) -> Result<(), sqlx::Error> {
+        if attachment_ids.is_empty() {
+            return Ok(());
+        }
+        for (position, attachment_id) in attachment_ids.iter().enumerate() {
+            sqlx::query(
+                "INSERT INTO scheduled_email_attachments (scheduled_email_id, attachment_id, position)
+                 VALUES ($1, $2, $3)
+                 ON CONFLICT (scheduled_email_id, attachment_id) DO NOTHING",
+            )
+            .bind(scheduled_email_id)
+            .bind(attachment_id)
+            .bind(position as i32)
+            .execute(pool)
+            .await?;
+        }
+        Ok(())
+    }
+
+    /// TMAIL-321: load attachment IDs linked to a scheduled email, ordered by
+    /// the position they were attached in the composer. The email_scheduler
+    /// uses this to assemble multipart/mixed bodies that mirror what the user
+    /// saw when they clicked Send.
+    pub async fn list_attachment_ids(
+        pool: &PgPool,
+        scheduled_email_id: Uuid,
+    ) -> Result<Vec<Uuid>, sqlx::Error> {
+        sqlx::query_scalar::<_, Uuid>(
+            "SELECT attachment_id FROM scheduled_email_attachments
+             WHERE scheduled_email_id = $1
+             ORDER BY position ASC, created_at ASC",
+        )
+        .bind(scheduled_email_id)
+        .fetch_all(pool)
         .await
     }
 
@@ -254,6 +306,46 @@ mod tests {
         assert_eq!(refs.len(), 2);
         assert_eq!(refs[0], "<thread-1@example.com>");
         assert_eq!(refs[1], "<orig-123@example.com>");
+    }
+
+    // Added (TMAIL-321): CreateScheduledEmail must round-trip `attachment_ids`
+    // so the modern UI's ComposeModal can upload files via /api/attachments
+    // then send them with the scheduled message. Without this assertion a
+    // silent serde rename would re-introduce the "Paperclip is a dead-end" bug.
+    #[test]
+    fn create_scheduled_email_round_trips_attachment_ids() {
+        let att1 = Uuid::new_v4();
+        let att2 = Uuid::new_v4();
+        let json = format!(
+            r#"{{
+                "to": ["alice@example.com"],
+                "subject": "Here is the file",
+                "text_body": "See attached",
+                "delay_seconds": 0,
+                "attachment_ids": ["{}", "{}"]
+            }}"#,
+            att1, att2
+        );
+        let req: CreateScheduledEmail = serde_json::from_str(&json).unwrap();
+        let ids = req.attachment_ids.expect("attachment_ids must round-trip");
+        assert_eq!(ids.len(), 2);
+        assert_eq!(ids[0], att1);
+        assert_eq!(ids[1], att2);
+    }
+
+    // Added (TMAIL-321): a compose with no attachments must leave the field
+    // unset so existing JSON clients (and the omit-empty CI gates) keep
+    // working. Empty arrays vs None are equivalent at the model layer but the
+    // wire shape should preserve "not sent" semantics.
+    #[test]
+    fn create_scheduled_email_attachment_ids_default_none() {
+        let json = r#"{
+            "to": ["alice@example.com"],
+            "subject": "No attachments",
+            "delay_seconds": 0
+        }"#;
+        let req: CreateScheduledEmail = serde_json::from_str(json).unwrap();
+        assert!(req.attachment_ids.is_none());
     }
 
     // Added (TMAIL-319): The ScheduledEmail row serialises `reference_ids` as

@@ -5,8 +5,14 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { scheduledApi } from '@/api/scheduled';
+import { attachmentsApi, type Attachment } from '@/api/attachments';
 import { saveDraft } from '@/api/messages';
 import type { ReplyContext } from './replyContext';
+
+// TMAIL-321: 25 MB total compose limit, matching the backend's
+// storage.max_file_size default. Extracted so the same number drives both
+// the "Attachments 12 MB / 25 MB" label and the pre-send guard.
+const MAX_TOTAL_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 
 interface ComposeModalProps {
   isOpen: boolean;
@@ -29,6 +35,29 @@ function splitAddrs(s: string): string[] {
   return s.split(/[,;]/).map((x) => x.trim()).filter(Boolean);
 }
 
+// TMAIL-321: each attachment row tracks both the local File (for size + name
+// display) and the server-side upload state. We immediately upload on file
+// select so by the time the user hits Send we already have an attachment_id
+// to pass to the schedule API. `error` lets the row render a retry control.
+type UploadStatus = 'uploading' | 'uploaded' | 'error';
+interface ComposeAttachment {
+  // Stable client-side key so React can keep list identity across re-renders.
+  key: string;
+  file: File;
+  status: UploadStatus;
+  // Populated once the upload completes — used as the `attachment_ids` payload.
+  serverId: string | null;
+  // Captured upload error message; shown inline so the user knows which row
+  // is broken and can remove it before retrying Send.
+  errorMessage: string | null;
+}
+
+function makeAttachmentKey(file: File): string {
+  // Random + name keeps duplicates with the same filename distinguishable
+  // and avoids leaking sensitive paths into the DOM.
+  return `${file.name}-${file.size}-${Math.random().toString(36).slice(2)}`;
+}
+
 export function ComposeModal({ isOpen, onClose, replyContext = null }: ComposeModalProps) {
   const queryClient = useQueryClient();
   const [minimized, setMinimized] = useState(false);
@@ -40,7 +69,10 @@ export function ComposeModal({ isOpen, onClose, replyContext = null }: ComposeMo
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [attachments, setAttachments] = useState<File[]>([]);
+  // TMAIL-321: composer-local attachment list (with upload state) — see
+  // ComposeAttachment above. Replaces the old File[] which never made it to
+  // the wire.
+  const [attachments, setAttachments] = useState<ComposeAttachment[]>([]);
 
   // Added: TMAIL-319 — re-seed the form state from `replyContext` whenever
   // the modal opens (or the source message changes). Using an effect rather
@@ -72,23 +104,52 @@ export function ComposeModal({ isOpen, onClose, replyContext = null }: ComposeMo
   }, [isOpen, replyContext]);
 
   const sendMut = useMutation({
-    mutationFn: () => scheduledApi.scheduleSend({
-      to: splitAddrs(to),
-      cc: cc.trim() ? splitAddrs(cc) : undefined,
-      bcc: bcc.trim() ? splitAddrs(bcc) : undefined,
-      subject,
-      text_body: body || undefined,
-      delay_seconds: 0,
-      // TMAIL-319: forward the threading headers from the open replyContext
-      // so the backend can persist them and the email scheduler can stamp
-      // In-Reply-To / References on the outbound message. Blank for a fresh
-      // compose so we don't emit phantom headers.
-      in_reply_to: replyContext?.inReplyTo ?? undefined,
-      references:
-        replyContext && replyContext.references.length > 0
-          ? replyContext.references
-          : undefined,
-    }),
+    mutationFn: async () => {
+      // TMAIL-321: enforce both gates before any HTTP round-trip:
+      //   1. every attachment must be successfully uploaded (have a serverId);
+      //      half-uploaded files would silently disappear from the outbound
+      //      message otherwise.
+      //   2. the running total must be under the 25 MB cap (re-checked here
+      //      because users can paste long bodies that push them over later).
+      const pending = attachments.find((a) => a.status !== 'uploaded' || !a.serverId);
+      if (pending) {
+        if (pending.status === 'uploading') {
+          throw new Error('Wait for attachment uploads to finish before sending.');
+        }
+        throw new Error(
+          `Attachment "${pending.file.name}" failed to upload — remove or retry it before sending.`,
+        );
+      }
+      const total = attachments.reduce((sum, a) => sum + a.file.size, 0);
+      if (total > MAX_TOTAL_ATTACHMENT_BYTES) {
+        throw new Error('Attachments exceed the 25 MB limit. Remove some files and try again.');
+      }
+      const attachmentIds = attachments
+        .map((a) => a.serverId)
+        .filter((id): id is string => Boolean(id));
+
+      return scheduledApi.scheduleSend({
+        to: splitAddrs(to),
+        cc: cc.trim() ? splitAddrs(cc) : undefined,
+        bcc: bcc.trim() ? splitAddrs(bcc) : undefined,
+        subject,
+        text_body: body || undefined,
+        delay_seconds: 0,
+        // TMAIL-319: forward the threading headers from the open replyContext
+        // so the backend can persist them and the email scheduler can stamp
+        // In-Reply-To / References on the outbound message. Blank for a fresh
+        // compose so we don't emit phantom headers.
+        in_reply_to: replyContext?.inReplyTo ?? undefined,
+        references:
+          replyContext && replyContext.references.length > 0
+            ? replyContext.references
+            : undefined,
+        // TMAIL-321: pass the uploaded attachment IDs so the backend links
+        // them to the scheduled row and the email_scheduler emits them as
+        // MIME parts on the outbound message.
+        attachment_ids: attachmentIds.length > 0 ? attachmentIds : undefined,
+      });
+    },
     onSuccess: () => {
       // Sent message lands in the user's Sent folder; bump folder counts so
       // the sidebar's unread badges refresh.
@@ -96,6 +157,7 @@ export function ComposeModal({ isOpen, onClose, replyContext = null }: ComposeMo
       queryClient.invalidateQueries({ queryKey: ['messages'] });
       // Reset the form for the next compose.
       setTo(''); setCc(''); setBcc(''); setSubject(''); setBody('');
+      setAttachments([]);
       setError(null);
       onClose();
     },
@@ -132,10 +194,65 @@ export function ComposeModal({ isOpen, onClose, replyContext = null }: ComposeMo
 
   if (!isOpen) return null;
 
+  // TMAIL-321: each newly-selected file is queued with a stable client-side
+  // key, then immediately uploaded to /api/attachments in parallel. The row
+  // stays visible while uploading so the user gets immediate feedback that
+  // the file was accepted. Upload failures flip the row into `error` state
+  // so the user can remove or retry without blocking the rest of the
+  // attachments.
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) {
-      setAttachments([...attachments, ...Array.from(e.target.files)]);
+    const files = e.target.files;
+    if (!files) return;
+    const incoming = Array.from(files).map<ComposeAttachment>((file) => ({
+      key: makeAttachmentKey(file),
+      file,
+      status: 'uploading',
+      serverId: null,
+      errorMessage: null,
+    }));
+    setAttachments((prev) => [...prev, ...incoming]);
+    // Reset the input so re-selecting the same file fires onChange again.
+    e.target.value = '';
+
+    incoming.forEach((row) => uploadAttachment(row));
+  };
+
+  const uploadAttachment = async (row: ComposeAttachment) => {
+    try {
+      const uploaded: Attachment = await attachmentsApi.upload(row.file);
+      setAttachments((prev) =>
+        prev.map((a) =>
+          a.key === row.key
+            ? { ...a, status: 'uploaded', serverId: uploaded.id, errorMessage: null }
+            : a,
+        ),
+      );
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : 'Upload failed — please retry.';
+      setAttachments((prev) =>
+        prev.map((a) =>
+          a.key === row.key
+            ? { ...a, status: 'error', serverId: null, errorMessage: message }
+            : a,
+        ),
+      );
     }
+  };
+
+  const removeAttachment = (key: string) => {
+    setAttachments((prev) => {
+      const row = prev.find((a) => a.key === key);
+      // Best-effort: if the file was already uploaded, ask the backend to
+      // clean it up so abandoned uploads don't accumulate against the user's
+      // storage quota. Errors here are intentionally swallowed because the
+      // composer-local removal is what matters to the user — the daily
+      // attachment quota sweep will catch any DB orphan.
+      if (row?.serverId) {
+        attachmentsApi.delete(row.serverId).catch(() => {});
+      }
+      return prev.filter((a) => a.key !== key);
+    });
   };
 
   const formatBytes = (bytes: number) => {
@@ -146,8 +263,13 @@ export function ComposeModal({ isOpen, onClose, replyContext = null }: ComposeMo
     return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
   };
 
-  const totalSize = attachments.reduce((sum, file) => sum + file.size, 0);
-  const maxSize = 25 * 1024 * 1024; // 25MB
+  const totalSize = attachments.reduce((sum, a) => sum + a.file.size, 0);
+  const maxSize = MAX_TOTAL_ATTACHMENT_BYTES;
+  // TMAIL-321: any uploading / errored row blocks the Send button so the user
+  // can't accidentally fire off a message minus the files they just attached.
+  const hasUploadingAttachment = attachments.some((a) => a.status === 'uploading');
+  const hasFailedAttachment = attachments.some((a) => a.status === 'error');
+  const overTotalLimit = totalSize > maxSize;
 
   if (minimized) {
     return (
@@ -288,32 +410,63 @@ export function ComposeModal({ isOpen, onClose, replyContext = null }: ComposeMo
           <div role="alert" className="mt-2 text-sm text-red-600">{error}</div>
         )}
 
-        {/* Attachments */}
+        {/* TMAIL-321: each attachment row reflects upload state — `Uploading…`
+            while in flight, the size when finished, an inline error message
+            (with a retry link) if the upload failed. The Send button below
+            stays disabled until every row is in `uploaded`. */}
         {attachments.length > 0 && (
-          <div className="mt-4 space-y-2">
+          <div className="mt-4 space-y-2" data-testid="compose-attachments">
             <div className="flex items-center justify-between text-sm">
               <span className="font-medium">Attachments</span>
-              <span className={totalSize > maxSize ? 'text-red-600' : 'text-zinc-500'}>
+              <span className={overTotalLimit ? 'text-red-600' : 'text-zinc-500'}>
                 {formatBytes(totalSize)} / 25 MB
               </span>
             </div>
-            {attachments.map((file, index) => (
+            {attachments.map((row) => (
               <div
-                key={index}
+                key={row.key}
+                data-testid={`compose-attachment-${row.status}`}
                 className="flex items-center justify-between p-2 bg-zinc-50 dark:bg-zinc-800 rounded border border-zinc-200 dark:border-zinc-700"
               >
                 <div className="flex items-center gap-2 min-w-0">
                   <Paperclip className="size-4 text-zinc-500 flex-shrink-0" />
-                  <span className="text-sm truncate">{file.name}</span>
+                  <span className="text-sm truncate">{row.file.name}</span>
                   <span className="text-xs text-zinc-500 flex-shrink-0">
-                    {formatBytes(file.size)}
+                    {formatBytes(row.file.size)}
                   </span>
+                  {row.status === 'uploading' && (
+                    <span className="text-xs text-blue-600 flex-shrink-0">Uploading…</span>
+                  )}
+                  {row.status === 'error' && (
+                    <span className="text-xs text-red-600 flex-shrink-0">
+                      {row.errorMessage || 'Upload failed'}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          // Flip back to uploading so the indicator updates,
+                          // then re-fire the upload for this row only.
+                          setAttachments((prev) =>
+                            prev.map((a) =>
+                              a.key === row.key
+                                ? { ...a, status: 'uploading', errorMessage: null }
+                                : a,
+                            ),
+                          );
+                          uploadAttachment(row);
+                        }}
+                        className="ml-2 underline"
+                      >
+                        Retry
+                      </button>
+                    </span>
+                  )}
                 </div>
                 <Button
                   variant="ghost"
                   size="icon"
                   className="size-6 flex-shrink-0"
-                  onClick={() => setAttachments(attachments.filter((_, i) => i !== index))}
+                  onClick={() => removeAttachment(row.key)}
+                  aria-label={`Remove attachment ${row.file.name}`}
                 >
                   <X className="size-3" />
                 </Button>
@@ -329,7 +482,28 @@ export function ComposeModal({ isOpen, onClose, replyContext = null }: ComposeMo
           <Button
             className="bg-blue-600 hover:bg-blue-700"
             onClick={() => sendMut.mutate()}
-            disabled={sendMut.isPending || !to.trim() || !subject.trim()}
+            disabled={
+              sendMut.isPending ||
+              !to.trim() ||
+              !subject.trim() ||
+              // TMAIL-321: block Send while attachments are still in flight,
+              // have failed to upload, or exceed the 25 MB cap. Each branch
+              // prevents a different silent-failure mode where the user
+              // thinks their files were sent but the wire payload didn't
+              // carry them.
+              hasUploadingAttachment ||
+              hasFailedAttachment ||
+              overTotalLimit
+            }
+            title={
+              hasUploadingAttachment
+                ? 'Waiting for attachment uploads to finish…'
+                : hasFailedAttachment
+                  ? 'One or more attachments failed to upload. Remove or retry them.'
+                  : overTotalLimit
+                    ? 'Attachments exceed the 25 MB limit.'
+                    : undefined
+            }
           >
             <Send className="size-4 mr-1 sm:mr-2" />
             {sendMut.isPending ? 'Sending…' : 'Send'}
