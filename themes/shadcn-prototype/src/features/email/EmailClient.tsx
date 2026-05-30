@@ -4,7 +4,7 @@
 // component is the adapter that maps the real backend types to those
 // shapes. EmailReader (TMAIL-218) and ComposeModal (TMAIL-219) own their
 // own data fetches.
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
 import {
   useInfiniteQuery,
@@ -13,8 +13,26 @@ import {
   useQueryClient,
   type InfiniteData,
 } from '@tanstack/react-query';
-import { Settings, Menu, ArrowLeft } from 'lucide-react';
+import {
+  Settings,
+  Menu,
+  ArrowLeft,
+  X,
+  Mail,
+  MailOpen,
+  Star as StarIcon,
+  Archive as ArchiveIcon,
+  Trash2,
+  FolderInput,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { EmailList } from '@/features/email/EmailList';
 import { EmailReader } from '@/features/email/EmailReader';
@@ -27,6 +45,14 @@ import {
   nextMessagesPageParam,
   updateInfiniteMessages,
 } from '@/features/email/messagesCache';
+import {
+  clearSelection,
+  isAllSelected,
+  isPartiallySelected,
+  rangeSelect,
+  selectAll,
+  toggleSelection,
+} from '@/features/email/bulkSelection';
 import type {
   Folder as ServerFolder,
   FullMessage,
@@ -39,6 +65,12 @@ import type { Email, Folder as UiFolder } from '@/types/ui';
 // state. Centralising the literal keeps the optimistic-update + invalidation
 // path from drifting from what the backend expects.
 const FLAG_STARRED = '\\Flagged';
+
+// Added: TMAIL-326 — IMAP \Seen keyword backs the "read" state. The bulk
+// action bar exposes Mark Read / Mark Unread which add or remove this flag
+// across every selected uid via the same /flag endpoint the single-row
+// star toggle uses.
+const FLAG_SEEN = '\\Seen';
 
 // Added: TMAIL-317 — destination folder for the EmailReader Archive button.
 // The backend `move_message` will auto-CREATE this on first use if the IMAP
@@ -114,6 +146,15 @@ export function EmailClient() {
   const [selectedUid, setSelectedUid] = useState<number | null>(initialUid);
   const [isComposing, setIsComposing] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  // Added (TMAIL-326): multi-select state for the bulk-action bar. The Set
+  // holds raw IMAP uids (numbers); the EmailList works in string ids so the
+  // forward/back boundary converts between them. The anchor tracks the most
+  // recently single-toggled uid so shift-click range select knows where to
+  // start the range. Both reset when the user changes folders so a stale
+  // selection from Inbox doesn't accidentally drive a bulk action on Sent.
+  const [selectedUids, setSelectedUids] = useState<Set<number>>(() => new Set());
+  const [selectionAnchorUid, setSelectionAnchorUid] = useState<number | null>(null);
 
   // Added (TMAIL-322): re-apply deep-link params if the user clicks a second
   // search result while EmailClient is already mounted (so we re-select the
@@ -371,6 +412,167 @@ export function EmailClient() {
     },
   });
 
+  // Added (TMAIL-326): bulk flag mutation. Adds OR removes the same flag
+  // (\Seen for read/unread, \Flagged for star/unstar) across every selected
+  // uid by firing the per-UID /flag endpoint in parallel via
+  // Promise.allSettled — keeps a single failure from aborting the rest of
+  // the batch the way Promise.all would. Optimistically updates every
+  // affected envelope in the InfiniteData cache so the EmailList reflects
+  // the new flags instantly; on settle the IMAP FLAGS reply re-syncs via
+  // ['messages', activeFolder] invalidation.
+  const bulkFlagMutation = useMutation({
+    mutationFn: async ({ uids, flag, add }: { uids: number[]; flag: string; add: boolean }) => {
+      const results = await Promise.allSettled(
+        uids.map((uid) => flagMessage(activeFolder, uid, flag, add)),
+      );
+      // Surface the first error so the onError rollback runs when any
+      // individual call failed. We deliberately do NOT throw on partial
+      // success — the optimistic update + invalidation already reconcile.
+      const allFailed = results.every((r) => r.status === 'rejected');
+      if (allFailed && results.length > 0) {
+        const first = results[0] as PromiseRejectedResult;
+        throw first.reason instanceof Error ? first.reason : new Error('Bulk flag failed');
+      }
+    },
+    onMutate: async ({ uids, flag, add }) => {
+      const listKey = ['messages', activeFolder];
+      await queryClient.cancelQueries({ queryKey: listKey });
+      const previousList = queryClient.getQueryData<InfiniteData<MessageListResponse>>(listKey);
+      const uidSet = new Set(uids);
+      if (previousList) {
+        queryClient.setQueryData<InfiniteData<MessageListResponse>>(
+          listKey,
+          updateInfiniteMessages(previousList, (msgs) =>
+            msgs.map((m) => {
+              if (!uidSet.has(m.uid)) return m;
+              // Use a substring match (Flagged / Seen) for robustness against
+              // backslash escaping in the cached values — mirrors the
+              // toggleStarMutation pattern above.
+              const flagBareName = flag.replace(/\\/g, '');
+              const without = (m.flags ?? []).filter(
+                (f) => !f.includes(flagBareName),
+              );
+              return {
+                ...m,
+                flags: add ? [...without, flag] : without,
+              };
+            }),
+          ),
+        );
+      }
+      return { previousList, listKey };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.previousList) {
+        queryClient.setQueryData(ctx.listKey, ctx.previousList);
+      }
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['messages', activeFolder] });
+      // Read/unread changes alter folder unseen counts — refresh the sidebar
+      // so the badge stays in lockstep with the bulk action.
+      queryClient.invalidateQueries({ queryKey: ['folders'] });
+    },
+  });
+
+  // Added (TMAIL-326): bulk move. Same shape as archiveMutation but
+  // (a) drops every selected uid optimistically and (b) clears the bulk
+  // selection + reader pane in onMutate so the UI feels instant. Used for
+  // both the toolbar Archive button (move → "Archive") and the Move-to
+  // dropdown (move → any folder).
+  const bulkMoveMutation = useMutation({
+    mutationFn: async ({ uids, toFolder }: { uids: number[]; toFolder: string }) => {
+      const results = await Promise.allSettled(
+        uids.map((uid) => moveMessage(activeFolder, uid, toFolder)),
+      );
+      const allFailed = results.every((r) => r.status === 'rejected');
+      if (allFailed && results.length > 0) {
+        const first = results[0] as PromiseRejectedResult;
+        throw first.reason instanceof Error ? first.reason : new Error('Bulk move failed');
+      }
+    },
+    onMutate: async ({ uids }) => {
+      const listKey = ['messages', activeFolder];
+      await queryClient.cancelQueries({ queryKey: listKey });
+      const previousList = queryClient.getQueryData<InfiniteData<MessageListResponse>>(listKey);
+      const uidSet = new Set(uids);
+      if (previousList) {
+        queryClient.setQueryData<InfiniteData<MessageListResponse>>(
+          listKey,
+          updateInfiniteMessages(previousList, (msgs) =>
+            msgs.filter((m) => !uidSet.has(m.uid)),
+          ),
+        );
+      }
+      // If the open reader is one of the moved uids, clear it so the empty
+      // state appears rather than a 404 from the next fetchMessage.
+      if (selectedUid != null && uidSet.has(selectedUid)) {
+        setSelectedUid(null);
+      }
+      setSelectedUids(clearSelection());
+      setSelectionAnchorUid(null);
+      return { previousList, listKey };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.previousList) {
+        queryClient.setQueryData(ctx.listKey, ctx.previousList);
+      }
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['messages', activeFolder] });
+      // Move may have just created a destination folder (Archive in
+      // particular — backend creates on first use), so refresh the sidebar.
+      queryClient.invalidateQueries({ queryKey: ['folders'] });
+    },
+  });
+
+  // Added (TMAIL-326): bulk delete. Same routing as the single-row delete —
+  // backend soft-deletes by moving to the per-user trash folder from any
+  // non-trash folder, and permanently expunges from the trash folder. The
+  // window.confirm() prompt for permanent delete is owned by the bulk-action
+  // bar handler below.
+  const bulkDeleteMutation = useMutation({
+    mutationFn: async ({ uids }: { uids: number[] }) => {
+      const results = await Promise.allSettled(
+        uids.map((uid) => deleteMessage(activeFolder, uid)),
+      );
+      const allFailed = results.every((r) => r.status === 'rejected');
+      if (allFailed && results.length > 0) {
+        const first = results[0] as PromiseRejectedResult;
+        throw first.reason instanceof Error ? first.reason : new Error('Bulk delete failed');
+      }
+    },
+    onMutate: async ({ uids }) => {
+      const listKey = ['messages', activeFolder];
+      await queryClient.cancelQueries({ queryKey: listKey });
+      const previousList = queryClient.getQueryData<InfiniteData<MessageListResponse>>(listKey);
+      const uidSet = new Set(uids);
+      if (previousList) {
+        queryClient.setQueryData<InfiniteData<MessageListResponse>>(
+          listKey,
+          updateInfiniteMessages(previousList, (msgs) =>
+            msgs.filter((m) => !uidSet.has(m.uid)),
+          ),
+        );
+      }
+      if (selectedUid != null && uidSet.has(selectedUid)) {
+        setSelectedUid(null);
+      }
+      setSelectedUids(clearSelection());
+      setSelectionAnchorUid(null);
+      return { previousList, listKey };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.previousList) {
+        queryClient.setQueryData(ctx.listKey, ctx.previousList);
+      }
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['messages', activeFolder] });
+      queryClient.invalidateQueries({ queryKey: ['folders'] });
+    },
+  });
+
   // Added: TMAIL-318 — true when the active folder is the user's trash
   // folder. Drives both the reader Delete button's aria-label and the
   // confirm() gate on the onDelete handler. Uses a name-based heuristic
@@ -425,6 +627,147 @@ export function EmailClient() {
   const selectedEmail = emailListItems.find((e) => e.id === String(selectedUid)) ?? null;
   const mobileView = selectedUid != null ? 'reader' : 'list';
 
+  // Added (TMAIL-326): ordered list of visible uids — the source of truth
+  // for shift-click range select. Recomputed from emailListItems so it stays
+  // in lockstep with what the EmailList renders, including newly paginated
+  // pages appended by the IntersectionObserver sentinel.
+  const visibleUids = useMemo<number[]>(
+    () => emailListItems.map((e) => parseInt(e.id, 10)),
+    [emailListItems],
+  );
+
+  // Added (TMAIL-326): EmailList ids are strings; the helpers + mutations
+  // work in numeric uids. selectedIds is a derived string-set passed down to
+  // the list for checkbox state. Memoised so EmailList doesn't see a fresh
+  // Set identity on every parent render.
+  const selectedIds = useMemo<Set<string>>(() => {
+    const s = new Set<string>();
+    for (const uid of selectedUids) s.add(String(uid));
+    return s;
+  }, [selectedUids]);
+
+  // Added (TMAIL-326): EmailList click forwards (id, shiftKey). Route shift
+  // to range-select against the visible list and the current anchor;
+  // otherwise toggle the single uid and reset the anchor to the just-clicked
+  // row so a subsequent shift-click extends from there (matches Gmail).
+  const handleToggleSelect = (id: string, shiftKey: boolean) => {
+    const uid = parseInt(id, 10);
+    if (Number.isNaN(uid)) return;
+    if (shiftKey) {
+      setSelectedUids((prev) =>
+        rangeSelect(prev, visibleUids, selectionAnchorUid, uid),
+      );
+      // Range-select leaves the anchor at the last single-toggled row so
+      // the user can extend further with another shift-click without first
+      // resetting the anchor.
+      return;
+    }
+    setSelectedUids((prev) => toggleSelection(prev, uid));
+    setSelectionAnchorUid(uid);
+  };
+
+  // Added (TMAIL-326): bulk-action bar derived state. `selectedCount` drives
+  // visibility of the bar, the toolbar labels, and the "Select all" /
+  // indeterminate state of the master checkbox above the list.
+  const selectedCount = selectedUids.size;
+  const allVisibleSelected = isAllSelected(visibleUids, selectedUids);
+  const someVisibleSelected = isPartiallySelected(visibleUids, selectedUids);
+
+  // Added (TMAIL-326): true iff EVERY selected uid currently in the visible
+  // list is marked read (\Seen). Drives the "Mark as read" vs "Mark as
+  // unread" label on the bulk-action bar so the button reflects the action
+  // the user is about to take. Heuristic — operates on the visible
+  // envelopes; uids that have scrolled out fall back to "mark as read"
+  // because we don't have their flag state cached. That's strictly safer
+  // than guessing wrong (marking already-read items read is a no-op IMAP
+  // command, marking unread items read by mistake is destructive UX).
+  const allSelectedRead = useMemo(() => {
+    if (selectedCount === 0) return false;
+    let seenAtLeastOne = false;
+    for (const e of emailListItems) {
+      const uid = parseInt(e.id, 10);
+      if (!selectedUids.has(uid)) continue;
+      seenAtLeastOne = true;
+      if (!e.read) return false;
+    }
+    return seenAtLeastOne;
+  }, [emailListItems, selectedUids, selectedCount]);
+
+  // Added (TMAIL-326): true iff EVERY selected uid currently visible is
+  // starred. Same heuristic as `allSelectedRead`.
+  const allSelectedStarred = useMemo(() => {
+    if (selectedCount === 0) return false;
+    let seenAtLeastOne = false;
+    for (const e of emailListItems) {
+      const uid = parseInt(e.id, 10);
+      if (!selectedUids.has(uid)) continue;
+      seenAtLeastOne = true;
+      if (!e.starred) return false;
+    }
+    return seenAtLeastOne;
+  }, [emailListItems, selectedUids, selectedCount]);
+
+  // Added (TMAIL-326): folders the bulk-action bar's Move-to dropdown
+  // offers. Excludes the active folder (moving to where you already are is
+  // a no-op) and excludes folders the IMAP server does not let us move
+  // to — Drafts has no real "move into" semantics for non-draft messages,
+  // Junk/Spam are technically valid but better handled by a future
+  // "Report Spam" affordance per Gmail conventions.
+  const moveTargetFolders = useMemo<UiFolder[]>(() => {
+    const blocked = new Set(['Drafts', 'Junk', 'Junk Mail', 'Spam']);
+    return sidebarFolders.filter((f) => f.id !== activeFolder && !blocked.has(f.id));
+  }, [sidebarFolders, activeFolder]);
+
+  // Added (TMAIL-326): handlers for the bulk-action bar. Each one snapshots
+  // the current uid array (so the mutation doesn't race a concurrent
+  // setSelectedUids), then fires the matching mutation. Mutations clear the
+  // selection themselves in onMutate so the UI returns to its idle state.
+  const uidsArray = () => Array.from(selectedUids);
+  const handleBulkMarkRead = () =>
+    bulkFlagMutation.mutate({ uids: uidsArray(), flag: FLAG_SEEN, add: true });
+  const handleBulkMarkUnread = () =>
+    bulkFlagMutation.mutate({ uids: uidsArray(), flag: FLAG_SEEN, add: false });
+  const handleBulkStar = () =>
+    bulkFlagMutation.mutate({ uids: uidsArray(), flag: FLAG_STARRED, add: true });
+  const handleBulkUnstar = () =>
+    bulkFlagMutation.mutate({ uids: uidsArray(), flag: FLAG_STARRED, add: false });
+  const handleBulkArchive = () =>
+    bulkMoveMutation.mutate({ uids: uidsArray(), toFolder: ARCHIVE_FOLDER });
+  const handleBulkDelete = () => {
+    // Mirror the single-row delete UX: permanent expunge needs a confirm
+    // gate, soft-delete (move to trash) is one-click recoverable.
+    if (isPermanentDelete) {
+      const ok = window.confirm(
+        `Permanently delete ${selectedCount} email${
+          selectedCount === 1 ? '' : 's'
+        }? This cannot be undone.`,
+      );
+      if (!ok) return;
+    }
+    bulkDeleteMutation.mutate({ uids: uidsArray() });
+  };
+  const handleBulkMoveTo = (toFolder: string) =>
+    bulkMoveMutation.mutate({ uids: uidsArray(), toFolder });
+  const handleToggleSelectAll = () => {
+    if (allVisibleSelected) {
+      setSelectedUids(clearSelection());
+      setSelectionAnchorUid(null);
+    } else {
+      setSelectedUids(selectAll(visibleUids));
+    }
+  };
+  const handleClearSelection = () => {
+    setSelectedUids(clearSelection());
+    setSelectionAnchorUid(null);
+  };
+
+  // NOTE (TMAIL-326): the master checkbox visually shows a checked/unchecked
+  // glyph but the surrounding label conveys partial selection ("N selected"
+  // with N < total visible). Radix's @1.1.4 <Checkbox> doesn't expose an
+  // `indeterminate` prop and the alt-UI is still on React 18, so we don't
+  // wire a ref-based aria-checked="mixed" — the label + visible-count badge
+  // already tell the user the state is partial.
+
   return (
     <div className="flex h-full relative">
       {sidebarOpen && (
@@ -444,6 +787,10 @@ export function EmailClient() {
           onFolderChange={(folderId) => {
             setActiveFolder(folderId);
             setSelectedUid(null);
+            // TMAIL-326: drop multi-select state across folder boundaries so
+            // a bulk action can't accidentally fire against the wrong inbox.
+            setSelectedUids(clearSelection());
+            setSelectionAnchorUid(null);
             setSidebarOpen(false);
           }}
           onCompose={() => {
@@ -469,19 +816,141 @@ export function EmailClient() {
             ${mobileView === 'reader' ? 'hidden md:flex' : 'flex'}
           `}
         >
-          <div className="h-14 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between px-4 shrink-0">
-            <div className="flex items-center gap-2">
-              <Button variant="ghost" size="icon" className="md:hidden" onClick={() => setSidebarOpen(true)}>
-                <Menu className="size-5" />
-              </Button>
-              <h2 className="font-semibold capitalize">{activeFolder}</h2>
+          {/* TMAIL-326: when the user has selected one or more rows, swap
+              the folder header for the bulk-action toolbar. Same height
+              (h-14) so the list below doesn't reflow. The toolbar renders
+              Mark Read/Unread, Star/Unstar, Archive, Move-to, and
+              Delete — the labels flip based on the aggregate state of the
+              visible selected envelopes so the verb describes what will
+              happen next (mirrors Gmail's behaviour). */}
+          {selectedCount > 0 ? (
+            <div
+              className="h-14 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between px-3 shrink-0 bg-blue-50 dark:bg-blue-950/40"
+              role="toolbar"
+              aria-label={`Bulk actions for ${selectedCount} selected email${selectedCount === 1 ? '' : 's'}`}
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={handleClearSelection}
+                  aria-label="Clear selection"
+                  title="Clear selection"
+                >
+                  <X className="size-4" />
+                </Button>
+                <Checkbox
+                  checked={allVisibleSelected}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleToggleSelectAll();
+                  }}
+                  aria-label={
+                    allVisibleSelected
+                      ? 'Deselect all visible emails'
+                      : 'Select all visible emails'
+                  }
+                  data-indeterminate={someVisibleSelected && !allVisibleSelected ? 'true' : undefined}
+                />
+                <span className="text-sm font-medium truncate">
+                  {selectedCount} selected
+                </span>
+              </div>
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={allSelectedRead ? handleBulkMarkUnread : handleBulkMarkRead}
+                  disabled={bulkFlagMutation.isPending}
+                  aria-label={allSelectedRead ? 'Mark selected as unread' : 'Mark selected as read'}
+                  title={allSelectedRead ? 'Mark as unread' : 'Mark as read'}
+                >
+                  {allSelectedRead ? (
+                    <Mail className="size-4" />
+                  ) : (
+                    <MailOpen className="size-4" />
+                  )}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={allSelectedStarred ? handleBulkUnstar : handleBulkStar}
+                  disabled={bulkFlagMutation.isPending}
+                  aria-label={allSelectedStarred ? 'Unstar selected' : 'Star selected'}
+                  aria-pressed={allSelectedStarred}
+                  title={allSelectedStarred ? 'Unstar' : 'Star'}
+                >
+                  <StarIcon
+                    className={`size-4 ${
+                      allSelectedStarred ? 'fill-yellow-400 text-yellow-400' : ''
+                    }`}
+                  />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={handleBulkArchive}
+                  disabled={bulkMoveMutation.isPending || activeFolder === ARCHIVE_FOLDER}
+                  aria-label="Archive selected"
+                  title="Archive"
+                >
+                  <ArchiveIcon className="size-4" />
+                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      disabled={bulkMoveMutation.isPending || moveTargetFolders.length === 0}
+                      aria-label="Move selected to folder"
+                      title="Move to…"
+                    >
+                      <FolderInput className="size-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    {moveTargetFolders.map((f) => (
+                      <DropdownMenuItem
+                        key={f.id}
+                        onSelect={() => handleBulkMoveTo(f.id)}
+                      >
+                        {f.name}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={handleBulkDelete}
+                  disabled={bulkDeleteMutation.isPending}
+                  aria-label={
+                    isPermanentDelete
+                      ? `Permanently delete ${selectedCount} selected emails`
+                      : `Delete ${selectedCount} selected emails`
+                  }
+                  title={isPermanentDelete ? 'Permanently delete' : 'Delete'}
+                  className="text-red-600 hover:text-red-700"
+                >
+                  <Trash2 className="size-4" />
+                </Button>
+              </div>
             </div>
-            <Link to="/admin">
-              <Button variant="ghost" size="icon" title="Admin Dashboard">
-                <Settings className="size-4" />
-              </Button>
-            </Link>
-          </div>
+          ) : (
+            <div className="h-14 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between px-4 shrink-0">
+              <div className="flex items-center gap-2">
+                <Button variant="ghost" size="icon" className="md:hidden" onClick={() => setSidebarOpen(true)}>
+                  <Menu className="size-5" />
+                </Button>
+                <h2 className="font-semibold capitalize">{activeFolder}</h2>
+              </div>
+              <Link to="/admin">
+                <Button variant="ghost" size="icon" title="Admin Dashboard">
+                  <Settings className="size-4" />
+                </Button>
+              </Link>
+            </div>
+          )}
           <div className="flex-1 overflow-y-auto">
             {messagesQuery.isLoading ? (
               <div className="p-6 text-zinc-500 text-sm">Loading messages…</div>
@@ -506,6 +975,14 @@ export function EmailClient() {
                 hasNextPage={messagesQuery.hasNextPage}
                 isFetchingNextPage={messagesQuery.isFetchingNextPage}
                 onLoadMore={() => messagesQuery.fetchNextPage()}
+                // Added (TMAIL-326): multi-select. The list renders per-row
+                // checkboxes only when onToggleSelect is wired (we always
+                // wire it here, but EmailList keeps the prop optional so
+                // standalone usages stay valid). handleToggleSelect routes
+                // shift-clicks through rangeSelect() against visibleUids and
+                // single clicks through toggleSelection().
+                selectedIds={selectedIds}
+                onToggleSelect={handleToggleSelect}
               />
             )}
           </div>
