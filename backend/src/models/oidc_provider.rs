@@ -81,11 +81,119 @@ pub struct OidcLoginProvider {
 }
 
 /// PURPOSE: Request payload for OIDC callback — code exchange
-/// CONSTRAINTS: code and state are required from the authorization server redirect
+/// CONSTRAINTS:
+/// - `code` and `state` come straight from the IdP redirect query string.
+/// - `provider_id` is required so the backend can look up the IdP config
+///   (token endpoint, client_secret, etc.). The SPA stores it in
+///   sessionStorage alongside `state` when calling /api/auth/oidc/{id}/authorize
+///   and re-sends it on the callback POST. Same shape as SAML's RelayState
+///   carrying the SAML config UUID (TMAIL-303).
 #[derive(Debug, Clone, Deserialize)]
 pub struct OidcCallbackRequest {
     pub code: String,
     pub state: String,
+    // Added (TMAIL-304): provider id so we can resolve client_secret + token_endpoint.
+    #[serde(default)]
+    pub provider_id: Option<Uuid>,
+}
+
+/// PURPOSE: Subset of the OIDC discovery document we care about
+/// (RFC 8414 / OpenID Connect Discovery 1.0).
+/// EXTERNAL: GET {issuer_url}/.well-known/openid-configuration
+///
+/// We pin the fields the token-exchange + JWKS validation paths need;
+/// extra fields are tolerated by serde so we don't break when providers
+/// add new discovery keys.
+#[derive(Debug, Clone, Deserialize)]
+pub struct OidcDiscovery {
+    pub issuer: String,
+    pub token_endpoint: String,
+    pub jwks_uri: String,
+    #[serde(default)]
+    pub userinfo_endpoint: Option<String>,
+    #[serde(default)]
+    pub id_token_signing_alg_values_supported: Option<Vec<String>>,
+}
+
+/// PURPOSE: Token-endpoint response per RFC 6749 §5.1 + OIDC Core §3.1.3.3.
+/// CONSTRAINTS: `id_token` is the load-bearing field — `access_token` /
+/// `refresh_token` aren't used by the current flow (we issue our own JWTs).
+#[derive(Debug, Clone, Deserialize)]
+pub struct OidcTokenResponse {
+    #[serde(default)]
+    pub access_token: Option<String>,
+    pub id_token: String,
+    #[serde(default)]
+    pub refresh_token: Option<String>,
+    #[serde(default)]
+    pub token_type: Option<String>,
+    #[serde(default)]
+    pub expires_in: Option<i64>,
+    #[serde(default)]
+    pub scope: Option<String>,
+}
+
+/// PURPOSE: Claims we extract from a verified id_token (OIDC Core §2).
+/// CONSTRAINTS:
+/// - `sub` is the stable external identifier — that's what `oidc_user_links.subject` stores.
+/// - `email` is preferred but optional in the spec; we also fall back to
+///   `preferred_username` when it looks like an email.
+/// - Extra claims (aud, iss, iat, exp, etc.) are validated by jsonwebtoken
+///   via the Validation struct, so we don't need to capture them here.
+#[derive(Debug, Clone, Deserialize)]
+pub struct OidcIdTokenClaims {
+    pub sub: String,
+    #[serde(default)]
+    pub email: Option<String>,
+    #[serde(default)]
+    pub email_verified: Option<bool>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub preferred_username: Option<String>,
+    #[serde(default)]
+    pub given_name: Option<String>,
+    #[serde(default)]
+    pub family_name: Option<String>,
+}
+
+impl OidcIdTokenClaims {
+    /// Added (TMAIL-304): Pure helper resolving the email we'll provision
+    /// the local mailbox under. Priority:
+    ///   1. `email` claim, if it contains '@'
+    ///   2. `preferred_username` claim, if it contains '@'
+    /// Both are trimmed + lowercased to match `Mailbox::find_by_username`.
+    /// Returns None when neither claim yields an email-shaped value.
+    pub fn resolve_email(&self) -> Option<String> {
+        self.email
+            .as_deref()
+            .or(self.preferred_username.as_deref())
+            .map(str::trim)
+            .filter(|s| !s.is_empty() && s.contains('@'))
+            .map(str::to_lowercase)
+    }
+
+    /// Added (TMAIL-304): Display name preference for auto-provisioned mailboxes.
+    /// Priority: `name` > `given_name family_name` > preferred_username > None.
+    pub fn resolve_display_name(&self) -> Option<String> {
+        if let Some(n) = self.name.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            return Some(n.to_string());
+        }
+        match (
+            self.given_name.as_deref().map(str::trim).filter(|s| !s.is_empty()),
+            self.family_name.as_deref().map(str::trim).filter(|s| !s.is_empty()),
+        ) {
+            (Some(g), Some(f)) => Some(format!("{g} {f}")),
+            (Some(g), None) => Some(g.to_string()),
+            (None, Some(f)) => Some(f.to_string()),
+            (None, None) => self
+                .preferred_username
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string),
+        }
+    }
 }
 
 impl OidcProvider {
@@ -203,6 +311,15 @@ impl OidcProvider {
             urlencoding::encode(&self.redirect_uri),
             urlencoding::encode(&self.scopes),
             urlencoding::encode(state),
+        )
+    }
+
+    /// Added (TMAIL-304): OIDC Discovery 1.0 well-known URL.
+    /// Strips trailing '/' to avoid the `//` double-slash that breaks some IdPs.
+    pub fn discovery_url(&self) -> String {
+        format!(
+            "{}/.well-known/openid-configuration",
+            self.issuer_url.trim_end_matches('/')
         )
     }
 }
@@ -457,6 +574,224 @@ mod tests {
         let request: OidcCallbackRequest = serde_json::from_str(json_str).unwrap();
         assert_eq!(request.code, "4/0AX4XfWh...");
         assert_eq!(request.state, "random-state-token");
+        // Added (TMAIL-304): provider_id is optional in the wire format so
+        // legacy clients keep parsing; the handler enforces it as required.
+        assert!(request.provider_id.is_none());
+    }
+
+    // -----------------------------------------------------------------
+    // Added (TMAIL-304): coverage for the new payload shapes introduced
+    // by the OIDC callback implementation. Pure-function tests only —
+    // the HTTP-layer suite in tests/oidc_test.rs pins the early-return
+    // guards against the actual router.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn callback_request_round_trips_provider_id() {
+        let pid = Uuid::new_v4();
+        let json_str = format!(
+            r##"{{"code":"abc","state":"xyz","provider_id":"{}"}}"##,
+            pid
+        );
+        let req: OidcCallbackRequest = serde_json::from_str(&json_str).unwrap();
+        assert_eq!(req.provider_id, Some(pid));
+    }
+
+    #[test]
+    fn discovery_document_parses_minimal_required_fields() {
+        // Real Google discovery has 30+ fields; we only need three.
+        let json_str = r##"{
+            "issuer": "https://accounts.google.com",
+            "authorization_endpoint": "https://accounts.google.com/o/oauth2/v2/auth",
+            "token_endpoint": "https://oauth2.googleapis.com/token",
+            "jwks_uri": "https://www.googleapis.com/oauth2/v3/certs",
+            "userinfo_endpoint": "https://openidconnect.googleapis.com/v1/userinfo",
+            "response_types_supported": ["code","token","id_token","code token","code id_token","token id_token","code token id_token","none"],
+            "id_token_signing_alg_values_supported": ["RS256"]
+        }"##;
+        let disc: OidcDiscovery = serde_json::from_str(json_str).unwrap();
+        assert_eq!(disc.issuer, "https://accounts.google.com");
+        assert_eq!(disc.token_endpoint, "https://oauth2.googleapis.com/token");
+        assert_eq!(disc.jwks_uri, "https://www.googleapis.com/oauth2/v3/certs");
+        assert_eq!(
+            disc.userinfo_endpoint.as_deref(),
+            Some("https://openidconnect.googleapis.com/v1/userinfo")
+        );
+        assert_eq!(
+            disc.id_token_signing_alg_values_supported.unwrap(),
+            vec!["RS256".to_string()]
+        );
+    }
+
+    #[test]
+    fn token_response_parses_oidc_payload() {
+        let json_str = r##"{
+            "access_token": "ya29.a0...",
+            "expires_in": 3599,
+            "scope": "openid email profile",
+            "token_type": "Bearer",
+            "id_token": "eyJhbGciOiJSUzI1NiIsImtpZCI6IkFC...",
+            "refresh_token": "1//0e..."
+        }"##;
+        let tok: OidcTokenResponse = serde_json::from_str(json_str).unwrap();
+        assert!(tok.id_token.starts_with("eyJ"));
+        assert_eq!(tok.access_token.as_deref(), Some("ya29.a0..."));
+        assert_eq!(tok.refresh_token.as_deref(), Some("1//0e..."));
+        assert_eq!(tok.token_type.as_deref(), Some("Bearer"));
+        assert_eq!(tok.expires_in, Some(3599));
+    }
+
+    #[test]
+    fn token_response_tolerates_id_token_only() {
+        // Some IdPs (or custom configs) only return id_token + token_type.
+        let json_str = r##"{"id_token":"eyJ...","token_type":"Bearer"}"##;
+        let tok: OidcTokenResponse = serde_json::from_str(json_str).unwrap();
+        assert_eq!(tok.id_token, "eyJ...");
+        assert!(tok.access_token.is_none());
+        assert!(tok.refresh_token.is_none());
+        assert!(tok.expires_in.is_none());
+    }
+
+    #[test]
+    fn id_token_claims_parse_typical_google_payload() {
+        // Sanitised structure from a real Google id_token.
+        let json_str = r##"{
+            "iss": "https://accounts.google.com",
+            "azp": "client-id",
+            "aud": "client-id",
+            "sub": "1093427812345",
+            "email": "User@Example.com",
+            "email_verified": true,
+            "name": "Jane Doe",
+            "given_name": "Jane",
+            "family_name": "Doe",
+            "iat": 1700000000,
+            "exp": 1700003600
+        }"##;
+        let c: OidcIdTokenClaims = serde_json::from_str(json_str).unwrap();
+        assert_eq!(c.sub, "1093427812345");
+        assert_eq!(c.email_verified, Some(true));
+        assert_eq!(c.resolve_email().as_deref(), Some("user@example.com"));
+        assert_eq!(c.resolve_display_name().as_deref(), Some("Jane Doe"));
+    }
+
+    #[test]
+    fn id_token_resolve_email_falls_back_to_preferred_username() {
+        let c = OidcIdTokenClaims {
+            sub: "abc".into(),
+            email: None,
+            email_verified: None,
+            name: None,
+            preferred_username: Some("  USER@CORP.io  ".into()),
+            given_name: None,
+            family_name: None,
+        };
+        assert_eq!(c.resolve_email().as_deref(), Some("user@corp.io"));
+    }
+
+    #[test]
+    fn id_token_resolve_email_rejects_non_email_subject() {
+        // Microsoft sometimes uses an opaque oid for preferred_username.
+        let c = OidcIdTokenClaims {
+            sub: "abc".into(),
+            email: None,
+            email_verified: None,
+            name: None,
+            preferred_username: Some("opaque-oid-no-at-sign".into()),
+            given_name: None,
+            family_name: None,
+        };
+        assert_eq!(c.resolve_email(), None);
+    }
+
+    #[test]
+    fn id_token_resolve_email_returns_none_when_both_claims_absent() {
+        let c = OidcIdTokenClaims {
+            sub: "abc".into(),
+            email: None,
+            email_verified: None,
+            name: None,
+            preferred_username: None,
+            given_name: None,
+            family_name: None,
+        };
+        assert_eq!(c.resolve_email(), None);
+    }
+
+    #[test]
+    fn id_token_resolve_display_name_concatenates_given_family() {
+        let c = OidcIdTokenClaims {
+            sub: "abc".into(),
+            email: Some("u@x.com".into()),
+            email_verified: None,
+            name: None,
+            preferred_username: None,
+            given_name: Some("Jane".into()),
+            family_name: Some("Doe".into()),
+        };
+        assert_eq!(c.resolve_display_name().as_deref(), Some("Jane Doe"));
+    }
+
+    #[test]
+    fn id_token_resolve_display_name_returns_none_when_all_absent() {
+        let c = OidcIdTokenClaims {
+            sub: "abc".into(),
+            email: Some("u@x.com".into()),
+            email_verified: None,
+            name: None,
+            preferred_username: None,
+            given_name: None,
+            family_name: None,
+        };
+        assert_eq!(c.resolve_display_name(), None);
+    }
+
+    #[test]
+    fn discovery_url_trims_trailing_slash() {
+        let provider = OidcProvider {
+            id: Uuid::new_v4(),
+            name: "Microsoft".to_string(),
+            issuer_url: "https://login.microsoftonline.com/common/v2.0/".to_string(),
+            client_id: "x".to_string(),
+            client_secret_encrypted: "y".to_string(),
+            scopes: "openid email profile".to_string(),
+            redirect_uri: "https://mail.example.com/cb".to_string(),
+            auto_create_users: true,
+            default_role: "user".to_string(),
+            active: true,
+            icon_url: None,
+            button_label: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        assert_eq!(
+            provider.discovery_url(),
+            "https://login.microsoftonline.com/common/v2.0/.well-known/openid-configuration"
+        );
+    }
+
+    #[test]
+    fn discovery_url_works_without_trailing_slash() {
+        let provider = OidcProvider {
+            id: Uuid::new_v4(),
+            name: "Google".to_string(),
+            issuer_url: "https://accounts.google.com".to_string(),
+            client_id: "x".to_string(),
+            client_secret_encrypted: "y".to_string(),
+            scopes: "openid email profile".to_string(),
+            redirect_uri: "https://mail.example.com/cb".to_string(),
+            auto_create_users: true,
+            default_role: "user".to_string(),
+            active: true,
+            icon_url: None,
+            button_label: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        assert_eq!(
+            provider.discovery_url(),
+            "https://accounts.google.com/.well-known/openid-configuration"
+        );
     }
 
     #[test]
