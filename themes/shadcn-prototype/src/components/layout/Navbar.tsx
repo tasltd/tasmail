@@ -7,7 +7,7 @@
 // deep-linked SearchResultsPage starts with the input pre-filled — keeps the
 // header in sync with the route.
 import { useEffect, useRef, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router';
+import { Link, useLocation, useNavigate } from 'react-router';
 import { Mail, Moon, Sun, Settings, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -102,9 +102,14 @@ export function Navbar({ darkMode, onToggleDarkMode }: NavbarProps) {
           >
             {darkMode ? <Sun className="size-4 sm:size-5" /> : <Moon className="size-4 sm:size-5" />}
           </Button>
-          <Button variant="ghost" size="icon" title="Settings">
-            <Settings className="size-4 sm:size-5" />
-          </Button>
+          {/* Added (TMAIL-323): Settings icon now routes to the /settings
+              shell. Bare /settings redirects to the default tab so the
+              active pane is always pinned in the URL. */}
+          <Link to="/settings" aria-label="Open settings" data-testid="navbar-settings-link">
+            <Button variant="ghost" size="icon" title="Settings">
+              <Settings className="size-4 sm:size-5" />
+            </Button>
+          </Link>
         </div>
       </div>
 
