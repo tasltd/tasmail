@@ -6,6 +6,7 @@ import { Root } from '@/components/layout/Root';
 import { EmailClient } from '@/features/email/EmailClient';
 import { AdminDashboard } from '@/features/admin/AdminDashboard';
 import { CalendarView } from '@/features/calendar/CalendarView';
+import { SearchResultsPage } from '@/features/email/SearchResultsPage';
 
 export const router = createHashRouter([
   {
@@ -15,6 +16,8 @@ export const router = createHashRouter([
       { index: true, Component: EmailClient },
       { path: "admin", Component: AdminDashboard },
       { path: "calendar", Component: CalendarView },
+      // Added (TMAIL-322): Navbar search bar submits to /#/search?q=...
+      { path: "search", Component: SearchResultsPage },
     ],
   },
 ]);

@@ -4,8 +4,8 @@
 // component is the adapter that maps the real backend types to those
 // shapes. EmailReader (TMAIL-218) and ComposeModal (TMAIL-219) own their
 // own data fetches.
-import { useState, useMemo } from 'react';
-import { Link } from 'react-router';
+import { useEffect, useState, useMemo } from 'react';
+import { Link, useSearchParams } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Settings, Menu, ArrowLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -62,10 +62,33 @@ const FOLDER_ICONS: Record<string, string> = {
 };
 
 export function EmailClient() {
-  const [activeFolder, setActiveFolder] = useState('INBOX');
-  const [selectedUid, setSelectedUid] = useState<number | null>(null);
+  // Added (TMAIL-322): when SearchResultsPage links into `/?folder=X&uid=Y`,
+  // seed the active folder + selected UID from the URL so the reader pane
+  // opens on the chosen message. Defaults stay INBOX + nothing-selected
+  // for the normal "open the mailbox" case where no params are present.
+  const [searchParams] = useSearchParams();
+  const initialFolder = searchParams.get('folder')?.trim() || 'INBOX';
+  const initialUidRaw = searchParams.get('uid');
+  const initialUid =
+    initialUidRaw && /^\d+$/.test(initialUidRaw) ? parseInt(initialUidRaw, 10) : null;
+
+  const [activeFolder, setActiveFolder] = useState(initialFolder);
+  const [selectedUid, setSelectedUid] = useState<number | null>(initialUid);
   const [isComposing, setIsComposing] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  // Added (TMAIL-322): re-apply deep-link params if the user clicks a second
+  // search result while EmailClient is already mounted (so we re-select the
+  // new uid). Skips when the URL has no params so the user's in-app folder
+  // navigation isn't fought by the effect.
+  useEffect(() => {
+    const f = searchParams.get('folder')?.trim();
+    const u = searchParams.get('uid');
+    if (f) setActiveFolder(f);
+    if (u && /^\d+$/.test(u)) {
+      setSelectedUid(parseInt(u, 10));
+    }
+  }, [searchParams]);
   // Added: TMAIL-319 — the active Reply / Reply All / Forward prefill payload
   // for ComposeModal. EmailReader passes the loaded FullMessage + the kind
   // (reply | replyAll | forward) when its toolbar buttons fire; we then build
