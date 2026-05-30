@@ -54,7 +54,9 @@ pub struct Attachment {
     pub part_id: String,
 }
 
-type ImapSession = Session<TlsStream<Compat<TcpStream>>>;
+// Added (TMAIL-302): made pub so the IMAP IDLE bridge (services::imap_idle_bridge)
+// can hold and reuse a Session across IDLE cycles.
+pub type ImapSession = Session<TlsStream<Compat<TcpStream>>>;
 
 /// IMAP service for connecting to a user's IMAP server (BYOK) or to a global Dovecot.
 ///

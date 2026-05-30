@@ -3,6 +3,9 @@ pub mod attachment_service;
 pub mod auth_service;
 pub mod email_scheduler;
 pub mod imap_service;
+// Added (TMAIL-302): IMAP IDLE bridge — per-folder persistent IMAP connections
+// that push new-mail / unread-update events into the WebSocket event channel.
+pub mod imap_idle_bridge;
 // Added: Phishing scanner heuristic service for TMAIL-124
 pub mod phishing_scanner;
 // Added: Queue processor background service for TMAIL-58
