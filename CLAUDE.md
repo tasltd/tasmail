@@ -158,10 +158,12 @@ Backend reads `config.toml` if present, otherwise falls back to environment vari
 | `JWT_SECRET` | dev-secret-change-in-production | JWT signing key |
 | `LOG_FORMAT` | (text) | Set to "json" for JSON logging |
 | `CORS_ORIGIN` | http://localhost:5173 | Allowed CORS origin(s). Comma-separated list supported, and entries may use `*.subdomain` wildcards (e.g. `https://mail.techatscale.io,https://*.tenants.tasmail.io`). See `backend/src/cors.rs`. |
+| `METRICS_TOKEN` | (unset) | Optional Bearer token to scrape `/metrics`. When set, requests must carry `Authorization: Bearer <token>`. Layered with `METRICS_ALLOWED_IPS` — either gate passing is enough. |
+| `METRICS_ALLOWED_IPS` | (unset → loopback-only) | Comma-separated list of exact client IPs allowed to scrape `/metrics` (e.g. `10.0.0.5,127.0.0.1,::1`). Honours `X-Forwarded-For` so it works behind the Apache reverse proxy. When **unset**, the handler falls back to loopback-only (`127.0.0.1` + `::1`) so a fresh deployment is never publicly scrapeable (TMAIL-314). |
 
 ## API Route Structure
 
-All routes in `router.rs`. Public: `/api/health`, `/api/auth/login`, `/api/auth/refresh`, `/api/auth/saml/*/login`, `/api/auth/oidc/*`, `/api/branding`, `/api/billing/plans`, `/api/billing/webhook/*`, `/metrics`, `/api/dl/{token}`. Everything else requires `Authorization: Bearer <token>`.
+All routes in `router.rs`. Public: `/api/health`, `/api/auth/login`, `/api/auth/refresh`, `/api/auth/saml/*/login`, `/api/auth/oidc/*`, `/api/branding`, `/api/billing/plans`, `/api/billing/webhook/*`, `/api/dl/{token}`. `/metrics` is also publicly routed but gated by `METRICS_ALLOWED_IPS` / `METRICS_TOKEN` and defaults to loopback-only (TMAIL-314). Everything else requires `Authorization: Bearer <token>`.
 
 Key route groups:
 - `/api/folders`, `/api/folders/{folder}/messages` — IMAP operations (list, get, delete, move, flag)

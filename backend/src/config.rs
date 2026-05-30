@@ -14,6 +14,15 @@ pub struct Config {
     // Added: Optional metrics bearer token for TMAIL-41
     #[serde(default)]
     pub metrics_token: Option<String>,
+    // Added (TMAIL-314): Optional IP allowlist for the /metrics scrape endpoint.
+    // Comma-separated list of exact client IPs that may scrape Prometheus
+    // metrics (e.g. "10.0.0.5,127.0.0.1,::1"). When set, requests from any
+    // other IP are rejected with 403. Layered with `metrics_token`: a request
+    // is accepted if it matches EITHER the allowlist OR carries a valid token.
+    // When neither is configured, the handler falls back to loopback-only
+    // (127.0.0.1 / ::1) so a fresh deployment is never publicly scrapeable.
+    #[serde(default)]
+    pub metrics_allowed_ips: Option<String>,
     // Added: Optional Rspamd URL and password for spam filter integration (TMAIL-15)
     #[serde(default)]
     pub rspamd_url: Option<String>,
@@ -316,6 +325,13 @@ impl Config {
             },
             // Added: Metrics token from env var for TMAIL-41
             metrics_token: std::env::var("METRICS_TOKEN").ok(),
+            // Added (TMAIL-314): Comma-separated list of client IPs allowed
+            // to scrape /metrics. Empty/unset → handler falls back to
+            // loopback-only so /metrics is never publicly scrapeable.
+            metrics_allowed_ips: std::env::var("METRICS_ALLOWED_IPS")
+                .ok()
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty()),
             // Added: Rspamd config from env vars for TMAIL-15
             rspamd_url: std::env::var("RSPAMD_URL").ok(),
             rspamd_password: std::env::var("RSPAMD_PASSWORD").ok(),

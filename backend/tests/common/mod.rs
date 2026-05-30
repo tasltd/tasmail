@@ -177,6 +177,10 @@ pub fn test_config() -> Config {
         storage: StorageConfig::default(),
         // Added: No metrics token in test config (TMAIL-41)
         metrics_token: None,
+        // Added (TMAIL-314): No allowlist override — handler falls back to
+        // loopback-only, which is what the integration test that hits /metrics
+        // through the local oneshot service exercises.
+        metrics_allowed_ips: None,
         // Added: No Rspamd config in test (TMAIL-15)
         rspamd_url: None,
         rspamd_password: None,
