@@ -27,9 +27,28 @@ interface EmailReaderProps {
   // EmailClient owns the mutation, optimistic update, and cache invalidation;
   // the reader stays presentational.
   onArchive?: (uid: number) => void;
+  // Added: TMAIL-318 — Delete button. From any non-trash folder the backend
+  // /delete handler soft-deletes by moving to the per-user trash folder
+  // (Stalwart "Deleted Items", Dovecot "Trash", Gmail "[Gmail]/Trash" — see
+  // imap_service.rs::trash_folder()). From the trash folder itself it is a
+  // permanent EXPUNGE — EmailClient gates that path behind window.confirm()
+  // before invoking the mutation. The reader stays presentational and only
+  // reports user intent; `isPermanentDelete` lets the aria-label spell out
+  // the consequence to screen-reader users.
+  onDelete?: (uid: number) => void;
+  isPermanentDelete?: boolean;
 }
 
-export function EmailReader({ folder, uid, listItem, onCompose, onToggleStar, onArchive }: EmailReaderProps) {
+export function EmailReader({
+  folder,
+  uid,
+  listItem,
+  onCompose,
+  onToggleStar,
+  onArchive,
+  onDelete,
+  isPermanentDelete,
+}: EmailReaderProps) {
   const messageQuery = useQuery({
     queryKey: ['message', folder, uid],
     queryFn: () => fetchMessage(folder, uid!),
@@ -135,7 +154,24 @@ export function EmailReader({ folder, uid, listItem, onCompose, onToggleStar, on
             <Archive className="size-4 sm:mr-2" />
             <span className="hidden sm:inline">Archive</span>
           </Button>
-          <Button variant="outline" size="sm">
+          {/* Added: TMAIL-318 — wires to /delete via EmailClient's deleteMutation.
+              Backend resolves the per-user trash folder name and either moves
+              the message there (soft delete) or EXPUNGEs it permanently if the
+              active folder IS that trash folder. EmailClient gates permanent
+              delete behind window.confirm() before firing the mutation. */}
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={uid == null || !onDelete}
+            aria-label={
+              isPermanentDelete
+                ? `Permanently delete email from ${from}`
+                : `Delete email from ${from}`
+            }
+            onClick={() => {
+              if (uid != null) onDelete?.(uid);
+            }}
+          >
             <Trash2 className="size-4 sm:mr-2" />
             <span className="hidden sm:inline">Delete</span>
           </Button>

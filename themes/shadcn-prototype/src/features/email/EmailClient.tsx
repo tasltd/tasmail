@@ -14,7 +14,7 @@ import { EmailList } from '@/features/email/EmailList';
 import { EmailReader } from '@/features/email/EmailReader';
 import { ComposeModal } from '@/features/email/ComposeModal';
 import { fetchFolders } from '@/api/folders';
-import { fetchMessages, flagMessage, moveMessage } from '@/api/messages';
+import { deleteMessage, fetchMessages, flagMessage, moveMessage } from '@/api/messages';
 import type {
   Folder as ServerFolder,
   FullMessage,
@@ -32,6 +32,20 @@ const FLAG_STARRED = '\\Flagged';
 // The backend `move_message` will auto-CREATE this on first use if the IMAP
 // server doesn't already have it (see imap_service.rs TMAIL-317 note).
 const ARCHIVE_FOLDER = 'Archive';
+
+// Added: TMAIL-318 — trash-like folder names. The backend `delete_message`
+// resolves the per-user trash folder (Stalwart "Deleted Items", Dovecot
+// "Trash", Gmail "[Gmail]/Trash" — see imap_service.rs::trash_folder()).
+// The frontend uses the set below only to decide whether the active folder
+// is the trash folder so it can prompt for confirmation before triggering a
+// permanent EXPUNGE. The backend is still the authority on routing — when
+// activeFolder is not the trash folder, DELETE soft-deletes by moving to the
+// resolved trash folder, so we don't need to know its exact name to call it.
+const TRASH_FOLDER_NAMES = new Set(['Trash', 'Deleted Items', 'Bin']);
+
+function isTrashFolder(folderName: string): boolean {
+  return TRASH_FOLDER_NAMES.has(folderName);
+}
 
 const FOLDER_ICONS: Record<string, string> = {
   INBOX: 'Inbox',
@@ -164,6 +178,54 @@ export function EmailClient() {
     },
   });
 
+  // Added: TMAIL-318 — Delete mutation. Calls DELETE /api/folders/{folder}/
+  // messages/{uid} which the backend routes per-user: from any non-trash
+  // folder it moves the message to the resolved trash folder (Stalwart
+  // "Deleted Items", Dovecot "Trash"); from the trash folder itself it does
+  // a permanent +FLAGS \Deleted + EXPUNGE. Optimistically drops the row from
+  // the cached envelope list so the click feels instant whether soft or
+  // permanent. Clears selectedUid in onMutate so the reader pane returns to
+  // the empty state — the deleted UID is no longer present in the active
+  // folder. On settle invalidates ['messages', folder] AND ['folders'] so
+  // envelope counts (and the trash folder unseen badge, on soft delete)
+  // refresh from the live backend. The permanent-delete confirm prompt is
+  // owned by the EmailReader handler below — by the time the mutation fires
+  // the user has already confirmed (mirrors AdminDashboard's window.confirm
+  // pattern for destructive admin actions).
+  const deleteMutation = useMutation({
+    mutationFn: async ({ uid }: { uid: number }) => deleteMessage(activeFolder, uid),
+    onMutate: async ({ uid }) => {
+      const listKey = ['messages', activeFolder];
+      await queryClient.cancelQueries({ queryKey: listKey });
+
+      const previousList = queryClient.getQueryData<MessageListResponse>(listKey);
+      if (previousList?.messages) {
+        queryClient.setQueryData<MessageListResponse>(listKey, {
+          ...previousList,
+          messages: previousList.messages.filter((m) => m.uid !== uid),
+        });
+      }
+      setSelectedUid(null);
+      return { previousList, listKey };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.previousList) {
+        queryClient.setQueryData(ctx.listKey, ctx.previousList);
+      }
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['messages', activeFolder] });
+      queryClient.invalidateQueries({ queryKey: ['folders'] });
+    },
+  });
+
+  // Added: TMAIL-318 — true when the active folder is the user's trash
+  // folder. Drives both the reader Delete button's aria-label and the
+  // confirm() gate on the onDelete handler. Uses a name-based heuristic
+  // (TRASH_FOLDER_NAMES) because GET /api/folders does not yet surface a
+  // role/kind field per folder.
+  const isPermanentDelete = isTrashFolder(activeFolder);
+
   // Adapt /api/folders shape → Sidebar's Folder shape.
   const sidebarFolders: UiFolder[] = useMemo(() => {
     const live = foldersQuery.data ?? [];
@@ -294,6 +356,20 @@ export function EmailClient() {
                 toggleStarMutation.mutate({ uid, currentlyStarred })
               }
               onArchive={(uid) => archiveMutation.mutate({ uid })}
+              onDelete={(uid) => {
+                // TMAIL-318: window.confirm() gates permanent EXPUNGE. The
+                // soft-delete (move-to-trash) path skips confirmation —
+                // matches Gmail/Outlook UX where moving to trash is one-click
+                // recoverable and only permanent expunge needs a prompt.
+                if (isPermanentDelete) {
+                  const ok = window.confirm(
+                    'Permanently delete this email? This cannot be undone.',
+                  );
+                  if (!ok) return;
+                }
+                deleteMutation.mutate({ uid });
+              }}
+              isPermanentDelete={isPermanentDelete}
             />
           </div>
         </div>
