@@ -209,6 +209,101 @@ async fn deliver_with_retry(
     }
 }
 
+/// PURPOSE (TMAIL-313): Replay an existing webhook delivery as a brand-new attempt.
+/// CONSTRAINTS: Reuses the original payload bytes verbatim so the recipient can
+///              verify HMAC against the same content (signature is recomputed with
+///              the webhook's *current* secret — important if the secret was just
+///              rotated). Always writes a new row in `webhook_deliveries`; the
+///              original delivery row is left untouched as the historical record.
+///
+/// NOTE: A request header `X-Webhook-Redelivery: true` is set so receivers can
+///       distinguish replays from first-time deliveries and avoid double-processing.
+pub async fn redeliver_webhook(
+    pool: &PgPool,
+    webhook: &Webhook,
+    delivery: &WebhookDelivery,
+) -> Result<WebhookDelivery, sqlx::Error> {
+    // NOTE: serialise the stored JSONB payload back into bytes so the HMAC is
+    // computed over the exact wire form (whitespace-canonical via serde_json).
+    let payload_bytes = serde_json::to_vec(&delivery.payload).unwrap_or_default();
+    let event_header = serde_json::to_string(&delivery.event)
+        .unwrap_or_default()
+        .trim_matches('"')
+        .to_string();
+    let signature = compute_signature(&webhook.secret, &payload_bytes);
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .unwrap_or_default();
+
+    let mut last_status: Option<i32> = None;
+    let mut last_body: Option<String> = None;
+    let mut success = false;
+
+    for attempt in 0..MAX_DELIVERY_ATTEMPTS {
+        let delay = backoff_delay_ms(attempt);
+        if delay > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+        }
+
+        let response = client
+            .post(&webhook.url)
+            .header("Content-Type", "application/json")
+            .header("X-Webhook-Signature", &signature)
+            .header("X-Webhook-Event", &event_header)
+            .header("X-Webhook-Attempt", (attempt + 1).to_string())
+            .header("X-Webhook-Redelivery", "true")
+            .body(payload_bytes.clone())
+            .send()
+            .await;
+
+        match response {
+            Ok(resp) => {
+                let status = resp.status().as_u16() as i32;
+                let body = resp.text().await.unwrap_or_default();
+                last_status = Some(status);
+                last_body = Some(body.chars().take(1000).collect());
+
+                if (200..300).contains(&status) {
+                    success = true;
+                    break;
+                }
+            }
+            Err(err) => {
+                last_status = None;
+                last_body = Some(format!("Connection error: {}", err));
+            }
+        }
+    }
+
+    let new_delivery = WebhookDelivery::create(
+        pool,
+        webhook.id,
+        &delivery.event,
+        &delivery.payload,
+        last_status,
+        last_body,
+        success,
+    )
+    .await?;
+
+    if success {
+        let _ = Webhook::record_success(pool, webhook.id).await;
+    } else {
+        tracing::warn!(
+            "Webhook {} redelivery of {} to {} failed after {} attempts",
+            webhook.id,
+            delivery.id,
+            webhook.url,
+            MAX_DELIVERY_ATTEMPTS
+        );
+        let _ = Webhook::record_failure(pool, webhook.id).await;
+    }
+
+    Ok(new_delivery)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

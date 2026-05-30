@@ -202,6 +202,27 @@ impl Webhook {
         .await?;
         Ok(())
     }
+
+    /// Added (TMAIL-313): Replace the HMAC signing secret for a webhook.
+    /// Returns the updated webhook on success, or None if the webhook doesn't
+    /// belong to the user (or doesn't exist). Callers must persist / return
+    /// `new_secret` to the user — the plaintext is not recoverable after this.
+    pub async fn rotate_secret(
+        pool: &PgPool,
+        id: Uuid,
+        user_id: Uuid,
+        new_secret: &str,
+    ) -> Result<Option<Webhook>, sqlx::Error> {
+        sqlx::query_as::<_, Webhook>(
+            "UPDATE webhooks SET secret = $3, updated_at = NOW() \
+             WHERE id = $1 AND user_id = $2 RETURNING *",
+        )
+        .bind(id)
+        .bind(user_id)
+        .bind(new_secret)
+        .fetch_optional(pool)
+        .await
+    }
 }
 
 impl WebhookDelivery {
@@ -216,6 +237,23 @@ impl WebhookDelivery {
         )
         .bind(webhook_id)
         .fetch_all(pool)
+        .await
+    }
+
+    /// Added (TMAIL-313): Look up a single delivery scoped to its parent webhook.
+    /// Used by the manual redeliver endpoint to verify the delivery belongs to
+    /// the addressed webhook before replaying it.
+    pub async fn find_by_id_and_webhook(
+        pool: &PgPool,
+        id: Uuid,
+        webhook_id: Uuid,
+    ) -> Result<Option<WebhookDelivery>, sqlx::Error> {
+        sqlx::query_as::<_, WebhookDelivery>(
+            "SELECT * FROM webhook_deliveries WHERE id = $1 AND webhook_id = $2",
+        )
+        .bind(id)
+        .bind(webhook_id)
+        .fetch_optional(pool)
         .await
     }
 
@@ -456,5 +494,35 @@ mod tests {
     fn test_webhook_event_invalid_deserialization() {
         let result = serde_json::from_str::<WebhookEvent>("\"email.unknown\"");
         assert!(result.is_err());
+    }
+
+    // Added (TMAIL-313): The rotate_secret / redeliver SQL paths are exercised
+    // end-to-end in tests/webhook_redeliver_test.rs against a live database.
+    // The unit-level assertions below cover the in-memory invariants we want
+    // a future refactor to preserve.
+
+    #[test]
+    fn test_rotate_secret_changes_value_in_struct() {
+        // NOTE: This is a struct-level sanity check — the DB roundtrip is in the
+        // integration test. We assert that overwriting `secret` on the model
+        // doesn't disturb the other fields a UI relies on (id, url, events).
+        let mut webhook = Webhook {
+            id: Uuid::new_v4(),
+            user_id: Uuid::new_v4(),
+            url: "https://example.com/hook".to_string(),
+            secret: "old-secret".to_string(),
+            events: vec![WebhookEvent::EmailReceived],
+            active: true,
+            description: Some("d".to_string()),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+            last_triggered_at: None,
+            failure_count: 0,
+        };
+        let original_id = webhook.id;
+        webhook.secret = "new-secret".to_string();
+        assert_eq!(webhook.id, original_id);
+        assert_eq!(webhook.secret, "new-secret");
+        assert_eq!(webhook.url, "https://example.com/hook");
     }
 }

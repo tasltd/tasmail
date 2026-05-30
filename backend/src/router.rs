@@ -427,6 +427,16 @@ pub fn create_router(state: AppState) -> Router {
             "/api/webhooks/{id}/deliveries",
             get(handlers::webhooks::list_deliveries),
         )
+        // Added (TMAIL-313): Manual redelivery of a past webhook attempt
+        .route(
+            "/api/webhooks/{id}/deliveries/{delivery_id}/redeliver",
+            post(handlers::webhooks::redeliver),
+        )
+        // Added (TMAIL-313): Rotate the HMAC signing secret (returned once)
+        .route(
+            "/api/webhooks/{id}/rotate-secret",
+            post(handlers::webhooks::rotate_secret),
+        )
         // Added: Admin branding management routes (TMAIL-111)
         .route("/api/admin/branding", put(handlers::branding::update_branding))
         .route("/api/admin/branding/reset", post(handlers::branding::reset_branding))
