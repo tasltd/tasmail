@@ -1,9 +1,16 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { X, Minimize2, Maximize2, Paperclip, Send, Save, Bold, Italic, Link as LinkIcon, List } from 'lucide-react';
+// TMAIL-330: TipTap powers the rich-text body. StarterKit covers paragraphs,
+// bold, italic, lists and headings; Link is opt-in (we want the toolbar to
+// prompt for a URL rather than auto-linkify pasted text); Placeholder renders
+// the "Compose your message…" hint that the old <Textarea> used to.
+import { EditorContent, useEditor } from '@tiptap/react';
+import StarterKit from '@tiptap/starter-kit';
+import Link from '@tiptap/extension-link';
+import Placeholder from '@tiptap/extension-placeholder';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
 import { scheduledApi } from '@/api/scheduled';
 import { attachmentsApi, type Attachment } from '@/api/attachments';
 import { saveDraft } from '@/api/messages';
@@ -33,6 +40,19 @@ interface ComposeModalProps {
 // yet; that can ship later if desired.
 function splitAddrs(s: string): string[] {
   return s.split(/[,;]/).map((x) => x.trim()).filter(Boolean);
+}
+
+// TMAIL-330: minimal HTML escape used when seeding the TipTap doc from the
+// plain-text quoted block built by buildReplyContext(). Keeps `<`, `>`, `&`
+// and quotes from being interpreted as markup when the reply body itself
+// contains text like "foo <bar@baz>".
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 // TMAIL-321: each attachment row tracks both the local File (for size + name
@@ -67,12 +87,51 @@ export function ComposeModal({ isOpen, onClose, replyContext = null }: ComposeMo
   const [cc, setCc] = useState('');
   const [bcc, setBcc] = useState('');
   const [subject, setSubject] = useState('');
-  const [body, setBody] = useState('');
+  // TMAIL-330: `body` no longer lives in React state — the TipTap editor owns
+  // the document. We keep a render-tick counter so toolbar active-states and
+  // Send/Save Draft disabled-checks re-evaluate after each editor transaction
+  // (TipTap doesn't trigger React re-renders by itself).
+  const [editorTick, setEditorTick] = useState(0);
   const [error, setError] = useState<string | null>(null);
   // TMAIL-321: composer-local attachment list (with upload state) — see
   // ComposeAttachment above. Replaces the old File[] which never made it to
   // the wire.
   const [attachments, setAttachments] = useState<ComposeAttachment[]>([]);
+
+  // TMAIL-330: TipTap editor configured to match the classic SPA composer
+  // (StarterKit + Link + Placeholder). Each transaction bumps `editorTick`
+  // so toolbar active-states / Send disabled-checks update — TipTap's
+  // editor.isActive() / editor.isEmpty are not reactive on their own.
+  const editor = useEditor({
+    extensions: [
+      StarterKit,
+      // openOnClick=false so clicking a link inside the editor doesn't
+      // navigate away mid-compose. The reader UI handles link clicks.
+      // autolink=false so TipTap doesn't re-derive an href from the text
+      // when the user inserts a link with an explicit URL via the toolbar
+      // (otherwise typing "example.com" inside the link mark would
+      // overwrite the user-supplied href to "http://example.com").
+      Link.configure({ openOnClick: false, autolink: false }),
+      Placeholder.configure({ placeholder: 'Compose your message...' }),
+    ],
+    content: '',
+    editorProps: {
+      attributes: {
+        // tiptap renders ProseMirror inside this <div>; the styles match the
+        // surrounding modal padding and give the placeholder a min-height so
+        // the editor feels like the old textarea.
+        class:
+          'tasmail-rte-editor min-h-[150px] sm:min-h-[250px] focus:outline-none prose prose-sm dark:prose-invert max-w-none',
+        'data-testid': 'compose-rte-editor',
+      },
+    },
+    onUpdate: () => {
+      setEditorTick((t) => t + 1);
+    },
+    onSelectionUpdate: () => {
+      setEditorTick((t) => t + 1);
+    },
+  });
 
   // Added: TMAIL-319 — re-seed the form state from `replyContext` whenever
   // the modal opens (or the source message changes). Using an effect rather
@@ -80,6 +139,12 @@ export function ComposeModal({ isOpen, onClose, replyContext = null }: ComposeMo
   // / Forward on the same modal instance re-prefills correctly. Reveals Cc
   // automatically when the prefill includes any Cc addresses so the user
   // sees them without hunting for the toggle.
+  // TMAIL-330: this effect must NOT depend on `editor` — useEditor() returns
+  // null on the first render and the Editor on the next, so listing `editor`
+  // here would cause the effect to fire a second time once the editor mounts
+  // and wipe anything the user has typed in the meantime. The editor content
+  // seeding lives in its own effect below, which is allowed to re-run when
+  // the editor instance arrives.
   useEffect(() => {
     if (!isOpen) return;
     if (replyContext) {
@@ -87,7 +152,6 @@ export function ComposeModal({ isOpen, onClose, replyContext = null }: ComposeMo
       setCc(replyContext.cc.join(', '));
       setBcc('');
       setSubject(replyContext.subject);
-      setBody(replyContext.body);
       setShowCc(replyContext.cc.length > 0);
       setShowBcc(false);
     } else {
@@ -95,13 +159,31 @@ export function ComposeModal({ isOpen, onClose, replyContext = null }: ComposeMo
       setCc('');
       setBcc('');
       setSubject('');
-      setBody('');
       setShowCc(false);
       setShowBcc(false);
     }
     setError(null);
     setAttachments([]);
   }, [isOpen, replyContext]);
+
+  // TMAIL-330: keep the TipTap doc in sync with the open/replyContext state.
+  // Runs separately so that the editor mounting (null → Editor) doesn't drop
+  // the user's already-typed form fields above.
+  useEffect(() => {
+    if (!isOpen || !editor) return;
+    if (replyContext) {
+      // replyContext.body is a plain-text quoted block; render each line as
+      // its own paragraph so TipTap preserves the line breaks. The classic
+      // composer does the same.
+      const html = replyContext.body
+        .split(/\r?\n/)
+        .map((line) => (line.length === 0 ? '<p></p>' : `<p>${escapeHtml(line)}</p>`))
+        .join('');
+      editor.commands.setContent(html, { emitUpdate: false });
+    } else {
+      editor.commands.clearContent(false);
+    }
+  }, [isOpen, replyContext, editor]);
 
   const sendMut = useMutation({
     mutationFn: async () => {
@@ -128,12 +210,22 @@ export function ComposeModal({ isOpen, onClose, replyContext = null }: ComposeMo
         .map((a) => a.serverId)
         .filter((id): id is string => Boolean(id));
 
+      // TMAIL-330: the editor is the source of truth for the body. We send
+      // both the rendered HTML (so recipients see formatting) and the
+      // plain-text fallback (for clients that only render text/plain or for
+      // accessibility/spam-score scanners that prefer it). An empty doc gives
+      // editor.getHTML() = "<p></p>" — treat that as "no body" so we don't
+      // emit a phantom MIME part.
+      const htmlBody = editor && !editor.isEmpty ? editor.getHTML() : '';
+      const textBody = editor ? editor.getText() : '';
+
       return scheduledApi.scheduleSend({
         to: splitAddrs(to),
         cc: cc.trim() ? splitAddrs(cc) : undefined,
         bcc: bcc.trim() ? splitAddrs(bcc) : undefined,
         subject,
-        text_body: body || undefined,
+        html_body: htmlBody || undefined,
+        text_body: textBody || undefined,
         delay_seconds: 0,
         // TMAIL-319: forward the threading headers from the open replyContext
         // so the backend can persist them and the email scheduler can stamp
@@ -156,7 +248,8 @@ export function ComposeModal({ isOpen, onClose, replyContext = null }: ComposeMo
       queryClient.invalidateQueries({ queryKey: ['folders'] });
       queryClient.invalidateQueries({ queryKey: ['messages'] });
       // Reset the form for the next compose.
-      setTo(''); setCc(''); setBcc(''); setSubject(''); setBody('');
+      setTo(''); setCc(''); setBcc(''); setSubject('');
+      editor?.commands.clearContent(false);
       setAttachments([]);
       setError(null);
       onClose();
@@ -167,22 +260,29 @@ export function ComposeModal({ isOpen, onClose, replyContext = null }: ComposeMo
   // TMAIL-238: Save Draft → POST /api/drafts. Backend appends an RFC-822
   // message to Dovecot's Drafts folder with the \Draft flag set, so it
   // shows up in the Drafts list without going through the SMTP queue.
+  // TMAIL-330: ship html_body + text_body sourced from the TipTap doc so
+  // the user's formatting survives a draft round-trip.
   const draftMut = useMutation({
-    mutationFn: () => saveDraft({
-      to: splitAddrs(to),
-      cc: cc.trim() ? splitAddrs(cc) : undefined,
-      subject: subject || '(no subject)',
-      text_body: body || undefined,
-      // TMAIL-319: include the same threading headers on drafts so a draft
-      // started from Reply / Reply All / Forward keeps its conversation
-      // identity. The backend may not persist them yet — the modal stays
-      // forward-compatible without a separate branch.
-      in_reply_to: replyContext?.inReplyTo ?? undefined,
-      references:
-        replyContext && replyContext.references.length > 0
-          ? replyContext.references
-          : undefined,
-    }),
+    mutationFn: () => {
+      const htmlBody = editor && !editor.isEmpty ? editor.getHTML() : '';
+      const textBody = editor ? editor.getText() : '';
+      return saveDraft({
+        to: splitAddrs(to),
+        cc: cc.trim() ? splitAddrs(cc) : undefined,
+        subject: subject || '(no subject)',
+        html_body: htmlBody || undefined,
+        text_body: textBody || undefined,
+        // TMAIL-319: include the same threading headers on drafts so a draft
+        // started from Reply / Reply All / Forward keeps its conversation
+        // identity. The backend may not persist them yet — the modal stays
+        // forward-compatible without a separate branch.
+        in_reply_to: replyContext?.inReplyTo ?? undefined,
+        references:
+          replyContext && replyContext.references.length > 0
+            ? replyContext.references
+            : undefined,
+      });
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['folders'] });
       queryClient.invalidateQueries({ queryKey: ['messages', 'Drafts'] });
@@ -367,18 +467,99 @@ export function ComposeModal({ isOpen, onClose, replyContext = null }: ComposeMo
         </div>
       </div>
 
-      {/* Rich Text Toolbar */}
+      {/* Rich Text Toolbar — TMAIL-330: wired to TipTap commands. Active
+          state mirrors editor.isActive() so the user sees which mark is on
+          at the cursor. The `disabled` guard prevents toolbar clicks before
+          the editor finishes mounting. */}
       <div className="flex items-center gap-1 px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-800/50">
-        <Button variant="ghost" size="icon" className="size-8" title="Bold">
+        <Button
+          variant={editor?.isActive('bold') ? 'secondary' : 'ghost'}
+          size="icon"
+          className="size-8"
+          title="Bold"
+          aria-label="Bold"
+          aria-pressed={editor?.isActive('bold') ?? false}
+          data-testid="compose-rte-bold"
+          disabled={!editor}
+          onClick={() => editor?.chain().focus().toggleBold().run()}
+        >
           <Bold className="size-4" />
         </Button>
-        <Button variant="ghost" size="icon" className="size-8" title="Italic">
+        <Button
+          variant={editor?.isActive('italic') ? 'secondary' : 'ghost'}
+          size="icon"
+          className="size-8"
+          title="Italic"
+          aria-label="Italic"
+          aria-pressed={editor?.isActive('italic') ?? false}
+          data-testid="compose-rte-italic"
+          disabled={!editor}
+          onClick={() => editor?.chain().focus().toggleItalic().run()}
+        >
           <Italic className="size-4" />
         </Button>
-        <Button variant="ghost" size="icon" className="size-8" title="Insert link">
+        <Button
+          variant={editor?.isActive('link') ? 'secondary' : 'ghost'}
+          size="icon"
+          className="size-8"
+          title="Insert link"
+          aria-label="Insert link"
+          aria-pressed={editor?.isActive('link') ?? false}
+          data-testid="compose-rte-link"
+          disabled={!editor}
+          onClick={() => {
+            if (!editor) return;
+            if (editor.isActive('link')) {
+              editor.chain().focus().unsetLink().run();
+              return;
+            }
+            const previous = (editor.getAttributes('link').href as string | undefined) ?? '';
+            // Native prompt — matches the classic composer's behavior; a
+            // proper modal is tracked separately. Cancel = no-op so the user
+            // can back out without dropping the selection.
+            const url = window.prompt('Enter URL', previous);
+            if (url === null) return;
+            if (url === '') {
+              editor.chain().focus().unsetLink().run();
+              return;
+            }
+            // TipTap normalizes the href; we only block obviously unsafe
+            // schemes here so the toolbar doesn't become a javascript:
+            // injection vector.
+            if (/^\s*javascript:/i.test(url)) return;
+            const { from, to: rangeTo } = editor.state.selection;
+            const hasSelection = from !== rangeTo;
+            if (hasSelection) {
+              // Selection exists — wrap it (or extend the existing link mark)
+              // in the new href.
+              editor.chain().focus().extendMarkRange('link').setLink({ href: url }).run();
+              return;
+            }
+            // No selection — insert the URL itself as the visible link text
+            // wrapped in an <a> node. This is what Gmail does when the user
+            // clicks "Insert link" without preselecting text: the URL doubles
+            // as the display text, and the user can edit it inline afterwards.
+            const safeUrl = url.replace(/"/g, '&quot;').replace(/</g, '&lt;');
+            editor
+              .chain()
+              .focus()
+              .insertContent(`<a href="${safeUrl}">${safeUrl}</a>`)
+              .run();
+          }}
+        >
           <LinkIcon className="size-4" />
         </Button>
-        <Button variant="ghost" size="icon" className="size-8" title="Bullet list">
+        <Button
+          variant={editor?.isActive('bulletList') ? 'secondary' : 'ghost'}
+          size="icon"
+          className="size-8"
+          title="Bullet list"
+          aria-label="Bullet list"
+          aria-pressed={editor?.isActive('bulletList') ?? false}
+          data-testid="compose-rte-bullet-list"
+          disabled={!editor}
+          onClick={() => editor?.chain().focus().toggleBulletList().run()}
+        >
           <List className="size-4" />
         </Button>
         <div className="flex-1" />
@@ -398,14 +579,22 @@ export function ComposeModal({ isOpen, onClose, replyContext = null }: ComposeMo
         />
       </div>
 
-      {/* Message Body */}
+      {/* Message Body — TMAIL-330: TipTap editor (StarterKit + Link +
+          Placeholder). EditorContent renders the ProseMirror DOM; styles
+          live inside the editorProps.attributes.class above so the wrapper
+          here is just a scroll container. */}
       <div className="flex-1 p-3 overflow-y-auto">
-        <Textarea
-          value={body}
-          onChange={(e) => setBody(e.target.value)}
-          placeholder="Compose your message..."
-          className="min-h-[150px] sm:min-h-[250px] h-full border-0 focus-visible:ring-0 focus-visible:ring-offset-0 resize-none"
-        />
+        <div
+          data-testid="compose-rte-wrapper"
+          // TMAIL-330: `data-editor-tick` keeps the editorTick state used by
+          // toolbar isActive() reads (TipTap doesn't trigger React updates on
+          // its own). Without this attribute the tsc unused-variable check
+          // would fire.
+          data-editor-tick={editorTick}
+          className="min-h-[150px] sm:min-h-[250px]"
+        >
+          <EditorContent editor={editor} />
+        </div>
         {error && (
           <div role="alert" className="mt-2 text-sm text-red-600">{error}</div>
         )}
@@ -510,7 +699,14 @@ export function ComposeModal({ isOpen, onClose, replyContext = null }: ComposeMo
           </Button>
           <Button
             variant="outline"
-            disabled={draftMut.isPending || (!to.trim() && !subject.trim() && !body.trim())}
+            // TMAIL-330: Save Draft is allowed once the user has typed
+            // anything — recipients, subject, or body text in the editor.
+            // `editor.isEmpty` covers the empty-doc case where the cursor
+            // is the only content.
+            disabled={
+              draftMut.isPending ||
+              (!to.trim() && !subject.trim() && (editor?.isEmpty ?? true))
+            }
             onClick={() => draftMut.mutate()}
             title="Save as draft"
           >

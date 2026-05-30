@@ -123,7 +123,12 @@ test.describe('Modern UI walk-through as noreply (TMAIL-228)', () => {
     await expect(page.locator('text=New Message')).toBeVisible({ timeout: 5_000 });
     await page.locator('input[placeholder*="alice"]').first().fill('noreply@techatscale.io');
     await page.locator('input[placeholder="Subject"]').fill('Modern UI walk-through');
-    await page.locator('textarea[placeholder*="Compose"]').fill('Hello from the alt-UI');
+    // TMAIL-330: the composer body is now a TipTap ProseMirror editor — not a
+    // <textarea>. Locate it via the wrapper test-id and type into the
+    // contenteditable child rather than fill()ing a form control.
+    const composeBody = page.locator('[data-testid="compose-rte-editor"]');
+    await composeBody.click();
+    await page.keyboard.type('Hello from the alt-UI');
     await takeScreenshot(page, 'modern-walkthrough/06-compose-filled');
     // TMAIL-238: click Save Draft (now wired) instead of Discard. Verify the
     // backend POST hit /api/drafts and produced a row in the Drafts folder.

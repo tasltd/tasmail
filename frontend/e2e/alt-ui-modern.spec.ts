@@ -158,9 +158,11 @@ test.describe('TMAIL-292 alt-UI modern theme sweep', () => {
     await page
       .locator('input[placeholder="Subject"]')
       .fill('TMAIL-292 alt-UI sweep');
-    await page
-      .locator('textarea[placeholder*="Compose"]')
-      .fill('Sent from the alt-UI ComposeModal via scheduledApi.');
+    // TMAIL-330: composer body is a TipTap ProseMirror editor (no <textarea>).
+    // Click into the contenteditable then type the body via the keyboard.
+    const composeBody = page.locator('[data-testid="compose-rte-editor"]');
+    await composeBody.click();
+    await page.keyboard.type('Sent from the alt-UI ComposeModal via scheduledApi.');
     await takeScreenshot(page, `${SCREENSHOT_DIR}/05-composemodal-filled`);
 
     // ComposeModal "Send" → scheduledApi.scheduleSend({ delay_seconds: 0 }).
