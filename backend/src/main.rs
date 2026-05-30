@@ -68,9 +68,14 @@ async fn main() -> anyhow::Result<()> {
     let addr: SocketAddr = format!("{}:{}", config.server.host, config.server.port).parse()?;
 
     // Start background email scheduler (polls every 5 seconds)
+    // Changed (TMAIL-301): scheduler now takes JwtConfig instead of SmtpConfig.
+    // It loads per-user SMTP credentials from `smtp_configurations` and decrypts
+    // them with the JWT-derived AES-256-GCM key (BYOK). The previous wiring
+    // passed the server's notification SmtpConfig plus a literal "placeholder"
+    // password, so every scheduled send was rejected at SMTP AUTH.
     let scheduler = services::email_scheduler::EmailScheduler::new(
         std::sync::Arc::new(pool.clone()),
-        config.smtp.clone(),
+        config.jwt.clone(),
         5,
     );
     scheduler.start();
