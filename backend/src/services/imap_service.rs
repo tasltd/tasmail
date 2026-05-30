@@ -258,6 +258,63 @@ impl ImapService {
         Ok(folders)
     }
 
+    /// TMAIL-324: CREATE a new IMAP mailbox (folder) on the user's server.
+    /// `name` is taken verbatim as the mailbox name — the caller is responsible
+    /// for sanitising it (no `/`, no empty string). Returns the freshly-listed
+    /// Folder so the caller has the canonical name + delimiter the server
+    /// echoed back, which can differ from the requested string when the server
+    /// normalises hierarchy delimiters.
+    pub async fn create_folder(
+        &self,
+        username: &str,
+        password: &str,
+        name: &str,
+    ) -> Result<Folder, AppError> {
+        let mut session = self.connect(username, password).await?;
+
+        session
+            .create(name)
+            .await
+            .map_err(|e| AppError::Imap(format!("CREATE failed: {}", e)))?;
+
+        // Fetch STATUS so the response carries message/unseen counts (both 0
+        // for a brand-new mailbox, but keeps the response shape identical to
+        // GET /api/folders).
+        let status = session
+            .status(name, "(MESSAGES UNSEEN)")
+            .await
+            .map_err(|e| AppError::Imap(format!("STATUS failed after CREATE: {}", e)))?;
+
+        let _ = session.logout().await;
+
+        Ok(Folder {
+            name: name.to_string(),
+            delimiter: "/".to_string(),
+            messages: Some(status.exists),
+            unseen: status.unseen,
+        })
+    }
+
+    /// TMAIL-324: DELETE an IMAP mailbox (folder). Per RFC 3501 §6.3.4, this
+    /// removes the mailbox and any messages it contains. The caller is
+    /// responsible for refusing to delete protected folders (INBOX, Sent, etc).
+    pub async fn delete_folder(
+        &self,
+        username: &str,
+        password: &str,
+        name: &str,
+    ) -> Result<(), AppError> {
+        let mut session = self.connect(username, password).await?;
+
+        session
+            .delete(name)
+            .await
+            .map_err(|e| AppError::Imap(format!("DELETE failed: {}", e)))?;
+
+        let _ = session.logout().await;
+        Ok(())
+    }
+
     /// Fetch message envelopes from a folder with pagination
     pub async fn list_messages(
         &self,

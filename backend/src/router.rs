@@ -122,7 +122,15 @@ pub fn create_router(state: AppState) -> Router {
     // Protected routes (auth required)
     let protected_routes = Router::new()
         .route("/api/auth/logout", post(handlers::auth::logout))
-        .route("/api/folders", get(handlers::folders::list_folders))
+        // TMAIL-324: GET lists, POST creates a new IMAP mailbox, DELETE removes one.
+        .route(
+            "/api/folders",
+            get(handlers::folders::list_folders).post(handlers::folders::create_folder),
+        )
+        .route(
+            "/api/folders/{folder}",
+            delete(handlers::folders::delete_folder),
+        )
         .route(
             "/api/folders/{folder}/messages",
             get(handlers::messages::list_messages),

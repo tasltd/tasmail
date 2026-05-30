@@ -26,6 +26,12 @@ interface SidebarProps {
   // TMAIL-217: when supplied, drives the folder list (real /api/folders).
   // When omitted (no data yet), shows an empty list — never any seed data.
   folders?: Folder[];
+  // TMAIL-324: callbacks now go to the parent which runs the real
+  // POST/DELETE /api/folders mutations and invalidates the ['folders'] query.
+  // Local state is gone — the sidebar is a pure view over the live list.
+  onAddFolder?: (name: string) => void;
+  onDeleteFolder?: (folderId: string) => void;
+  isAddingFolderPending?: boolean;
 }
 
 const iconMap: Record<string, any> = {
@@ -38,43 +44,46 @@ const iconMap: Record<string, any> = {
   User
 };
 
-export function Sidebar({ activeFolder, onFolderChange, onCompose, folders: foldersProp }: SidebarProps) {
+export function Sidebar({
+  activeFolder,
+  onFolderChange,
+  onCompose,
+  folders: foldersProp,
+  onAddFolder,
+  onDeleteFolder,
+  isAddingFolderPending,
+}: SidebarProps) {
   const [collapsed, setCollapsed] = useState(false);
   const location = useLocation();
   const isCalendar = location.pathname === '/calendar';
-  // TMAIL-217 / TMAIL-228 / TMAIL-239: render directly from the prop so the
-  // /api/folders query result drives the list immediately. No mock fallback;
-  // before the query resolves the list is empty, which is correct.
-  const liveFolders: Folder[] = foldersProp ?? [];
-  // Local state is kept ONLY for the inline new-folder addition flow which
-  // exists on top of the live list (real backend additions need a separate
-  // endpoint — out of scope here).
-  const [extraLocalFolders, setExtraLocalFolders] = useState<Folder[]>([]);
-  const folders: Folder[] = [...liveFolders, ...extraLocalFolders];
+  // TMAIL-217 / TMAIL-228 / TMAIL-239 / TMAIL-324: render directly from the
+  // prop. The list is the source of truth — no parallel client-side state.
+  const folders: Folder[] = foldersProp ?? [];
   const [isAddingFolder, setIsAddingFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
 
+  // TMAIL-324: submit the inline new-folder input. Defers the real network
+  // call to the parent's onAddFolder mutation; the parent invalidates the
+  // ['folders'] query so the list refreshes from the backend. The form is
+  // cleared immediately so the input doesn't feel stuck while the request
+  // is in flight.
   const handleAddFolder = () => {
-    if (newFolderName.trim()) {
-      const newFolder: Folder = {
-        id: newFolderName.toLowerCase().replace(/\s+/g, '-'),
-        name: newFolderName,
-        icon: 'Briefcase',
-        count: 0,
-        isCustom: true,
-      };
-      // TMAIL-228: only the local-only "extra" list mutates here. Real
-      // folders come from /api/folders via the parent prop and are
-      // immutable from the sidebar — adding/deleting a real folder needs
-      // a separate backend call (out of scope here).
-      setExtraLocalFolders((prev) => [...prev, newFolder]);
-      setNewFolderName('');
-      setIsAddingFolder(false);
+    const trimmed = newFolderName.trim();
+    if (trimmed && onAddFolder) {
+      onAddFolder(trimmed);
     }
+    setNewFolderName('');
+    setIsAddingFolder(false);
   };
 
+  // TMAIL-324: delete is now a parent-driven mutation that invalidates the
+  // ['folders'] query on settle. If the currently-active folder is deleted,
+  // bounce navigation back to the inbox so the message list isn't pointing
+  // at a folder that no longer exists.
   const handleDeleteFolder = (folderId: string) => {
-    setExtraLocalFolders((prev) => prev.filter((f) => f.id !== folderId));
+    if (onDeleteFolder) {
+      onDeleteFolder(folderId);
+    }
     if (activeFolder === folderId) {
       onFolderChange('inbox');
     }
@@ -135,7 +144,7 @@ export function Sidebar({ activeFolder, onFolderChange, onCompose, folders: fold
             <ChevronLeft className="size-4" />
           </Button>
         </div>
-        
+
         <Button onClick={onCompose} className="w-full">
           <Plus className="size-4 mr-2" />
           Compose
@@ -169,6 +178,7 @@ export function Sidebar({ activeFolder, onFolderChange, onCompose, folders: fold
                   variant="ghost"
                   size="icon"
                   className="absolute right-1 top-1 size-6 opacity-0 group-hover:opacity-100"
+                  data-testid={`delete-folder-${folder.id}`}
                   onClick={(e) => {
                     e.stopPropagation();
                     handleDeleteFolder(folder.id);
@@ -201,7 +211,9 @@ export function Sidebar({ activeFolder, onFolderChange, onCompose, folders: fold
               onKeyDown={(e) => e.key === 'Enter' && handleAddFolder()}
               onBlur={handleAddFolder}
               placeholder="Folder name"
-              className="flex-1 px-2 py-1 text-sm bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded"
+              data-testid="new-folder-input"
+              disabled={isAddingFolderPending}
+              className="flex-1 px-2 py-1 text-sm bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded disabled:opacity-50"
               autoFocus
             />
           </div>
@@ -209,6 +221,7 @@ export function Sidebar({ activeFolder, onFolderChange, onCompose, folders: fold
           <Button
             variant="ghost"
             className="w-full justify-start mb-1 text-zinc-500"
+            data-testid="new-folder-button"
             onClick={() => setIsAddingFolder(true)}
           >
             <Plus className="size-4 mr-3" />

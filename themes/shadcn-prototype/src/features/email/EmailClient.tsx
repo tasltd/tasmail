@@ -14,7 +14,7 @@ import { EmailList } from '@/features/email/EmailList';
 import { EmailReader } from '@/features/email/EmailReader';
 import { ComposeModal } from '@/features/email/ComposeModal';
 import { buildReplyContext, type ReplyContext, type ReplyKind } from '@/features/email/replyContext';
-import { fetchFolders } from '@/api/folders';
+import { fetchFolders, createFolder, deleteFolder } from '@/api/folders';
 import { deleteMessage, fetchMessages, flagMessage, moveMessage } from '@/api/messages';
 import type {
   Folder as ServerFolder,
@@ -60,6 +60,33 @@ const FOLDER_ICONS: Record<string, string> = {
   Trash: 'Trash2',
   'Deleted Items': 'Trash2',
 };
+
+// TMAIL-324: built-in folders the sidebar must NOT render a delete (×) button
+// for. Mirrors handlers/folders.rs::PROTECTED_FOLDER_NAMES so the UI affordance
+// matches what the backend will accept.
+const BUILT_IN_FOLDER_NAMES = new Set([
+  'INBOX',
+  'Inbox',
+  'Sent',
+  'Sent Items',
+  'Drafts',
+  'Trash',
+  'Deleted Items',
+  'Bin',
+  'Junk',
+  'Junk Mail',
+  'Spam',
+  'Archive',
+]);
+
+function isBuiltInFolderName(name: string): boolean {
+  if (BUILT_IN_FOLDER_NAMES.has(name)) return true;
+  const lower = name.toLowerCase();
+  for (const builtin of BUILT_IN_FOLDER_NAMES) {
+    if (builtin.toLowerCase() === lower) return true;
+  }
+  return false;
+}
 
 export function EmailClient() {
   // Added (TMAIL-322): when SearchResultsPage links into `/?folder=X&uid=Y`,
@@ -124,6 +151,41 @@ export function EmailClient() {
   const foldersQuery = useQuery<ServerFolder[]>({
     queryKey: ['folders'],
     queryFn: () => fetchFolders(),
+  });
+
+  // TMAIL-324: real folder CRUD against POST/DELETE /api/folders. The Sidebar
+  // used to keep its own `extraLocalFolders` state which evaporated on reload
+  // and never reached the IMAP server. These two mutations replace it — on
+  // success we invalidate ['folders'] so the live list re-fetches and shows
+  // (or stops showing) the affected folder.
+  const createFolderMutation = useMutation({
+    mutationFn: (name: string) => createFolder(name),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['folders'] });
+    },
+    onError: (err: unknown) => {
+      // Surface a basic alert so the user sees server-side validation errors
+      // (e.g. "INBOX is a built-in folder and cannot be created or deleted").
+      // The alt-UI doesn't have a global toast layer yet — TMAIL-324 follow-up
+      // can swap this for the shadcn toast once it's wired.
+      const msg = err instanceof Error ? err.message : 'Failed to create folder';
+      if (typeof window !== 'undefined') {
+        window.alert(msg);
+      }
+    },
+  });
+
+  const deleteFolderMutation = useMutation({
+    mutationFn: (name: string) => deleteFolder(name),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['folders'] });
+    },
+    onError: (err: unknown) => {
+      const msg = err instanceof Error ? err.message : 'Failed to delete folder';
+      if (typeof window !== 'undefined') {
+        window.alert(msg);
+      }
+    },
   });
 
   const messagesQuery = useQuery({
@@ -280,6 +342,10 @@ export function EmailClient() {
   const isPermanentDelete = isTrashFolder(activeFolder);
 
   // Adapt /api/folders shape → Sidebar's Folder shape.
+  // TMAIL-324: tag any non-built-in folder as `isCustom` so the sidebar shows
+  // the delete (×) button on hover. The set of built-ins mirrors the
+  // backend's PROTECTED_FOLDER_NAMES list in handlers/folders.rs — keep the
+  // two in sync if either is extended.
   const sidebarFolders: UiFolder[] = useMemo(() => {
     const live = foldersQuery.data ?? [];
     return live.map((f) => ({
@@ -287,6 +353,7 @@ export function EmailClient() {
       name: f.name,
       icon: FOLDER_ICONS[f.name] ?? 'Briefcase',
       count: f.unseen ?? 0,
+      isCustom: !isBuiltInFolderName(f.name),
     }));
   }, [foldersQuery.data]);
 
@@ -343,6 +410,10 @@ export function EmailClient() {
             setIsComposing(true);
             setSidebarOpen(false);
           }}
+          // TMAIL-324: real folder CRUD wired through TanStack mutations.
+          onAddFolder={(name) => createFolderMutation.mutate(name)}
+          onDeleteFolder={(name) => deleteFolderMutation.mutate(name)}
+          isAddingFolderPending={createFolderMutation.isPending}
         />
       </div>
 
