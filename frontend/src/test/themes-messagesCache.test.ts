@@ -32,6 +32,9 @@ function makeEnvelope(uid: number, flags: string[] = []): MessageEnvelope {
     date: '2026-05-30T12:00:00Z',
     flags,
     size: 1024,
+    // Added (TMAIL-329): preview is a required field on the wire shape now;
+    // the cache helper tests don't exercise it, so null is fine.
+    preview: null,
   };
 }
 

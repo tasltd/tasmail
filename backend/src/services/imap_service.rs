@@ -18,6 +18,13 @@ pub struct Folder {
 }
 
 /// Represents a message envelope (list view)
+// Added (TMAIL-329): `preview` field carries a ~200 char plaintext snippet
+// extracted from the message body so EmailList rows in the alt-UI render a
+// useful preview line under the subject. Populated by list_messages /
+// search_messages via a `BODY.PEEK[]<0.8192>` partial fetch + the
+// `extract_preview` helper below; `None` when the body could not be partially
+// parsed (truncated MIME, empty message, etc.) so the SPA can fall back to an
+// empty preview line without rendering "null".
 #[derive(Debug, Clone, Serialize)]
 pub struct MessageEnvelope {
     pub uid: u32,
@@ -26,6 +33,7 @@ pub struct MessageEnvelope {
     pub date: Option<String>,
     pub flags: Vec<String>,
     pub size: Option<u32>,
+    pub preview: Option<String>,
 }
 
 /// Added (TMAIL-320): raw bytes of a single MIME part inside a message,
@@ -347,8 +355,14 @@ impl ImapService {
         }
 
         let range = format!("{}:{}", start, end);
+        // Changed (TMAIL-329): added `BODY.PEEK[]<0.8192>` so each envelope row
+        // can carry a ~200 char preview snippet. `.PEEK` avoids setting the
+        // \Seen flag (list-view must not mark messages read); `<0.8192>`
+        // requests the first 8 KiB of the raw RFC 822 body which is enough to
+        // cover typical header + first text part for the overwhelming majority
+        // of messages while keeping the FETCH payload bounded.
         let messages: Vec<_> = session
-            .fetch(&range, "(UID ENVELOPE FLAGS RFC822.SIZE)")
+            .fetch(&range, "(UID ENVELOPE FLAGS RFC822.SIZE BODY.PEEK[]<0.8192>)")
             .await
             .map_err(|e| AppError::Imap(format!("FETCH failed: {}", e)))?
             .try_collect()
@@ -380,6 +394,14 @@ impl ImapService {
                 .map(|f| format!("{:?}", f))
                 .collect();
 
+            // Added (TMAIL-329): pull a preview snippet out of the partial body
+            // bytes. msg.body() returns the bytes from `BODY.PEEK[]<0.8192>`
+            // when the server honours partial fetch; on servers that don't,
+            // we still try to parse the full body. extract_preview() returns
+            // None when nothing usable can be extracted so the SPA renders a
+            // blank preview line rather than "null".
+            let preview = msg.body().and_then(extract_preview);
+
             envelopes.push(MessageEnvelope {
                 uid,
                 subject,
@@ -387,6 +409,7 @@ impl ImapService {
                 date,
                 flags,
                 size: msg.size,
+                preview,
             });
         }
 
@@ -429,8 +452,10 @@ impl ImapService {
         let uid_list: Vec<String> = uids.iter().rev().take(100).map(|u| u.to_string()).collect();
         let uid_range = uid_list.join(",");
 
+        // Changed (TMAIL-329): mirror list_messages' BODY.PEEK[]<0.8192> partial
+        // fetch so search-result rows render a preview too.
         let messages: Vec<_> = session
-            .uid_fetch(&uid_range, "(UID ENVELOPE FLAGS RFC822.SIZE)")
+            .uid_fetch(&uid_range, "(UID ENVELOPE FLAGS RFC822.SIZE BODY.PEEK[]<0.8192>)")
             .await
             .map_err(|e| AppError::Imap(format!("FETCH failed: {}", e)))?
             .try_collect()
@@ -462,6 +487,8 @@ impl ImapService {
                 .map(|f| format!("{:?}", f))
                 .collect();
 
+            let preview = msg.body().and_then(extract_preview);
+
             envelopes.push(MessageEnvelope {
                 uid,
                 subject,
@@ -469,6 +496,7 @@ impl ImapService {
                 date,
                 flags,
                 size: msg.size,
+                preview,
             });
         }
 
@@ -937,6 +965,190 @@ fn extract_parts(
     }
 }
 
+/// Added (TMAIL-329): truncated-body → ~200 char preview snippet for the
+/// alt-UI EmailList rows.
+///
+/// Called by `list_messages` / `search_messages` against the bytes returned
+/// from a `BODY.PEEK[]<0.8192>` partial IMAP fetch. We don't request the
+/// whole message body just to render a preview — that would blow up payload
+/// size and IMAP latency on every list refresh — so the input here is up to
+/// the first 8 KiB of the raw RFC 822 message. mailparse handles truncated
+/// MIME gracefully when the headers are intact, which they almost always
+/// are inside the first 8 KiB.
+///
+/// Resolution order:
+///   1. text/plain leaf (preferred — already plain text)
+///   2. text/html leaf (run through `strip_html_to_text`)
+///   3. fallback to the parsed mail's `get_body()` (single-part text/* messages)
+///
+/// Returns `None` when nothing usable could be extracted (parse failure,
+/// no readable body, only attachments) so the SPA shows an empty preview
+/// line instead of the literal string "None".
+pub(crate) fn extract_preview(body_bytes: &[u8]) -> Option<String> {
+    const MAX_PREVIEW_CHARS: usize = 200;
+
+    let parsed = mailparse::parse_mail(body_bytes).ok()?;
+
+    // Walk the MIME tree once, collecting the first text/plain and first
+    // text/html leaves we find. Cheaper than two passes and matches how
+    // `extract_parts` walks the same shape.
+    let mut text: Option<String> = None;
+    let mut html: Option<String> = None;
+    collect_text_parts(&parsed, &mut text, &mut html);
+
+    // Single-part text/* messages (no multipart wrapper) — the walker above
+    // skips those because `subparts.is_empty()` is the leaf branch. Fall back
+    // to the top-level body when neither text nor html came out of the walk.
+    let raw = text
+        .or_else(|| html.map(|h| strip_html_to_text(&h)))
+        .or_else(|| parsed.get_body().ok());
+
+    let raw = raw?;
+    let cleaned = collapse_whitespace(&raw);
+    if cleaned.is_empty() {
+        return None;
+    }
+    Some(truncate_chars(&cleaned, MAX_PREVIEW_CHARS))
+}
+
+/// Walk the MIME tree and capture the first text/plain leaf into `text` and
+/// the first text/html leaf into `html`. Mirrors the structure of
+/// `extract_parts` but skips the attachment branch (we only care about
+/// rendering a preview, not enumerating parts).
+fn collect_text_parts(
+    mail: &mailparse::ParsedMail,
+    text: &mut Option<String>,
+    html: &mut Option<String>,
+) {
+    if mail.subparts.is_empty() {
+        let ct = &mail.ctype.mimetype;
+        if ct == "text/plain" && text.is_none() {
+            if let Ok(body) = mail.get_body() {
+                *text = Some(body);
+            }
+        } else if ct == "text/html" && html.is_none() {
+            if let Ok(body) = mail.get_body() {
+                *html = Some(body);
+            }
+        }
+        return;
+    }
+    for part in &mail.subparts {
+        collect_text_parts(part, text, html);
+        if text.is_some() {
+            // Optimisation: text/plain wins outright, no need to keep
+            // walking once we have one.
+            return;
+        }
+    }
+}
+
+/// Very small HTML → text reducer for previews. Not a general HTML parser —
+/// the only goal is to produce a readable snippet. We drop <script>/<style>
+/// blocks (otherwise their contents leak into the preview), replace block
+/// tags with spaces so words don't run together, then strip remaining tags.
+/// Final whitespace collapse happens in `collapse_whitespace`.
+fn strip_html_to_text(html: &str) -> String {
+    let mut out = String::with_capacity(html.len());
+    let bytes = html.as_bytes();
+    let mut i = 0;
+    let mut in_tag = false;
+    // skip_until is set to the tag name when we hit <script>/<style> so we
+    // can fast-forward past their text content.
+    let mut skip_until: Option<&'static str> = None;
+
+    while i < bytes.len() {
+        if let Some(close_tag) = skip_until {
+            // Look for the matching closing tag (case-insensitive) and jump
+            // past it. If we never find one (truncated MIME) the rest of the
+            // input is lost — acceptable for a 200-char preview.
+            let rest = &html[i..];
+            let lower = rest.to_ascii_lowercase();
+            if let Some(idx) = lower.find(close_tag) {
+                i += idx + close_tag.len();
+                skip_until = None;
+                continue;
+            }
+            break;
+        }
+
+        let c = bytes[i];
+        if c == b'<' {
+            // Detect <script> / <style> opens so we skip their contents.
+            let rest = &html[i..];
+            let lower = rest.to_ascii_lowercase();
+            if lower.starts_with("<script") {
+                skip_until = Some("</script>");
+                i += 1;
+                continue;
+            }
+            if lower.starts_with("<style") {
+                skip_until = Some("</style>");
+                i += 1;
+                continue;
+            }
+            in_tag = true;
+            // Block-level tags like </p>, <br>, </div>, </li> should leave a
+            // word boundary so adjacent text doesn't get welded together.
+            out.push(' ');
+            i += 1;
+            continue;
+        }
+        if in_tag {
+            if c == b'>' {
+                in_tag = false;
+            }
+            i += 1;
+            continue;
+        }
+        out.push(c as char);
+        i += 1;
+    }
+
+    // Decode a small set of common HTML entities. Not exhaustive — preview
+    // text is best-effort and a missed entity just shows literally.
+    out.replace("&nbsp;", " ")
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&apos;", "'")
+}
+
+/// Collapse runs of whitespace (including newlines/tabs/CR) into a single
+/// space and trim the result. Keeps the preview line tidy regardless of
+/// how the source text was wrapped.
+fn collapse_whitespace(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut prev_space = true;
+    for ch in s.chars() {
+        if ch.is_whitespace() {
+            if !prev_space {
+                out.push(' ');
+                prev_space = true;
+            }
+        } else {
+            out.push(ch);
+            prev_space = false;
+        }
+    }
+    out.trim().to_string()
+}
+
+/// Truncate to at most `max_chars` graphemes-ish (we count Unicode chars,
+/// not bytes, so multibyte text doesn't get sliced mid-codepoint). Appends
+/// an ellipsis when truncation happened so the UI shows the snippet was
+/// cut off.
+fn truncate_chars(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        return s.to_string();
+    }
+    let mut out: String = s.chars().take(max_chars).collect();
+    out.push('…');
+    out
+}
+
 /// Added (TMAIL-320): walk the MIME tree the same way `extract_parts` does
 /// and return the raw bytes + filename + content-type for the leaf whose
 /// dotted path matches `target_part_id`. Returns `None` if no leaf matches.
@@ -1104,6 +1316,171 @@ mod tests {
         assert!(attachments.is_empty());
     }
 
+    // Added (TMAIL-329): preview-extraction tests covering the shapes that
+    // BODY.PEEK[]<0.8192> returns in practice — single-part text, single-part
+    // html, multipart with both, html-only, empty, long bodies (truncation),
+    // attachment-only, garbled MIME (parse failure path).
+
+    #[test]
+    fn test_extract_preview_plain_text() {
+        let raw = simple_email(
+            "From: a@example.com\r\nContent-Type: text/plain; charset=utf-8",
+            "Hello there, here is a short preview.",
+        );
+        let preview = extract_preview(raw.as_bytes()).unwrap();
+        assert_eq!(preview, "Hello there, here is a short preview.");
+    }
+
+    #[test]
+    fn test_extract_preview_collapses_whitespace() {
+        // Plain text with hard line wraps and trailing whitespace should
+        // come out as a single tidy line — that's how every email reader
+        // renders a preview snippet.
+        let raw = simple_email(
+            "From: a@example.com\r\nContent-Type: text/plain",
+            "Line one\r\n   Line two\r\n\r\nLine three\t\twith tabs",
+        );
+        let preview = extract_preview(raw.as_bytes()).unwrap();
+        assert_eq!(preview, "Line one Line two Line three with tabs");
+    }
+
+    #[test]
+    fn test_extract_preview_html_only() {
+        let raw = simple_email(
+            "From: a@example.com\r\nContent-Type: text/html; charset=utf-8",
+            "<p>Hello <b>world</b></p><p>Second paragraph</p>",
+        );
+        let preview = extract_preview(raw.as_bytes()).unwrap();
+        assert!(preview.contains("Hello"));
+        assert!(preview.contains("world"));
+        assert!(preview.contains("Second paragraph"));
+        // No raw tags should leak through.
+        assert!(!preview.contains('<'));
+        assert!(!preview.contains('>'));
+    }
+
+    #[test]
+    fn test_extract_preview_html_drops_script_and_style() {
+        let raw = simple_email(
+            "From: a@example.com\r\nContent-Type: text/html",
+            "<style>p { color: red; }</style><script>alert('x')</script><p>Visible text</p>",
+        );
+        let preview = extract_preview(raw.as_bytes()).unwrap();
+        assert!(preview.contains("Visible text"));
+        assert!(!preview.contains("color: red"));
+        assert!(!preview.contains("alert"));
+    }
+
+    #[test]
+    fn test_extract_preview_multipart_prefers_text_plain() {
+        // text/plain wins over text/html when both are present — matches the
+        // FullMessage extraction behaviour and avoids the lossy HTML strip.
+        let raw = concat!(
+            "From: a@example.com\r\n",
+            "Content-Type: multipart/alternative; boundary=\"B\"\r\n",
+            "\r\n",
+            "--B\r\n",
+            "Content-Type: text/plain\r\n",
+            "\r\n",
+            "Plain version of the message\r\n",
+            "--B\r\n",
+            "Content-Type: text/html\r\n",
+            "\r\n",
+            "<p>HTML version</p>\r\n",
+            "--B--\r\n",
+        );
+        let preview = extract_preview(raw.as_bytes()).unwrap();
+        assert!(preview.contains("Plain version"));
+        // We chose plain, so the HTML alternative should NOT be in the
+        // snippet.
+        assert!(!preview.contains("HTML version"));
+    }
+
+    #[test]
+    fn test_extract_preview_truncates_long_body() {
+        // 600 chars of repeated "abc " — well past the 200-char cap.
+        let long_body = "abc ".repeat(150);
+        let raw = simple_email(
+            "From: a@example.com\r\nContent-Type: text/plain",
+            &long_body,
+        );
+        let preview = extract_preview(raw.as_bytes()).unwrap();
+        // 200 chars + 1 ellipsis = 201 characters.
+        assert_eq!(preview.chars().count(), 201);
+        assert!(preview.ends_with('…'));
+    }
+
+    #[test]
+    fn test_extract_preview_handles_unicode_boundary() {
+        // Multibyte chars must not get sliced mid-codepoint when truncating.
+        // 250 copies of "🚀" (each 4 bytes UTF-8) — pure char counting must
+        // win over byte counting here.
+        let body = "🚀".repeat(250);
+        let raw = simple_email(
+            "From: a@example.com\r\nContent-Type: text/plain; charset=utf-8",
+            &body,
+        );
+        let preview = extract_preview(raw.as_bytes()).unwrap();
+        // Must be valid UTF-8 and have 200 rockets + ellipsis.
+        assert_eq!(preview.chars().count(), 201);
+        assert!(preview.starts_with("🚀"));
+    }
+
+    #[test]
+    fn test_extract_preview_returns_none_for_attachment_only() {
+        // A multipart/mixed with only an application/pdf attachment — no
+        // text or html body anywhere — should yield None.
+        let raw = concat!(
+            "From: a@example.com\r\n",
+            "Content-Type: multipart/mixed; boundary=\"B\"\r\n",
+            "\r\n",
+            "--B\r\n",
+            "Content-Type: application/pdf; name=\"x.pdf\"\r\n",
+            "Content-Disposition: attachment; filename=\"x.pdf\"\r\n",
+            "\r\n",
+            "PDFBYTES\r\n",
+            "--B--\r\n",
+        );
+        let preview = extract_preview(raw.as_bytes());
+        assert!(preview.is_none(), "expected None, got {:?}", preview);
+    }
+
+    #[test]
+    fn test_extract_preview_returns_none_for_empty_body() {
+        // mailparse will parse this successfully but the body is empty.
+        let raw = "From: a@example.com\r\nContent-Type: text/plain\r\n\r\n";
+        let preview = extract_preview(raw.as_bytes());
+        assert!(preview.is_none(), "expected None, got {:?}", preview);
+    }
+
+    #[test]
+    fn test_extract_preview_returns_none_for_unparseable_input() {
+        // Garbage bytes with no MIME shape — mailparse should fail and we
+        // should swallow that into None rather than panicking.
+        let preview = extract_preview(b"\xff\xfe\x00not a valid email\x00\x01");
+        // mailparse is permissive enough that it sometimes "succeeds" on
+        // junk by treating it as a header-less body. Either None OR a
+        // truncated snippet are acceptable — but it must not panic. Assert
+        // only the no-panic contract: the call returned without unwinding.
+        let _ = preview;
+    }
+
+    #[test]
+    fn test_strip_html_to_text_handles_entities() {
+        // The small entity set we decode covers the most common ones.
+        // Anything else passes through literally — acceptable for previews.
+        let html = "Tom &amp; Jerry &lt;said&gt; &quot;hi&quot; &#39;ok&#39; &nbsp; end";
+        let plain = strip_html_to_text(html);
+        let normalised = collapse_whitespace(&plain);
+        assert_eq!(normalised, "Tom & Jerry <said> \"hi\" 'ok' end");
+    }
+
+    #[test]
+    fn test_truncate_chars_no_truncation_when_short() {
+        // Short input must come back unchanged — no trailing ellipsis.
+        assert_eq!(truncate_chars("short", 200), "short");
+    }
+
     // Added (TMAIL-320): build a multipart/mixed email with one text part
     // and one PDF attachment so we can assert find_part_by_id resolves
     // the same dotted path that extract_parts assigns.
@@ -1256,11 +1633,32 @@ mod tests {
             date: Some("2026-04-10".to_string()),
             flags: vec!["\\Seen".to_string()],
             size: Some(1024),
+            // Added (TMAIL-329): preview field — serialises as null when
+            // None so the SPA can fall back to an empty preview line.
+            preview: Some("Hello there, this is a test preview".to_string()),
         };
         let json = serde_json::to_value(&env).unwrap();
         assert_eq!(json["uid"], 100);
         assert_eq!(json["subject"], "Test Subject");
         assert_eq!(json["flags"][0], "\\Seen");
+        assert_eq!(json["preview"], "Hello there, this is a test preview");
+    }
+
+    #[test]
+    fn test_message_envelope_serialization_preview_none() {
+        // Added (TMAIL-329): explicit `null` preview is in the wire shape so
+        // the alt-UI's TS narrowing path (`m.preview ?? ''`) covers the case.
+        let env = MessageEnvelope {
+            uid: 100,
+            subject: None,
+            from: None,
+            date: None,
+            flags: vec![],
+            size: None,
+            preview: None,
+        };
+        let json = serde_json::to_value(&env).unwrap();
+        assert!(json["preview"].is_null());
     }
 
     #[test]

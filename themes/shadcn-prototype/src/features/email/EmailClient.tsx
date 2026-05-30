@@ -597,9 +597,14 @@ export function EmailClient() {
   }, [foldersQuery.data]);
 
   // Adapt /api/folders/{folder}/messages → EmailList's Email shape.
-  // The shadcn EmailList renders preview/body/attachments — we don't have
-  // those in the envelope list, so leave placeholders; the reader (TMAIL-218)
-  // hydrates the full body on click.
+  //
+  // Changed (TMAIL-329): wire `m.preview` through to the rendered EmailList
+  // row. Backend extracts up to ~200 chars from the message body server-side
+  // via BODY.PEEK[]<0.8192> + extract_preview() (handlers/messages.rs →
+  // imap_service.rs::list_messages) so the SPA gets a ready-to-render
+  // snippet on every envelope. `?? ''` covers the null case (attachment-only
+  // messages, parse failures) so the row falls back to a blank preview line
+  // rather than rendering the literal string "null".
   //
   // Changed (TMAIL-325): with useInfiniteQuery the envelope set now lives at
   // `data.pages[].messages` rather than `data.messages`. Flatten across loaded
@@ -614,7 +619,7 @@ export function EmailClient() {
       fromEmail: m.from || '',
       to: '',
       subject: m.subject || '(no subject)',
-      preview: '',
+      preview: m.preview ?? '',
       body: '',
       timestamp: m.date ? new Date(m.date) : new Date(),
       read: m.flags?.some((f: string) => f.includes('Seen')) ?? true,

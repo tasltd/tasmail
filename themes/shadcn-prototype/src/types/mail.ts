@@ -12,6 +12,11 @@ export interface MessageEnvelope {
   date: string | null;
   flags: string[];
   size: number | null;
+  // Added (TMAIL-329): ~200 char plaintext snippet of the message body so
+  // EmailList rows render a preview line under the subject. Backend emits
+  // null when nothing could be extracted (truncated MIME, attachment-only
+  // messages, unparseable bodies); callers must `?? ''` defensively.
+  preview: string | null;
 }
 
 export interface FullMessage {
