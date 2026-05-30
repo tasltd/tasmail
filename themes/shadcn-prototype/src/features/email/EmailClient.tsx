@@ -6,7 +6,13 @@
 // own data fetches.
 import { useEffect, useState, useMemo } from 'react';
 import { Link, useSearchParams } from 'react-router';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type InfiniteData,
+} from '@tanstack/react-query';
 import { Settings, Menu, ArrowLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Sidebar } from '@/components/layout/Sidebar';
@@ -16,6 +22,11 @@ import { ComposeModal } from '@/features/email/ComposeModal';
 import { buildReplyContext, type ReplyContext, type ReplyKind } from '@/features/email/replyContext';
 import { fetchFolders, createFolder, deleteFolder } from '@/api/folders';
 import { deleteMessage, fetchMessages, flagMessage, moveMessage } from '@/api/messages';
+import {
+  MESSAGES_PAGE_SIZE,
+  nextMessagesPageParam,
+  updateInfiniteMessages,
+} from '@/features/email/messagesCache';
 import type {
   Folder as ServerFolder,
   FullMessage,
@@ -188,9 +199,18 @@ export function EmailClient() {
     },
   });
 
-  const messagesQuery = useQuery({
+  // Changed (TMAIL-325): switched from a fixed-50 useQuery to useInfiniteQuery
+  // so the EmailList can grow as the user scrolls. Each page request goes to
+  // `/api/folders/{folder}/messages?page=N&page_size=50` (backend already
+  // paginated — handlers/messages.rs::list_messages). `getNextPageParam`
+  // returns undefined once we've consumed all `total` envelopes so the
+  // intersection-observer sentinel stops trying to fetch.
+  const messagesQuery = useInfiniteQuery({
     queryKey: ['messages', activeFolder],
-    queryFn: () => fetchMessages(activeFolder, 0, 50),
+    queryFn: ({ pageParam }) =>
+      fetchMessages(activeFolder, pageParam as number, MESSAGES_PAGE_SIZE),
+    initialPageParam: 0,
+    getNextPageParam: nextMessagesPageParam,
     enabled: !!activeFolder,
   });
 
@@ -209,21 +229,27 @@ export function EmailClient() {
       await queryClient.cancelQueries({ queryKey: listKey });
       await queryClient.cancelQueries({ queryKey: detailKey });
 
-      const previousList = queryClient.getQueryData<MessageListResponse>(listKey);
+      // Changed (TMAIL-325): cache shape is now InfiniteData<MessageListResponse>
+      // so the optimistic flag flip must walk every loaded page rather than the
+      // single old payload. updateInfiniteMessages is exported above so the
+      // unit tests can exercise the paginated walk without standing up React.
+      const previousList = queryClient.getQueryData<InfiniteData<MessageListResponse>>(listKey);
       const previousDetail = queryClient.getQueryData<FullMessage>(detailKey);
 
-      if (previousList?.messages) {
-        queryClient.setQueryData<MessageListResponse>(listKey, {
-          ...previousList,
-          messages: previousList.messages.map((m) => {
-            if (m.uid !== uid) return m;
-            const without = (m.flags ?? []).filter((f) => !f.includes('Flagged'));
-            return {
-              ...m,
-              flags: currentlyStarred ? without : [...without, FLAG_STARRED],
-            };
-          }),
-        });
+      if (previousList) {
+        queryClient.setQueryData<InfiniteData<MessageListResponse>>(
+          listKey,
+          updateInfiniteMessages(previousList, (msgs) =>
+            msgs.map((m) => {
+              if (m.uid !== uid) return m;
+              const without = (m.flags ?? []).filter((f) => !f.includes('Flagged'));
+              return {
+                ...m,
+                flags: currentlyStarred ? without : [...without, FLAG_STARRED],
+              };
+            }),
+          ),
+        );
       }
       if (previousDetail) {
         const without = (previousDetail.flags ?? []).filter((f) => !f.includes('Flagged'));
@@ -266,12 +292,18 @@ export function EmailClient() {
       const listKey = ['messages', activeFolder];
       await queryClient.cancelQueries({ queryKey: listKey });
 
-      const previousList = queryClient.getQueryData<MessageListResponse>(listKey);
-      if (previousList?.messages) {
-        queryClient.setQueryData<MessageListResponse>(listKey, {
-          ...previousList,
-          messages: previousList.messages.filter((m) => m.uid !== uid),
-        });
+      // Changed (TMAIL-325): cache shape is now InfiniteData<MessageListResponse>
+      // — drop the archived row from every loaded page so the reader pane's
+      // optimistic update behaves the same whether the row was on page 0 or
+      // page 5 of an infinite-scrolled inbox.
+      const previousList = queryClient.getQueryData<InfiniteData<MessageListResponse>>(listKey);
+      if (previousList) {
+        queryClient.setQueryData<InfiniteData<MessageListResponse>>(
+          listKey,
+          updateInfiniteMessages(previousList, (msgs) =>
+            msgs.filter((m) => m.uid !== uid),
+          ),
+        );
       }
       // Clear reader selection immediately — the archived UID is no longer
       // valid in the active folder. Done in onMutate (not onSuccess) so the
@@ -313,12 +345,17 @@ export function EmailClient() {
       const listKey = ['messages', activeFolder];
       await queryClient.cancelQueries({ queryKey: listKey });
 
-      const previousList = queryClient.getQueryData<MessageListResponse>(listKey);
-      if (previousList?.messages) {
-        queryClient.setQueryData<MessageListResponse>(listKey, {
-          ...previousList,
-          messages: previousList.messages.filter((m) => m.uid !== uid),
-        });
+      // Changed (TMAIL-325): same paginated-cache traversal as archiveMutation
+      // above — the user may be deleting a row that lives on a later page than
+      // the initial 50 envelopes.
+      const previousList = queryClient.getQueryData<InfiniteData<MessageListResponse>>(listKey);
+      if (previousList) {
+        queryClient.setQueryData<InfiniteData<MessageListResponse>>(
+          listKey,
+          updateInfiniteMessages(previousList, (msgs) =>
+            msgs.filter((m) => m.uid !== uid),
+          ),
+        );
       }
       setSelectedUid(null);
       return { previousList, listKey };
@@ -361,8 +398,14 @@ export function EmailClient() {
   // The shadcn EmailList renders preview/body/attachments — we don't have
   // those in the envelope list, so leave placeholders; the reader (TMAIL-218)
   // hydrates the full body on click.
+  //
+  // Changed (TMAIL-325): with useInfiniteQuery the envelope set now lives at
+  // `data.pages[].messages` rather than `data.messages`. Flatten across loaded
+  // pages so the EmailList keeps rendering one continuous scroll while new
+  // pages are appended by the intersection-observer sentinel below.
   const emailListItems: Email[] = useMemo(() => {
-    const envelopes: MessageEnvelope[] = messagesQuery.data?.messages ?? [];
+    const envelopes: MessageEnvelope[] =
+      messagesQuery.data?.pages.flatMap((p) => p.messages) ?? [];
     return envelopes.map((m) => ({
       id: String(m.uid),
       from: m.from || '(unknown sender)',
@@ -454,6 +497,15 @@ export function EmailClient() {
                 onToggleStar={(id, currentlyStarred) =>
                   toggleStarMutation.mutate({ uid: parseInt(id, 10), currentlyStarred })
                 }
+                // Added (TMAIL-325): infinite-scroll plumbing. EmailList owns
+                // the IntersectionObserver-driven sentinel and calls
+                // onLoadMore when it scrolls into view; hasNextPage and
+                // isFetchingNextPage come straight from the useInfiniteQuery
+                // above so the list knows when to stop fetching and when to
+                // render the "Loading more…" indicator.
+                hasNextPage={messagesQuery.hasNextPage}
+                isFetchingNextPage={messagesQuery.isFetchingNextPage}
+                onLoadMore={() => messagesQuery.fetchNextPage()}
               />
             )}
           </div>
