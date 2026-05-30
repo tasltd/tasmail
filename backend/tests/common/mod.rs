@@ -21,6 +21,10 @@ use tasmail::services::auth_service::Claims;
 use tasmail::services::cache_service::CacheService;
 // Added: TMAIL-37 — test AppState now requires EncryptionService (DB-stored secrets)
 use tasmail::services::encryption::EncryptionService;
+// Added (TMAIL-310): test AppState carries a fresh queue heartbeat. Tests
+// that need a "ticked" state can call `state.queue_heartbeat.record_tick()`
+// directly via TestApp.
+use tasmail::services::queue_heartbeat::QueueHeartbeat;
 use tasmail::state::AppState;
 
 // NOTE: JWT secret used across all integration tests — must match test_config()
@@ -30,6 +34,9 @@ pub const TEST_JWT_SECRET: &str = "integration-test-secret-key-do-not-use-in-pro
 pub struct TestApp {
     pub router: Router,
     pub config: Config,
+    // Added (TMAIL-310): exposed so health tests can simulate "queue stalled"
+    // vs "queue ticked" without spinning up the real processor.
+    pub queue_heartbeat: QueueHeartbeat,
 }
 
 impl TestApp {
@@ -53,6 +60,10 @@ impl TestApp {
         let inner_router_holder: std::sync::Arc<std::sync::OnceLock<Router>> =
             std::sync::Arc::new(std::sync::OnceLock::new());
 
+        // Added (TMAIL-310): one heartbeat shared between AppState and the
+        // TestApp handle so tests can flip "queue ticked / not ticked" at will.
+        let queue_heartbeat = QueueHeartbeat::new();
+
         let state = AppState {
             db: pool,
             config: config.clone(),
@@ -65,12 +76,14 @@ impl TestApp {
             encryption: EncryptionService::from_jwt_secret(TEST_JWT_SECRET),
             // Added (TMAIL-306): empty router holder — not exercised by these tests.
             inner_router: inner_router_holder.clone(),
+            // Added (TMAIL-310): cloned so the TestApp handle reads the same gauge.
+            queue_heartbeat: queue_heartbeat.clone(),
         };
 
         let router = create_router(state);
         // TMAIL-306: publish so any test that drives /api/mobile/batch finds a router.
         let _ = inner_router_holder.set(router.clone());
-        TestApp { router, config }
+        TestApp { router, config, queue_heartbeat }
     }
 
     /// Added: Send a request through the router and return (StatusCode, response body as Value)

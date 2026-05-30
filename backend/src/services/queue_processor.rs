@@ -23,6 +23,9 @@ use crate::models::ai_config::derive_encryption_key;
 use crate::models::email_queue::EmailQueueItem;
 use crate::models::smtp_config::SmtpConfiguration;
 use crate::services::cache_service::CacheService;
+// Added (TMAIL-310): Stamp a shared liveness gauge each cycle so the readiness
+// probe can detect a stalled queue without inspecting tokio internals.
+use crate::services::queue_heartbeat::QueueHeartbeat;
 use crate::services::smtp_service::{SendRequest, SmtpService};
 
 const METRIC_QUEUE_DEPTH: &str = "tasmail_queue_depth";
@@ -90,6 +93,10 @@ pub struct QueueProcessor {
     batch_size: i64,
     worker_concurrency: usize,
     cancel: CancellationToken,
+    // Added (TMAIL-310): Shared liveness gauge — stamped at the top of every
+    // tick so /api/health?detail=full can report whether the processor is
+    // still polling. Reader lives in `handlers::health`.
+    heartbeat: QueueHeartbeat,
 }
 
 impl QueueProcessor {
@@ -108,6 +115,10 @@ impl QueueProcessor {
             batch_size: 50,
             worker_concurrency: 4,
             cancel: CancellationToken::new(),
+            // Added (TMAIL-310): default to a fresh, never-ticked heartbeat.
+            // Callers that want to observe ticks externally must override via
+            // `with_heartbeat` BEFORE calling `start()`.
+            heartbeat: QueueHeartbeat::new(),
         }
     }
 
@@ -116,6 +127,14 @@ impl QueueProcessor {
 
     /// Builder: override worker concurrency (parallel deliveries per cycle).
     pub fn with_worker_concurrency(mut self, n: usize) -> Self { self.worker_concurrency = n; self }
+
+    /// Added (TMAIL-310): Inject the shared liveness heartbeat. `main.rs` calls
+    /// this so the same `QueueHeartbeat` clone ends up in `AppState`, letting
+    /// the readiness probe observe whether the processor is still ticking.
+    pub fn with_heartbeat(mut self, heartbeat: QueueHeartbeat) -> Self {
+        self.heartbeat = heartbeat;
+        self
+    }
 
     /// Returns a clone of the cancellation token so the caller can stop the processor.
     pub fn cancel_token(&self) -> CancellationToken { self.cancel.clone() }
@@ -155,6 +174,11 @@ impl QueueProcessor {
 
     /// Single processing cycle: refresh queue-depth gauge, claim a batch, process in parallel.
     async fn tick(&self) -> anyhow::Result<()> {
+        // Added (TMAIL-310): Stamp the liveness gauge BEFORE any work. The
+        // readiness probe treats a stale tick as "stalled", so we want the
+        // timestamp to advance even on cycles that find an empty queue.
+        self.heartbeat.record_tick();
+
         // Cheap gauge refresh — single COUNT(*) on the partial index.
         if let Ok(depth) = sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM email_queue WHERE status IN ('pending', 'failed') AND next_retry_at <= NOW()",

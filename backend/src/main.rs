@@ -88,11 +88,17 @@ async fn main() -> anyhow::Result<()> {
     // Degrades gracefully (passthrough mode) when Redis is unreachable.
     let cache = services::cache_service::CacheService::new(&config.redis).await;
 
+    // TMAIL-310: shared liveness heartbeat — one clone goes into the queue
+    // processor (writer), the other into AppState (read by /api/health). Both
+    // wrap the same underlying AtomicI64.
+    let queue_heartbeat = services::queue_heartbeat::QueueHeartbeat::new();
+
     // Changed: Queue processor is now BYOK — it loads each item's per-user SMTP config from
     // smtp_configurations and decrypts the password using the JWT-derived AES key.
     // Production-grade: FOR UPDATE SKIP LOCKED via EmailQueueItem::claim_batch lets multiple
     // worker processes run safely; Prometheus metrics are emitted on every cycle.
     // TMAIL-158: pass the shared CacheService so per-user SMTP rows are cached for 5 min.
+    // TMAIL-310: inject the heartbeat so the readiness probe can detect a stall.
     let queue_processor = services::queue_processor::QueueProcessor::new(
         std::sync::Arc::new(pool.clone()),
         config.jwt.clone(),
@@ -100,7 +106,8 @@ async fn main() -> anyhow::Result<()> {
         5,
     )
     .with_batch_size(50)
-    .with_worker_concurrency(4);
+    .with_worker_concurrency(4)
+    .with_heartbeat(queue_heartbeat.clone());
     queue_processor.start();
 
     // TMAIL-177: usage-based billing rollup. Wakes daily by default; the operator can
@@ -142,6 +149,8 @@ async fn main() -> anyhow::Result<()> {
         encryption,
         // Added (TMAIL-306): empty-on-bootstrap, populated below for batch dispatch.
         inner_router: inner_router_holder.clone(),
+        // Added (TMAIL-310): same clone the queue processor stamps each cycle.
+        queue_heartbeat,
     };
 
     let app = router::create_router(state);

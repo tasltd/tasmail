@@ -80,6 +80,31 @@ impl CacheService {
         guard.is_some()
     }
 
+    /// Added (TMAIL-310): Live PING against the Redis server.
+    ///
+    /// `is_connected()` only tells you whether the connection manager was
+    /// constructed successfully — the underlying server may have died since.
+    /// The readiness probe needs an actual round-trip to assert the cache tier
+    /// is healthy from the application's point of view.
+    ///
+    /// Returns `Ok(())` on a successful "PONG" reply, `Err(reason)` on any
+    /// transport / protocol / passthrough-mode failure. Never panics.
+    pub async fn ping(&self) -> Result<(), String> {
+        let guard = self.conn.read().await;
+        let Some(conn) = guard.as_ref() else {
+            return Err("Redis client not initialised (passthrough mode)".to_string());
+        };
+        let mut conn = conn.clone();
+
+        // The PING reply is the bulk string "PONG" on a healthy server.
+        // We treat anything else (including a transport error) as down.
+        match redis::cmd("PING").query_async::<String>(&mut conn).await {
+            Ok(reply) if reply.eq_ignore_ascii_case("PONG") => Ok(()),
+            Ok(other) => Err(format!("Unexpected PING reply: {}", other)),
+            Err(e) => Err(format!("PING failed: {}", e)),
+        }
+    }
+
     // --- Generic typed operations ---
 
     /// Added: Get a JSON-serialized value from cache

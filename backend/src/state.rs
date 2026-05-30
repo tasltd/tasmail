@@ -9,6 +9,9 @@ use crate::config::Config;
 use crate::services::cache_service::CacheService;
 // Added: AES-256-GCM encryption service used to decrypt DB-stored payment credentials.
 use crate::services::encryption::EncryptionService;
+// Added (TMAIL-310): Shared liveness gauge — stamped by the queue processor
+// each cycle and read by the /api/health readiness probe.
+use crate::services::queue_heartbeat::QueueHeartbeat;
 
 /// Shared application state accessible in all handlers
 #[derive(Clone)]
@@ -30,4 +33,8 @@ pub struct AppState {
     // startup, which only happens if the route is hit before `main.rs` finishes
     // building the router.
     pub inner_router: Arc<OnceLock<axum::Router>>,
+    // Added (TMAIL-310): Cloned from the same handle held by the QueueProcessor.
+    // Both observers (HTTP probe + processor) share the underlying AtomicI64, so
+    // tick timestamps flow through without any synchronisation cost.
+    pub queue_heartbeat: QueueHeartbeat,
 }

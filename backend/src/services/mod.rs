@@ -10,6 +10,9 @@ pub mod imap_idle_bridge;
 pub mod phishing_scanner;
 // Added: Queue processor background service for TMAIL-58
 pub mod queue_processor;
+// Added (TMAIL-310): Shared liveness heartbeat for the queue processor —
+// read by the /api/health readiness probe.
+pub mod queue_heartbeat;
 pub mod sms_service;
 pub mod smtp_service;
 pub mod totp_service;

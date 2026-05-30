@@ -84,6 +84,12 @@ pub fn create_router(state: AppState) -> Router {
     // NOTE: WebSocket route is public — auth is handled via token query param during handshake
     let public_routes = Router::new()
         .route("/api/health", get(handlers::health::health_check))
+        // Added (TMAIL-310): Liveness / readiness split. Liveness only probes
+        // the process + DB; readiness aggregates DB, Redis, queue heartbeat,
+        // and Mailbox::count_active so load balancers can drain a degraded
+        // instance even when the binary is still alive.
+        .route("/api/health/live", get(handlers::health::liveness))
+        .route("/api/health/ready", get(handlers::health::readiness))
         .route("/ws", get(handlers::websocket::ws_handler))
         // Added: Public branding endpoint — frontend needs it before login (TMAIL-111)
         .route("/api/branding", get(handlers::branding::get_branding))
