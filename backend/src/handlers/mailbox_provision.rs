@@ -1,21 +1,22 @@
-// TMAIL-167: managed-mailbox provisioning endpoint.
+// TMAIL-167 / TMAIL-305: managed-mailbox provisioning endpoint.
 //
 // When the operator has installed Postfix + Dovecot and toggled the
 // `dns_mx_onboarding_enabled` feature flag on, signed-up users can call this
 // endpoint to provision a real mailbox on the managed mail server. The wizard's
 // "Get a new mailbox on this server" tile drives this flow.
 //
-// PRODUCTION-GRADE GATING:
-//   1. Feature flag must be enabled (services::feature_flags::is_enabled).
+// PRODUCTION-GRADE GATING (fail-closed at every step):
+//   1. Feature flag `dns_mx_onboarding_enabled` must be enabled.
 //   2. The TASMAIL_MANAGED_DOMAIN env var must be set (defines the domain we provision into).
 //   3. The TASMAIL_MANAGED_DOVECOT_HOST env var must point at the Dovecot server.
+//   4. The SSH bridge to run `doveadm user add` / `doveadm pw` must be configured AND implemented.
+//      Until both are true, the endpoint returns 503 — it MUST NOT write an
+//      imap_configurations row with a placeholder password (TMAIL-305 regression: the
+//      previous stub wrote literally "REPLACE_ME_WITH_DOVEADM_GENERATED_PASSWORD" and
+//      told the user their mailbox was ready, but login was impossible).
 //
 // If any of those is missing the endpoint returns 503 with a descriptive message
 // — same pattern as the BYOK code paths use when the user hasn't completed onboarding.
-//
-// The actual `doveadm user add` SSH call lives in a follow-up commit; this skeleton
-// ensures the API contract is wired so the frontend can integrate today and the
-// only remaining piece is the side-effect.
 
 use axum::{
     extract::State,
@@ -26,7 +27,6 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::error::AppError;
-use crate::models::imap_config::{CreateImapConfigRequest, ImapConfiguration, ImapEncryption};
 use crate::services::auth_service::Claims;
 use crate::services::feature_flags;
 use crate::state::AppState;
@@ -50,7 +50,7 @@ const LOCAL_PART_RE: &str = r"^[a-z0-9._-]{1,64}$";
 /// POST /api/mailbox/provision
 pub async fn provision_managed_mailbox(
     State(state): State<AppState>,
-    axum::Extension(claims): axum::Extension<Claims>,
+    axum::Extension(_claims): axum::Extension<Claims>,
     Json(body): Json<ProvisionRequest>,
 ) -> Result<(StatusCode, Json<ProvisionResponse>), AppError> {
     // -------- gate 1: feature flag --------
@@ -81,50 +81,27 @@ pub async fn provision_managed_mailbox(
     }
     let new_email = format!("{}@{}", local, managed_domain);
 
-    // -------- gate 3: doveadm side effect (skeleton) --------
-    // Production: ssh user@mail-vps doveadm user add <new_email>; ssh user@mail-vps doveadm pw -p <random>; etc.
-    // For now we acknowledge the request and write the imap_configurations row so the rest of TASMail
-    // can route the user to their (yet-to-exist) mailbox. Operators must finish setting up doveadm
-    // integration before exposing this in production — gate that on a separate flag if you need to.
+    // -------- gate 4: doveadm SSH bridge (NOT YET IMPLEMENTED — fail-closed) --------
+    // Fix (TMAIL-305): the previous build wrote an imap_configurations row whose
+    // encrypted password was literally "REPLACE_ME_WITH_DOVEADM_GENERATED_PASSWORD",
+    // then returned 201 — which told the user their mailbox was provisioned but
+    // guaranteed they could not log in. Return 503 until the bridge is wired.
+    //
+    // When implementing the bridge, do all of the following BEFORE writing the
+    // imap_configurations row:
+    //   * ssh <managed_user>@<managed_dovecot> doveadm user add <new_email>
+    //   * ssh <managed_user>@<managed_dovecot> doveadm pw -p <random 32-char password>
+    //   * persist the freshly generated password (encrypted) on the imap_configurations row
+    //   * verify the new user via `doveadm auth test`
+    // Only after every step succeeds should the row be inserted with the real
+    // generated password and the endpoint return 201.
     tracing::warn!(
-        "TMAIL-167 stub: would `doveadm user add {}` on {} but the SSH integration is not wired yet",
+        "TMAIL-305: refusing to provision {} on {} — doveadm SSH bridge is not implemented; returning 503 instead of writing a placeholder credential",
         new_email, managed_dovecot
     );
-
-    // Write an imap_configurations row pointing at the managed Dovecot. The user's TASMail
-    // account password is reused as the mailbox password (operator-managed) — which means
-    // the doveadm provisioning step MUST set the same password. Until then, the wizard
-    // should warn the user that login won't actually work.
-    let user_id = Uuid::parse_str(&claims.sub)
-        .map_err(|_| AppError::Internal(anyhow::anyhow!("Invalid user id in claims")))?;
-
-    let key = crate::models::ai_config::derive_encryption_key(&state.config.jwt.secret);
-    let cfg_req = CreateImapConfigRequest {
-        name: "Managed mailbox".into(),
-        host: managed_dovecot.clone(),
-        port: 993,
-        username: new_email.clone(),
-        // PLACEHOLDER: in production this should be a freshly generated random password
-        // that we ALSO push to doveadm. For the skeleton we write a marker so tests can
-        // assert the row was created without leaking a real credential.
-        password: "REPLACE_ME_WITH_DOVEADM_GENERATED_PASSWORD".to_string(),
-        encryption: ImapEncryption::Ssl,
-        sent_folder: Some("Sent".into()),
-        drafts_folder: Some("Drafts".into()),
-        trash_folder: Some("Trash".into()),
-        spam_folder: Some("Junk".into()),
-        archive_folder: Some("Archive".into()),
-        is_default: true,
-    };
-
-    let cfg = ImapConfiguration::create(&state.db, user_id, &cfg_req, &key).await?;
-    // Bust the per-user cache so the new default takes effect immediately.
-    let _ = state.cache.invalidate_user_imap_config(&user_id.to_string()).await;
-
-    Ok((StatusCode::CREATED, Json(ProvisionResponse {
-        email: new_email,
-        imap_host: managed_dovecot,
-        imap_port: 993,
-        imap_config_id: cfg.id,
-    })))
+    Err(AppError::ServiceUnavailable(
+        "Managed-mailbox provisioning is not wired yet — the doveadm SSH bridge is not implemented. \
+         Use the BYOK path (attach your own IMAP/SMTP server) for now. Track TMAIL-305 for status."
+            .into(),
+    ))
 }
