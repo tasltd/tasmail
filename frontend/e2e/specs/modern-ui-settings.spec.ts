@@ -146,10 +146,20 @@ test.describe('TMAIL-323 alt-UI Settings shell — Navbar button + side-tab navi
         page.getByTestId(`${t.testId}-pane`),
         `${t.label} pane must render after clicking its tab`,
       ).toBeVisible({ timeout: 10_000 });
-      await expect(
-        page.getByTestId(`${t.testId}-coming-soon`),
-        `${t.label} pane must render its "Coming soon" placeholder`,
-      ).toBeVisible();
+      // TMAIL-331: Signatures now ships a real pane (SignaturesPanel) so it
+      // no longer renders the "Coming soon" placeholder. Every other tab is
+      // still placeholder-backed for now.
+      if (t.slug !== 'signatures') {
+        await expect(
+          page.getByTestId(`${t.testId}-coming-soon`),
+          `${t.label} pane must render its "Coming soon" placeholder`,
+        ).toBeVisible();
+      } else {
+        await expect(
+          page.getByTestId('signatures-new-button'),
+          'Signatures pane renders its New signature CTA',
+        ).toBeVisible();
+      }
 
       await takeScreenshot(page, `${SCREENSHOT_DIR}/03-tab-${t.slug}`);
     }

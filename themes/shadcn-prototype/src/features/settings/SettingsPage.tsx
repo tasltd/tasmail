@@ -63,10 +63,16 @@ export function SettingsPage() {
         </nav>
       </aside>
 
-      {/* Active pane. Until P1 implementations exist, every slug renders the
-          same placeholder pulled from the registry. */}
+      {/* Active pane. TMAIL-331: registry-driven — if the tab defines a
+          concrete `component`, render that; otherwise fall back to the
+          placeholder. This lets P1 panes ship one at a time without
+          touching this file or the route table. */}
       <main className="flex-1 min-w-0 overflow-y-auto">
-        <SettingsTabPlaceholder tab={activeTab} />
+        {activeTab.component ? (
+          <activeTab.component />
+        ) : (
+          <SettingsTabPlaceholder tab={activeTab} />
+        )}
       </main>
     </div>
   );

@@ -6,6 +6,13 @@
 // renders the same placeholder component (`SettingsTabPlaceholder`) which
 // reads its copy from this registry. Adding a future P1 sub-pane is a
 // one-line edit to this file plus a route entry.
+//
+// TMAIL-331: tabs can now point at a concrete component via the optional
+// `component` field. SettingsPage prefers `component` over the default
+// placeholder so swapping a P1 pane in is a one-line registry change — no
+// SettingsPage edit, no route edit. The Signatures tab is the first user
+// of this hook.
+import type { ComponentType } from 'react';
 import {
   User,
   AtSign,
@@ -17,6 +24,7 @@ import {
   Server,
   type LucideIcon,
 } from 'lucide-react';
+import { SignaturesPanel } from '@/features/settings/SignaturesPanel';
 
 export interface SettingsTab {
   /** URL slug under /settings (e.g. "profile" → /settings/profile) */
@@ -29,6 +37,12 @@ export interface SettingsTab {
   description: string;
   /** data-testid suffix — used by Playwright + future component tests */
   testId: string;
+  /**
+   * Optional concrete pane component. When set, SettingsPage renders this
+   * instead of the "Coming soon" placeholder. Lets us ship real panes one at
+   * a time without touching SettingsPage or the route table.
+   */
+  component?: ComponentType;
 }
 
 export const SETTINGS_TABS: SettingsTab[] = [
@@ -55,6 +69,8 @@ export const SETTINGS_TABS: SettingsTab[] = [
     description:
       'HTML and plain-text signatures attached to new mail and replies.',
     testId: 'settings-tab-signatures',
+    // TMAIL-331: real CRUD pane (list/create/edit/delete/set-default).
+    component: SignaturesPanel,
   },
   {
     slug: 'vacation',

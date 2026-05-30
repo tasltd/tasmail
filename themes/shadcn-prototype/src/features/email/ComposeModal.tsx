@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { X, Minimize2, Maximize2, Paperclip, Send, Save, Bold, Italic, Link as LinkIcon, List } from 'lucide-react';
 // TMAIL-330: TipTap powers the rich-text body. StarterKit covers paragraphs,
 // bold, italic, lists and headings; Link is opt-in (we want the toolbar to
@@ -14,6 +14,16 @@ import { Input } from '@/components/ui/input';
 import { scheduledApi } from '@/api/scheduled';
 import { attachmentsApi, type Attachment } from '@/api/attachments';
 import { saveDraft } from '@/api/messages';
+// TMAIL-331: pull the user's signatures so we can prepend the default one
+// onto fresh-compose bodies. Replies/forwards keep the user's signature out
+// of the way of the quoted block — that matches Gmail/Outlook UX. The
+// signatures query is shared with SignaturesPanel via SIGNATURES_QUERY_KEY
+// so a save/delete in settings invalidates this query too.
+import {
+  fetchSignatures,
+  pickDefaultSignature,
+} from '@/api/signatures';
+import { SIGNATURES_QUERY_KEY } from '@/features/settings/SignaturesPanel';
 import type { ReplyContext } from './replyContext';
 
 // TMAIL-321: 25 MB total compose limit, matching the backend's
@@ -87,6 +97,18 @@ export function ComposeModal({ isOpen, onClose, replyContext = null }: ComposeMo
   const [cc, setCc] = useState('');
   const [bcc, setBcc] = useState('');
   const [subject, setSubject] = useState('');
+  // TMAIL-331: fetch the user's signatures so we can seed the editor with the
+  // default one. `enabled: isOpen` means we don't ping /api/signatures until
+  // the user actually opens the composer, and shared cache with the settings
+  // pane means a save there is reflected immediately the next time the modal
+  // opens.
+  const { data: signatures } = useQuery({
+    queryKey: SIGNATURES_QUERY_KEY,
+    queryFn: fetchSignatures,
+    enabled: isOpen,
+    staleTime: 60_000,
+  });
+  const defaultSignature = pickDefaultSignature(signatures);
   // TMAIL-330: `body` no longer lives in React state — the TipTap editor owns
   // the document. We keep a render-tick counter so toolbar active-states and
   // Send/Save Draft disabled-checks re-evaluate after each editor transaction
@@ -169,21 +191,45 @@ export function ComposeModal({ isOpen, onClose, replyContext = null }: ComposeMo
   // TMAIL-330: keep the TipTap doc in sync with the open/replyContext state.
   // Runs separately so that the editor mounting (null → Editor) doesn't drop
   // the user's already-typed form fields above.
+  //
+  // TMAIL-331: on fresh compose (no replyContext) prepend the user's default
+  // signature so they don't have to retype it every time. A leading <p></p>
+  // gives them a blank paragraph above the signature to start typing into
+  // without accidentally erasing the signature mark on first keystroke. We
+  // intentionally do NOT inject the signature on reply/forward — the quoted
+  // block already occupies the body and Gmail/Outlook UX puts the signature
+  // above the quote only when the user composes from scratch.
   useEffect(() => {
     if (!isOpen || !editor) return;
     if (replyContext) {
-      // replyContext.body is a plain-text quoted block; render each line as
-      // its own paragraph so TipTap preserves the line breaks. The classic
-      // composer does the same.
       const html = replyContext.body
         .split(/\r?\n/)
         .map((line) => (line.length === 0 ? '<p></p>' : `<p>${escapeHtml(line)}</p>`))
         .join('');
       editor.commands.setContent(html, { emitUpdate: false });
+    } else if (defaultSignature) {
+      const sigHtml = defaultSignature.html_body
+        ? defaultSignature.html_body
+        : defaultSignature.text_body
+          ? defaultSignature.text_body
+              .split(/\r?\n/)
+              .map((line) =>
+                line.length === 0 ? '<p></p>' : `<p>${escapeHtml(line)}</p>`,
+              )
+              .join('')
+          : '';
+      const wrapped = sigHtml
+        ? `<p></p><div data-tasmail-signature="true">${sigHtml}</div>`
+        : '';
+      editor.commands.setContent(wrapped, { emitUpdate: false });
     } else {
       editor.commands.clearContent(false);
     }
-  }, [isOpen, replyContext, editor]);
+    // defaultSignature is derived from the React Query result so it can
+    // arrive a tick after the editor mounts. Re-running this effect when it
+    // arrives is what makes the signature appear on the first compose of the
+    // session without a manual reopen.
+  }, [isOpen, replyContext, editor, defaultSignature]);
 
   const sendMut = useMutation({
     mutationFn: async () => {
