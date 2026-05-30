@@ -410,6 +410,16 @@ impl ImapService {
     }
 
     /// Move a message to a different folder
+    ///
+    /// TMAIL-317: when the destination mailbox does not exist (e.g. the modern
+    /// UI's Archive button targets `Archive` on a fresh account that has never
+    /// opened that folder), IMAP servers return a NO response — usually with
+    /// the `[TRYCREATE]` response code per RFC 3501 §6.4.7. We handle that by
+    /// attempting `CREATE` on the destination and retrying the COPY once.
+    /// `CREATE` against an existing mailbox is a no-op on Dovecot / Stalwart /
+    /// Gmail / Outlook (returns "Mailbox already exists" as a non-fatal NO)
+    /// so we ignore its error and let the retry COPY surface the real fault
+    /// if the original failure was unrelated.
     pub async fn move_message(
         &self,
         username: &str,
@@ -425,11 +435,16 @@ impl ImapService {
             .await
             .map_err(|e| AppError::Imap(format!("SELECT failed: {}", e)))?;
 
-        // Copy to destination
-        session
-            .uid_copy(uid.to_string(), to_folder)
-            .await
-            .map_err(|e| AppError::Imap(format!("COPY failed: {}", e)))?;
+        // Copy to destination — retry once after CREATE if it fails (TMAIL-317).
+        if session.uid_copy(uid.to_string(), to_folder).await.is_err() {
+            // CREATE is best-effort; ignore "Mailbox already exists" and let
+            // the retry COPY produce the authoritative error message.
+            let _ = session.create(to_folder).await;
+            session
+                .uid_copy(uid.to_string(), to_folder)
+                .await
+                .map_err(|e| AppError::Imap(format!("COPY failed: {}", e)))?;
+        }
 
         // Mark as deleted in source
         let _: Vec<_> = session

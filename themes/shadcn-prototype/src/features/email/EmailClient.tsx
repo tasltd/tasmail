@@ -14,7 +14,7 @@ import { EmailList } from '@/features/email/EmailList';
 import { EmailReader } from '@/features/email/EmailReader';
 import { ComposeModal } from '@/features/email/ComposeModal';
 import { fetchFolders } from '@/api/folders';
-import { fetchMessages, flagMessage } from '@/api/messages';
+import { fetchMessages, flagMessage, moveMessage } from '@/api/messages';
 import type {
   Folder as ServerFolder,
   FullMessage,
@@ -27,6 +27,11 @@ import type { Email, Folder as UiFolder } from '@/types/ui';
 // state. Centralising the literal keeps the optimistic-update + invalidation
 // path from drifting from what the backend expects.
 const FLAG_STARRED = '\\Flagged';
+
+// Added: TMAIL-317 — destination folder for the EmailReader Archive button.
+// The backend `move_message` will auto-CREATE this on first use if the IMAP
+// server doesn't already have it (see imap_service.rs TMAIL-317 note).
+const ARCHIVE_FOLDER = 'Archive';
 
 const FOLDER_ICONS: Record<string, string> = {
   INBOX: 'Inbox',
@@ -114,6 +119,48 @@ export function EmailClient() {
     onSettled: (_data, _err, vars) => {
       queryClient.invalidateQueries({ queryKey: ['messages', activeFolder] });
       queryClient.invalidateQueries({ queryKey: ['message', activeFolder, vars.uid] });
+    },
+  });
+
+  // Added: TMAIL-317 — Archive mutation. Moves the message to the IMAP
+  // "Archive" folder via /api/folders/{folder}/messages/{uid}/move. Optimistically
+  // drops the row from the cached envelope list so the reader-pane Archive
+  // click feels instant, then on settle invalidates ['messages', folder] +
+  // ['folders'] so envelope counts and the (possibly newly-created) Archive
+  // folder appear in the sidebar. Always clears selectedUid so the reader
+  // pane returns to the empty state (the archived UID is no longer present
+  // in the active folder).
+  const archiveMutation = useMutation({
+    mutationFn: async ({ uid }: { uid: number }) =>
+      moveMessage(activeFolder, uid, ARCHIVE_FOLDER),
+    onMutate: async ({ uid }) => {
+      const listKey = ['messages', activeFolder];
+      await queryClient.cancelQueries({ queryKey: listKey });
+
+      const previousList = queryClient.getQueryData<MessageListResponse>(listKey);
+      if (previousList?.messages) {
+        queryClient.setQueryData<MessageListResponse>(listKey, {
+          ...previousList,
+          messages: previousList.messages.filter((m) => m.uid !== uid),
+        });
+      }
+      // Clear reader selection immediately — the archived UID is no longer
+      // valid in the active folder. Done in onMutate (not onSuccess) so the
+      // reader pane updates with the optimistic list rather than briefly
+      // showing a stale message body.
+      setSelectedUid(null);
+      return { previousList, listKey };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.previousList) {
+        queryClient.setQueryData(ctx.listKey, ctx.previousList);
+      }
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['messages', activeFolder] });
+      // Archive may have just been created (TMAIL-317 backend CREATE retry)
+      // — refresh the sidebar so the new folder + unseen count appear.
+      queryClient.invalidateQueries({ queryKey: ['folders'] });
     },
   });
 
@@ -246,6 +293,7 @@ export function EmailClient() {
               onToggleStar={(uid, currentlyStarred) =>
                 toggleStarMutation.mutate({ uid, currentlyStarred })
               }
+              onArchive={(uid) => archiveMutation.mutate({ uid })}
             />
           </div>
         </div>

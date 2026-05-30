@@ -22,9 +22,14 @@ interface EmailReaderProps {
   // EmailClient owns the mutation + cache invalidation; the reader stays
   // presentational and just reports user intent (mirrors EmailList — TMAIL-315).
   onToggleStar?: (uid: number, currentlyStarred: boolean) => void;
+  // Added: TMAIL-317 — Archive button moves the message to the IMAP "Archive"
+  // folder via the same /move endpoint MessageView uses in the classic SPA.
+  // EmailClient owns the mutation, optimistic update, and cache invalidation;
+  // the reader stays presentational.
+  onArchive?: (uid: number) => void;
 }
 
-export function EmailReader({ folder, uid, listItem, onCompose, onToggleStar }: EmailReaderProps) {
+export function EmailReader({ folder, uid, listItem, onCompose, onToggleStar, onArchive }: EmailReaderProps) {
   const messageQuery = useQuery({
     queryKey: ['message', folder, uid],
     queryFn: () => fetchMessage(folder, uid!),
@@ -116,7 +121,17 @@ export function EmailReader({ folder, uid, listItem, onCompose, onToggleStar }: 
             <span className="hidden sm:inline">Forward</span>
           </Button>
           <div className="flex-1" />
-          <Button variant="outline" size="sm">
+          {/* Added: TMAIL-317 — wires to /move via EmailClient's archiveMutation
+              targeting the IMAP "Archive" folder (auto-created on first use). */}
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={uid == null || !onArchive}
+            aria-label={`Archive email from ${from}`}
+            onClick={() => {
+              if (uid != null) onArchive?.(uid);
+            }}
+          >
             <Archive className="size-4 sm:mr-2" />
             <span className="hidden sm:inline">Archive</span>
           </Button>
