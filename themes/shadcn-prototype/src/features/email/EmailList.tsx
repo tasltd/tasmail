@@ -6,9 +6,14 @@ interface EmailListProps {
   emails: Email[];
   selectedEmailId: string | null;
   onSelectEmail: (emailId: string) => void;
+  // Added: TMAIL-315 — star button toggles the IMAP \Flagged keyword via
+  // PATCH /api/folders/{folder}/messages/{uid}/flag. The container
+  // (EmailClient) owns the mutation + cache invalidation; this list stays
+  // presentational and just reports user intent.
+  onToggleStar?: (emailId: string, currentlyStarred: boolean) => void;
 }
 
-export function EmailList({ emails, selectedEmailId, onSelectEmail }: EmailListProps) {
+export function EmailList({ emails, selectedEmailId, onSelectEmail, onToggleStar }: EmailListProps) {
   if (emails.length === 0) {
     return (
       <div className="flex items-center justify-center h-full text-zinc-500">
@@ -29,11 +34,14 @@ export function EmailList({ emails, selectedEmailId, onSelectEmail }: EmailListP
         >
           <div className="flex items-start gap-3">
             <button
+              type="button"
+              aria-pressed={email.starred}
+              aria-label={email.starred ? `Unstar email from ${email.from}` : `Star email from ${email.from}`}
               onClick={(e) => {
                 e.stopPropagation();
-                // Toggle star logic would go here
+                onToggleStar?.(email.id, email.starred);
               }}
-              className="mt-1"
+              className="mt-1 cursor-pointer rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
             >
               <Star
                 className={`size-4 ${

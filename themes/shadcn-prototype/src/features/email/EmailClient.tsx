@@ -6,7 +6,7 @@
 // own data fetches.
 import { useState, useMemo } from 'react';
 import { Link } from 'react-router';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Settings, Menu, ArrowLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Sidebar } from '@/components/layout/Sidebar';
@@ -14,9 +14,14 @@ import { EmailList } from '@/features/email/EmailList';
 import { EmailReader } from '@/features/email/EmailReader';
 import { ComposeModal } from '@/features/email/ComposeModal';
 import { fetchFolders } from '@/api/folders';
-import { fetchMessages } from '@/api/messages';
-import type { Folder as ServerFolder, MessageEnvelope } from '@/types/mail';
+import { fetchMessages, flagMessage } from '@/api/messages';
+import type { Folder as ServerFolder, MessageEnvelope, MessageListResponse } from '@/types/mail';
 import type { Email, Folder as UiFolder } from '@/types/ui';
+
+// Added: TMAIL-315 — IMAP \Flagged keyword is what backs the alt-UI "starred"
+// state. Centralising the literal keeps the optimistic-update + invalidation
+// path from drifting from what the backend expects.
+const FLAG_STARRED = '\\Flagged';
 
 const FOLDER_ICONS: Record<string, string> = {
   INBOX: 'Inbox',
@@ -37,6 +42,8 @@ export function EmailClient() {
   const [isComposing, setIsComposing] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
+  const queryClient = useQueryClient();
+
   const foldersQuery = useQuery<ServerFolder[]>({
     queryKey: ['folders'],
     queryFn: () => fetchFolders(),
@@ -46,6 +53,44 @@ export function EmailClient() {
     queryKey: ['messages', activeFolder],
     queryFn: () => fetchMessages(activeFolder, 0, 50),
     enabled: !!activeFolder,
+  });
+
+  // Added: TMAIL-315 — star toggle mutation. Optimistically flips the IMAP
+  // \Flagged keyword on the matching envelope so the UI feels instant, then
+  // invalidates ['messages', folder] on settle so the real IMAP FLAGS reply
+  // becomes the source of truth.
+  const toggleStarMutation = useMutation({
+    mutationFn: async ({ uid, currentlyStarred }: { uid: number; currentlyStarred: boolean }) =>
+      flagMessage(activeFolder, uid, FLAG_STARRED, !currentlyStarred),
+    onMutate: async ({ uid, currentlyStarred }) => {
+      const queryKey = ['messages', activeFolder];
+      await queryClient.cancelQueries({ queryKey });
+      const previous = queryClient.getQueryData<MessageListResponse>(queryKey);
+      if (previous?.messages) {
+        queryClient.setQueryData<MessageListResponse>(queryKey, {
+          ...previous,
+          messages: previous.messages.map((m) => {
+            if (m.uid !== uid) return m;
+            const without = (m.flags ?? []).filter((f) => !f.includes('Flagged'));
+            return {
+              ...m,
+              flags: currentlyStarred ? without : [...without, FLAG_STARRED],
+            };
+          }),
+        });
+      }
+      return { previous };
+    },
+    onError: (_err, _vars, ctx) => {
+      // Roll back to the snapshot taken in onMutate so the star reflects
+      // actual server state when the IMAP call fails.
+      if (ctx?.previous) {
+        queryClient.setQueryData(['messages', activeFolder], ctx.previous);
+      }
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['messages', activeFolder] });
+    },
   });
 
   // Adapt /api/folders shape → Sidebar's Folder shape.
@@ -146,6 +191,9 @@ export function EmailClient() {
                 emails={emailListItems}
                 selectedEmailId={selectedUid != null ? String(selectedUid) : null}
                 onSelectEmail={(id) => setSelectedUid(parseInt(id, 10))}
+                onToggleStar={(id, currentlyStarred) =>
+                  toggleStarMutation.mutate({ uid: parseInt(id, 10), currentlyStarred })
+                }
               />
             )}
           </div>
