@@ -58,31 +58,33 @@ pub struct Attachment {
 // can hold and reuse a Session across IDLE cycles.
 pub type ImapSession = Session<TlsStream<Compat<TcpStream>>>;
 
-/// IMAP service for connecting to a user's IMAP server (BYOK) or to a global Dovecot.
+/// IMAP service bound to a single user's BYOK IMAP server.
 ///
-/// Two construction paths:
-///   * `ImapService::new(config)` — global config from `state.config.imap` (legacy / single-tenant self-host).
-///   * `ImapService::for_user(state, user_id)` — loads the user's default IMAP server
-///     row from `imap_configurations`, decrypts the password, and returns a service
-///     bound to that host:port + the per-user (username, password) pair to use on connect.
+/// Constructed exclusively via `ImapService::for_user(state, user_id)`, which loads
+/// the user's default row from `imap_configurations`, decrypts the password with the
+/// JWT-derived AES key, and returns a service bound to that host:port + the per-user
+/// (username, password) pair to use on connect.
+///
+/// TMAIL-311 (finishes TMAIL-156): the legacy `ImapService::new(global_config)`
+/// constructor — which forwarded the server-wide Dovecot config and required the
+/// caller to pass plaintext mailbox credentials — was removed. All production
+/// handlers were already on `for_user`; keeping `new` around as public API was a
+/// foot-gun for future contributors.
 pub struct ImapService {
     config: ImapConfig,
-    /// When constructed via `for_user`, holds the user's decrypted IMAP credentials so
-    /// callers can use `connect_user(&svc)` instead of forwarding the user's TASMail
-    /// account password (which is NOT their IMAP password under the BYOK model).
+    /// Per-user decrypted IMAP credentials (username, password) loaded by
+    /// `for_user`. Stored as `Option` only so test code can construct an
+    /// `ImapService` via struct literal with `None` for paths that never touch the
+    /// network (e.g. the `trash_folder()` resolution test).
     user_credentials: Option<(String, String)>,
     /// TMAIL-283: per-user resolved trash folder name (e.g. "Deleted Items" on
     /// Stalwart, "[Gmail]/Trash" on Gmail). Sourced from `imap_configurations.trash_folder`
-    /// at `for_user()` time. `None` (legacy / self-host) keeps the hardcoded "Trash"
-    /// default so existing Dovecot deployments are unaffected.
+    /// at `for_user()` time. `None` falls back to the hardcoded "Trash" default for
+    /// any future per-user row that doesn't set the column.
     user_trash_folder: Option<String>,
 }
 
 impl ImapService {
-    pub fn new(config: ImapConfig) -> Self {
-        Self { config, user_credentials: None, user_trash_folder: None }
-    }
-
     /// PURPOSE: Factory that loads the user's default IMAP server config from the
     /// `imap_configurations` table, decrypts the stored password, and returns a service
     /// bound to that server. Returns `Err(ServiceUnavailable)` if the user hasn't
@@ -146,10 +148,13 @@ impl ImapService {
         self.user_trash_folder.as_deref().unwrap_or("Trash")
     }
 
-    /// PURPOSE: Convenience method for the BYOK path. Connects using the credentials
-    /// stored in the user's `imap_configurations` row instead of requiring the caller
-    /// to pass them. Falls back to error if the service was built via `new()` (global
-    /// self-host mode), where the caller still must pass the user's mailbox creds.
+    /// PURPOSE: Connect to the user's IMAP server using the credentials decrypted
+    /// by `for_user`. This is the only sanctioned connect path for handlers —
+    /// callers never see the plaintext password.
+    ///
+    /// The `Option` check on `user_credentials` is defensive: in production
+    /// `for_user` always populates it, but the field is left as `Option` so test
+    /// code can construct credential-less instances via struct literal.
     pub async fn connect_user(&self) -> Result<ImapSession, AppError> {
         let (username, password) = self.user_credentials.as_ref().ok_or_else(|| {
             AppError::Internal(anyhow::anyhow!(
@@ -165,8 +170,9 @@ impl ImapService {
         &self.config
     }
 
-    /// PURPOSE: Borrow the per-user (username, password) pair when the service was built
-    /// via `for_user`. Returns `None` for the legacy global-config construction path.
+    /// PURPOSE: Borrow the per-user (username, password) pair populated by
+    /// `for_user`. Returns `None` only for credential-less test instances
+    /// constructed via struct literal — production code always sees `Some`.
     pub fn user_creds(&self) -> Option<(&str, &str)> {
         self.user_credentials.as_ref().map(|(u, p)| (u.as_str(), p.as_str()))
     }
@@ -927,15 +933,19 @@ mod tests {
 
     #[test]
     fn test_trash_folder_defaults_to_legacy_name() {
-        // Self-host / legacy path: no per-user config — trash_folder() must
-        // return "Trash" so existing Dovecot deployments keep working.
-        let cfg = ImapConfig {
-            host: "127.0.0.1".to_string(),
-            port: 993,
-            tls: true,
-            master_password: None,
+        // When the per-user `imap_configurations.trash_folder` column is NULL
+        // (`user_trash_folder = None`), `trash_folder()` must fall back to the
+        // hardcoded "Trash" default so Dovecot/legacy mailboxes keep working.
+        let svc = ImapService {
+            config: ImapConfig {
+                host: "127.0.0.1".to_string(),
+                port: 993,
+                tls: true,
+                master_password: None,
+            },
+            user_credentials: None,
+            user_trash_folder: None,
         };
-        let svc = ImapService::new(cfg);
         assert_eq!(svc.trash_folder(), "Trash");
     }
 
@@ -1045,43 +1055,11 @@ mod tests {
         assert_eq!(json["part_id"], "1.2");
     }
 
-    // Added: TMAIL-156 — BYOK contract regression tests for the two construction paths.
-    // Handlers MUST use ImapService::for_user(state, mailbox_id) and consume credentials
-    // via user_creds(). The legacy ImapService::new(global_config) path returns None from
-    // user_creds() — exercising that here so a future change can't quietly drop the
-    // per-user creds without flipping this test red.
-
-    fn fake_global_config() -> ImapConfig {
-        ImapConfig {
-            host: "127.0.0.1".to_string(),
-            port: 993,
-            tls: true,
-            master_password: None,
-        }
-    }
-
-    #[test]
-    fn test_user_creds_none_for_legacy_new() {
-        // ImapService::new is the legacy single-tenant constructor. It must NOT expose
-        // any user credentials — otherwise handlers that should be on the BYOK path
-        // could accidentally compile against it.
-        let svc = ImapService::new(fake_global_config());
-        assert!(svc.user_creds().is_none(),
-            "ImapService::new() must not surface user credentials; that path is BYOK-via-for_user only");
-    }
-
-    #[tokio::test]
-    async fn test_connect_user_errors_for_legacy_new() {
-        // connect_user() is the BYOK convenience method. On a service built via
-        // ImapService::new() it must return Internal — handlers relying on this
-        // convenience get a loud failure rather than a silent global-config connect.
-        let svc = ImapService::new(fake_global_config());
-        let err = svc.connect_user().await.expect_err(
-            "connect_user() on a legacy ImapService::new() must error out, not silently connect",
-        );
-        match err {
-            AppError::Internal(_) => {}
-            other => panic!("Expected AppError::Internal, got {:?}", other),
-        }
-    }
+    // TMAIL-311 (finishes TMAIL-156): the legacy `ImapService::new(global_config)`
+    // constructor was removed, so the BYOK contract regression tests that asserted
+    // `user_creds()` returns None and `connect_user()` errors out on the legacy
+    // path are no longer applicable — the path they guarded against no longer
+    // exists. `for_user` is now the only way to build an ImapService in
+    // production code; test code that needs a credential-less instance does so
+    // via direct struct literal (see `test_trash_folder_defaults_to_legacy_name`).
 }
