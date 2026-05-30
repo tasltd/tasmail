@@ -17,8 +17,20 @@ pub struct SamlConfiguration {
     pub name_id_format: String,
     pub attribute_mapping: serde_json::Value,
     pub active: bool,
+    // Added (TMAIL-303): when true the SAML callback auto-provisions a
+    // mailbox for an unknown name_id; when false unknown subjects are
+    // rejected with 403. Migration 076 backfills DEFAULT true so existing
+    // configs keep working.
+    #[serde(default = "default_auto_create_users")]
+    pub auto_create_users: bool,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+// Added (TMAIL-303): serde default — matches the SQL DEFAULT true on the
+// `auto_create_users` column so legacy JSON payloads round-trip cleanly.
+fn default_auto_create_users() -> bool {
+    true
 }
 
 /// PURPOSE: Tracks active SAML sessions for SLO (Single Logout) support
@@ -46,6 +58,8 @@ pub struct CreateSamlConfigRequest {
     pub certificate: String,
     pub name_id_format: Option<String>,
     pub attribute_mapping: Option<serde_json::Value>,
+    // Added (TMAIL-303): admins can opt out of auto-provisioning per IdP.
+    pub auto_create_users: Option<bool>,
 }
 
 /// PURPOSE: Request payload for updating an existing SAML configuration
@@ -60,6 +74,8 @@ pub struct UpdateSamlConfigRequest {
     pub name_id_format: Option<String>,
     pub attribute_mapping: Option<serde_json::Value>,
     pub active: Option<bool>,
+    // Added (TMAIL-303): allow toggling auto-provisioning post-creation.
+    pub auto_create_users: Option<bool>,
 }
 
 impl SamlConfiguration {
@@ -88,8 +104,8 @@ impl SamlConfiguration {
         request: &CreateSamlConfigRequest,
     ) -> Result<SamlConfiguration, sqlx::Error> {
         sqlx::query_as::<_, SamlConfiguration>(
-            "INSERT INTO saml_configurations (name, entity_id, sso_url, slo_url, certificate, name_id_format, attribute_mapping)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)
+            "INSERT INTO saml_configurations (name, entity_id, sso_url, slo_url, certificate, name_id_format, attribute_mapping, auto_create_users)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
              RETURNING *",
         )
         .bind(&request.name)
@@ -109,6 +125,8 @@ impl SamlConfiguration {
                 .as_ref()
                 .unwrap_or(&serde_json::json!({"email": "email", "name": "displayName"})),
         )
+        // Added (TMAIL-303): default to auto-create when caller omits the flag.
+        .bind(request.auto_create_users.unwrap_or(true))
         .fetch_one(pool)
         .await
     }
@@ -129,6 +147,7 @@ impl SamlConfiguration {
                 name_id_format = COALESCE($7, name_id_format),
                 attribute_mapping = COALESCE($8, attribute_mapping),
                 active = COALESCE($9, active),
+                auto_create_users = COALESCE($10, auto_create_users),
                 updated_at = now()
              WHERE id = $1
              RETURNING *",
@@ -142,6 +161,8 @@ impl SamlConfiguration {
         .bind(&request.name_id_format)
         .bind(&request.attribute_mapping)
         .bind(request.active)
+        // Added (TMAIL-303): COALESCE → only overwrite when the admin set the field.
+        .bind(request.auto_create_users)
         .fetch_one(pool)
         .await
     }
@@ -311,6 +332,7 @@ mod tests {
             name_id_format: "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress".to_string(),
             attribute_mapping: serde_json::json!({"email": "email", "name": "displayName"}),
             active: true,
+            auto_create_users: true,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -338,6 +360,7 @@ mod tests {
             name_id_format: "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress".to_string(),
             attribute_mapping: serde_json::json!({"email": "User.Email"}),
             active: false,
+            auto_create_users: false,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -382,6 +405,7 @@ mod tests {
             name_id_format: "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress".to_string(),
             attribute_mapping: serde_json::json!({"email": "email"}),
             active: true,
+            auto_create_users: true,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -409,6 +433,7 @@ mod tests {
             name_id_format: "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress".to_string(),
             attribute_mapping: serde_json::json!({}),
             active: true,
+            auto_create_users: true,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -433,6 +458,7 @@ mod tests {
                 "name": "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name"
             }),
             active: true,
+            auto_create_users: true,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -452,5 +478,108 @@ mod tests {
         );
         // NOTE: Unmapped logical names return None
         assert_eq!(config.resolve_attribute(&attributes, "department"), None);
+    }
+
+    // Added (TMAIL-303): auto_create_users coverage.
+
+    #[test]
+    fn test_create_request_defaults_auto_create_to_none() {
+        // When a legacy admin payload omits auto_create_users, the request
+        // type must accept it and the create() SQL bind defaults to true.
+        let json_str = r##"{
+            "name": "Okta",
+            "entity_id": "https://okta/saml",
+            "sso_url": "https://okta/sso",
+            "certificate": "CERT"
+        }"##;
+        let req: CreateSamlConfigRequest = serde_json::from_str(json_str).unwrap();
+        assert!(req.auto_create_users.is_none());
+    }
+
+    #[test]
+    fn test_create_request_honours_explicit_auto_create_false() {
+        let json_str = r##"{
+            "name": "Okta",
+            "entity_id": "https://okta/saml",
+            "sso_url": "https://okta/sso",
+            "certificate": "CERT",
+            "auto_create_users": false
+        }"##;
+        let req: CreateSamlConfigRequest = serde_json::from_str(json_str).unwrap();
+        assert_eq!(req.auto_create_users, Some(false));
+    }
+
+    #[test]
+    fn test_update_request_allows_auto_create_toggle() {
+        let json_str = r##"{"auto_create_users": true}"##;
+        let req: UpdateSamlConfigRequest = serde_json::from_str(json_str).unwrap();
+        assert_eq!(req.auto_create_users, Some(true));
+    }
+
+    #[test]
+    fn test_saml_configuration_serializes_auto_create_users() {
+        let config = SamlConfiguration {
+            id: Uuid::new_v4(),
+            name: "Okta".to_string(),
+            entity_id: "https://okta/saml".to_string(),
+            sso_url: "https://okta/sso".to_string(),
+            slo_url: None,
+            certificate: "CERT".to_string(),
+            name_id_format: "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress".to_string(),
+            attribute_mapping: serde_json::json!({}),
+            active: true,
+            auto_create_users: false,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        let json_value = serde_json::to_value(&config).unwrap();
+        assert_eq!(json_value["auto_create_users"], false);
+    }
+
+    #[test]
+    fn test_saml_configuration_deserializes_legacy_payload_without_auto_create() {
+        // Legacy JSON payloads (pre-migration 076) omit auto_create_users
+        // entirely. The serde default keeps them deserializable as `true` so
+        // /api/admin/saml callers aren't broken during rollout.
+        let id = Uuid::new_v4();
+        let now = chrono::Utc::now();
+        let json = serde_json::json!({
+            "id": id,
+            "name": "Old IdP",
+            "entity_id": "https://old/saml",
+            "sso_url": "https://old/sso",
+            "slo_url": null,
+            "certificate": "CERT",
+            "name_id_format": "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
+            "attribute_mapping": {},
+            "active": true,
+            "created_at": now,
+            "updated_at": now
+        });
+        let config: SamlConfiguration = serde_json::from_value(json).unwrap();
+        assert!(config.auto_create_users, "legacy payload should default to true");
+    }
+
+    #[test]
+    fn test_resolve_attribute_returns_none_for_missing_mapping() {
+        // Defensive: if the IdP didn't push the mapped attribute through, the
+        // callback handler falls back to name_id. This guards that contract.
+        let config = SamlConfiguration {
+            id: Uuid::new_v4(),
+            name: "Test".to_string(),
+            entity_id: "https://idp.example.com".to_string(),
+            sso_url: "https://idp.example.com/sso".to_string(),
+            slo_url: None,
+            certificate: "CERT".to_string(),
+            name_id_format: "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress".to_string(),
+            attribute_mapping: serde_json::json!({"email": "EmailAttr"}),
+            active: true,
+            auto_create_users: true,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        // EmailAttr missing from the attributes blob.
+        let attrs = serde_json::json!({"OtherAttr": "x"});
+        assert_eq!(config.resolve_attribute(&attrs, "email"), None);
     }
 }
