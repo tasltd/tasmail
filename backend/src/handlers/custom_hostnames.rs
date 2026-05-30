@@ -10,6 +10,7 @@ use crate::error::AppError;
 use crate::models::custom_hostname::{
     CreateHostnameRequest, CustomHostname, UpdateHostnameRequest,
 };
+use crate::services::audit::audit_admin_action;
 use crate::services::auth_service::Claims;
 use crate::state::AppState;
 
@@ -52,6 +53,22 @@ pub async fn create_hostname(
     }
 
     let hostname = CustomHostname::create(&state.db, &body).await?;
+
+    // Added (TMAIL-307): audit-log custom-hostname creation.
+    audit_admin_action(
+        &state.db,
+        &claims,
+        "custom_hostname.create",
+        Some("custom_hostname"),
+        Some(&hostname.id.to_string()),
+        Some(serde_json::json!({
+            "smtp_hostname": hostname.smtp_hostname,
+            "imap_hostname": hostname.imap_hostname,
+            "domain_id": body.domain_id,
+        })),
+    )
+    .await;
+
     Ok((StatusCode::CREATED, Json(hostname)))
 }
 
@@ -102,6 +119,21 @@ pub async fn update_hostname(
     let hostname = CustomHostname::update(&state.db, id, &body)
         .await?
         .ok_or_else(|| AppError::NotFound("Custom hostname config not found".to_string()))?;
+
+    // Added (TMAIL-307): audit-log custom-hostname update.
+    audit_admin_action(
+        &state.db,
+        &claims,
+        "custom_hostname.update",
+        Some("custom_hostname"),
+        Some(&id.to_string()),
+        Some(serde_json::json!({
+            "smtp_hostname": body.smtp_hostname,
+            "imap_hostname": body.imap_hostname,
+        })),
+    )
+    .await;
+
     Ok(Json(hostname))
 }
 
@@ -117,6 +149,16 @@ pub async fn delete_hostname(
     }
     let deleted = CustomHostname::delete(&state.db, id).await?;
     if deleted {
+        // Added (TMAIL-307): audit-log custom-hostname delete.
+        audit_admin_action(
+            &state.db,
+            &claims,
+            "custom_hostname.delete",
+            Some("custom_hostname"),
+            Some(&id.to_string()),
+            None,
+        )
+        .await;
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(AppError::NotFound(
@@ -151,6 +193,18 @@ pub async fn verify_hostname(
                 id
             ))
         })?;
+
+    // Added (TMAIL-307): audit-log custom-hostname verification.
+    audit_admin_action(
+        &state.db,
+        &claims,
+        "custom_hostname.verify",
+        Some("custom_hostname"),
+        Some(&id.to_string()),
+        None,
+    )
+    .await;
+
     Ok(Json(hostname))
 }
 

@@ -11,6 +11,7 @@ use uuid::Uuid;
 
 use crate::error::AppError;
 use crate::models::payment_provider_config::{PaymentProviderConfig, PlaintextProviderConfig};
+use crate::services::audit::audit_admin_action;
 use crate::services::auth_service::{self, Claims};
 use crate::state::AppState;
 
@@ -150,6 +151,23 @@ pub async fn create_provider(
     .await
     .map_err(|e| AppError::Internal(anyhow::anyhow!("Failed to create provider config: {}", e)))?;
 
+    // Added (TMAIL-307): audit-log credential creation. We record only the
+    // non-sensitive metadata — never the secret/public keys / passwords.
+    audit_admin_action(
+        &state.db,
+        &claims,
+        "payment_provider.create",
+        Some("payment_provider_config"),
+        Some(&row.id.to_string()),
+        Some(serde_json::json!({
+            "provider": row.provider,
+            "tenant_id": row.tenant_id,
+            "name": row.name,
+            "environment": row.environment,
+        })),
+    )
+    .await;
+
     Ok((StatusCode::CREATED, Json(ProviderSummary::from(row))))
 }
 
@@ -168,5 +186,19 @@ pub async fn archive_provider(
     if result.rows_affected() == 0 {
         return Err(AppError::NotFound(format!("payment_provider_config {}", id)));
     }
+
+    // Added (TMAIL-307): audit-log credential archive. Includes the rotated/
+    // archived row id so compliance can trace which credentials are no longer
+    // active and who archived them.
+    audit_admin_action(
+        &state.db,
+        &claims,
+        "payment_provider.archive",
+        Some("payment_provider_config"),
+        Some(&id.to_string()),
+        None,
+    )
+    .await;
+
     Ok(StatusCode::NO_CONTENT)
 }

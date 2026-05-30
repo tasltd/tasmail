@@ -12,6 +12,7 @@ use crate::models::mailbox::Mailbox;
 use crate::models::saml_config::{
     CreateSamlConfigRequest, SamlConfiguration, SamlSession, UpdateSamlConfigRequest,
 };
+use crate::services::audit::audit_admin_action;
 use crate::services::auth_service::{self, Claims, TokenPair};
 use crate::state::AppState;
 
@@ -56,6 +57,22 @@ pub async fn create_saml_config(
     }
 
     let config = SamlConfiguration::create(&state.db, &request).await?;
+
+    // Added (TMAIL-307): audit-log SAML config creation.
+    audit_admin_action(
+        &state.db,
+        &claims,
+        "saml_config.create",
+        Some("saml_configuration"),
+        Some(&config.id.to_string()),
+        Some(serde_json::json!({
+            "name": config.name,
+            "entity_id": config.entity_id,
+            "sso_url": config.sso_url,
+        })),
+    )
+    .await;
+
     Ok((StatusCode::CREATED, Json(config)))
 }
 
@@ -75,6 +92,23 @@ pub async fn update_saml_config(
         .map_err(|_| AppError::NotFound(format!("SAML configuration {id} not found")))?;
 
     let config = SamlConfiguration::update(&state.db, id, &request).await?;
+
+    // Added (TMAIL-307): audit-log SAML config update.
+    audit_admin_action(
+        &state.db,
+        &claims,
+        "saml_config.update",
+        Some("saml_configuration"),
+        Some(&id.to_string()),
+        Some(serde_json::json!({
+            "name": request.name,
+            "entity_id": request.entity_id,
+            "sso_url": request.sso_url,
+            "active": request.active,
+        })),
+    )
+    .await;
+
     Ok(Json(config))
 }
 
@@ -92,6 +126,18 @@ pub async fn delete_saml_config(
         .map_err(|_| AppError::NotFound(format!("SAML configuration {id} not found")))?;
 
     SamlConfiguration::delete(&state.db, id).await?;
+
+    // Added (TMAIL-307): audit-log SAML config delete.
+    audit_admin_action(
+        &state.db,
+        &claims,
+        "saml_config.delete",
+        Some("saml_configuration"),
+        Some(&id.to_string()),
+        None,
+    )
+    .await;
+
     Ok(StatusCode::NO_CONTENT)
 }
 

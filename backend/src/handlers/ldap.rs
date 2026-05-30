@@ -15,6 +15,7 @@ use crate::error::AppError;
 use crate::models::ldap_config::{
     CreateLdapConfigRequest, LdapConfiguration, LdapSyncLog, UpdateLdapConfigRequest,
 };
+use crate::services::audit::audit_admin_action;
 use crate::services::auth_service::{self, Claims};
 use crate::services::ldap_service::LdapService;
 use crate::state::AppState;
@@ -70,6 +71,24 @@ pub async fn create_ldap_config(
         .map_err(AppError::Internal)?;
 
     let config = LdapConfiguration::create(&state.db, &request, &encrypted_password).await?;
+
+    // Added (TMAIL-307): audit-log LDAP config creation. Bind password is
+    // intentionally omitted from the audit details.
+    audit_admin_action(
+        &state.db,
+        &claims,
+        "ldap_config.create",
+        Some("ldap_configuration"),
+        Some(&config.id.to_string()),
+        Some(serde_json::json!({
+            "name": config.name,
+            "server_url": config.server_url,
+            "bind_dn": config.bind_dn,
+            "search_base": config.search_base,
+        })),
+    )
+    .await;
+
     Ok((StatusCode::CREATED, Json(config)))
 }
 
@@ -105,6 +124,23 @@ pub async fn update_ldap_config(
         encrypted_password.as_deref(),
     )
     .await?;
+
+    // Added (TMAIL-307): audit-log LDAP config update. Include whether the
+    // bind password was rotated, but never the value itself.
+    audit_admin_action(
+        &state.db,
+        &claims,
+        "ldap_config.update",
+        Some("ldap_configuration"),
+        Some(&id.to_string()),
+        Some(serde_json::json!({
+            "bind_password_rotated": encrypted_password.is_some(),
+            "name": request.name,
+            "server_url": request.server_url,
+        })),
+    )
+    .await;
+
     Ok(Json(config))
 }
 
@@ -122,6 +158,18 @@ pub async fn delete_ldap_config(
         .map_err(|_| AppError::NotFound(format!("LDAP configuration {id} not found")))?;
 
     LdapConfiguration::delete(&state.db, id).await?;
+
+    // Added (TMAIL-307): audit-log LDAP config delete.
+    audit_admin_action(
+        &state.db,
+        &claims,
+        "ldap_config.delete",
+        Some("ldap_configuration"),
+        Some(&id.to_string()),
+        None,
+    )
+    .await;
+
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -234,6 +282,23 @@ pub async fn trigger_sync(
     .await?;
 
     LdapConfiguration::update_sync_status(&state.db, id, "completed", total_synced).await?;
+
+    // Added (TMAIL-307): audit-log LDAP sync run — sync mutates the mailboxes
+    // table so admins should see who triggered each run + the per-run counts.
+    audit_admin_action(
+        &state.db,
+        &claims,
+        "ldap_config.sync",
+        Some("ldap_configuration"),
+        Some(&id.to_string()),
+        Some(serde_json::json!({
+            "created": result.created,
+            "updated": result.updated,
+            "disabled": result.disabled,
+            "errors": result.errors.len(),
+        })),
+    )
+    .await;
 
     Ok((StatusCode::CREATED, Json(completed_log)))
 }

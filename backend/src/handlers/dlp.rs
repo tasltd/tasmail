@@ -12,6 +12,7 @@ use crate::models::dlp_rule::{
     CreateDlpRuleRequest, DlpRule, DlpScanMatch, DlpScanRequest, DlpViolation,
     UpdateDlpRuleRequest, ViolationListParams,
 };
+use crate::services::audit::audit_admin_action;
 use crate::services::auth_service::{self, Claims};
 use crate::services::dlp_scanner;
 use crate::state::AppState;
@@ -57,6 +58,23 @@ pub async fn create_rule(
     }
 
     let rule = DlpRule::create(&state.db, &body).await?;
+
+    // Added (TMAIL-307): audit-log DLP rule creation.
+    audit_admin_action(
+        &state.db,
+        &claims,
+        "dlp_rule.create",
+        Some("dlp_rule"),
+        Some(&rule.id.to_string()),
+        Some(serde_json::json!({
+            "name": rule.name,
+            "pattern_type": rule.pattern_type,
+            "action": rule.action,
+            "severity": rule.severity,
+        })),
+    )
+    .await;
+
     Ok((StatusCode::CREATED, Json(rule)))
 }
 
@@ -84,6 +102,23 @@ pub async fn update_rule(
     let rule = DlpRule::update(&state.db, id, &body)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("DLP rule '{}' not found", id)))?;
+
+    // Added (TMAIL-307): audit-log DLP rule update.
+    audit_admin_action(
+        &state.db,
+        &claims,
+        "dlp_rule.update",
+        Some("dlp_rule"),
+        Some(&id.to_string()),
+        Some(serde_json::json!({
+            "name": body.name,
+            "pattern_type": body.pattern_type,
+            "action": body.action,
+            "active": body.active,
+        })),
+    )
+    .await;
+
     Ok(Json(rule))
 }
 
@@ -96,6 +131,16 @@ pub async fn delete_rule(
     auth_service::require_admin(&claims)?; // TMAIL-210
     let deleted = DlpRule::delete(&state.db, id).await?;
     if deleted {
+        // Added (TMAIL-307): audit-log DLP rule delete.
+        audit_admin_action(
+            &state.db,
+            &claims,
+            "dlp_rule.delete",
+            Some("dlp_rule"),
+            Some(&id.to_string()),
+            None,
+        )
+        .await;
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(AppError::NotFound(format!("DLP rule '{}' not found", id)))

@@ -4,6 +4,7 @@ use axum::{extract::State, Json};
 
 use crate::error::AppError;
 use crate::models::branding::{Branding, UpdateBrandingRequest};
+use crate::services::audit::audit_admin_action;
 use crate::services::auth_service::{self, Claims};
 use crate::state::AppState;
 
@@ -42,6 +43,22 @@ pub async fn update_branding(
     // Added: Invalidate cache so subsequent requests get the updated branding
     state.cache.invalidate_branding().await;
 
+    // Added (TMAIL-307): audit-log branding update — visible-surface change.
+    audit_admin_action(
+        &state.db,
+        &claims,
+        "branding.update",
+        Some("branding"),
+        None,
+        Some(serde_json::json!({
+            "app_name": request.app_name,
+            "logo_url": request.logo_url,
+            "primary_color": request.primary_color,
+            "accent_color": request.accent_color,
+        })),
+    )
+    .await;
+
     Ok(Json(branding))
 }
 
@@ -58,6 +75,17 @@ pub async fn reset_branding(
 
     // Added: Invalidate cache after reset
     state.cache.invalidate_branding().await;
+
+    // Added (TMAIL-307): audit-log branding reset to defaults.
+    audit_admin_action(
+        &state.db,
+        &claims,
+        "branding.reset",
+        Some("branding"),
+        None,
+        None,
+    )
+    .await;
 
     Ok(Json(branding))
 }

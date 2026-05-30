@@ -13,6 +13,7 @@ use uuid::Uuid;
 
 use crate::error::AppError;
 use crate::models::feature_flag::FeatureFlag;
+use crate::services::audit::audit_admin_action;
 use crate::services::auth_service::{self, Claims};
 use crate::services::feature_flags as flag_cache;
 use crate::state::AppState;
@@ -51,9 +52,25 @@ pub async fn update_flag(
         return Err(AppError::BadRequest("Specify enabled and/or value".into()));
     }
     let actor = Uuid::parse_str(&claims.sub).ok();
-    let updated = FeatureFlag::upsert(&state.db, &key, body.enabled, body.value, actor).await?;
+    let updated = FeatureFlag::upsert(&state.db, &key, body.enabled, body.value.clone(), actor).await?;
     // Bust the per-flag cache so the new state is visible immediately to all workers.
     flag_cache::invalidate(&state, &key).await;
+
+    // Added (TMAIL-307): audit-log every flag toggle / value change. Flags
+    // gate billing, signup, and self-host paths — flips need a compliance trail.
+    audit_admin_action(
+        &state.db,
+        &claims,
+        "feature_flag.update",
+        Some("feature_flag"),
+        Some(&key),
+        Some(serde_json::json!({
+            "enabled": body.enabled,
+            "value": body.value,
+        })),
+    )
+    .await;
+
     Ok(Json(updated))
 }
 

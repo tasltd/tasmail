@@ -6,6 +6,7 @@ use axum::{
 
 use crate::error::AppError;
 use crate::models::mailbox::{CreateMailbox, Mailbox, MailboxInfo};
+use crate::services::audit::audit_admin_action;
 use crate::services::auth_service::{hash_password, Claims};
 use crate::state::AppState;
 // Added: Input validation for user creation (TMAIL-37)
@@ -70,6 +71,21 @@ pub async fn create_user(
     )
     .await?;
 
+    // Added (TMAIL-307): audit-log admin user creation. Password is never recorded.
+    audit_admin_action(
+        &state.db,
+        &claims,
+        "user.create",
+        Some("mailbox"),
+        Some(&mailbox.id.to_string()),
+        Some(serde_json::json!({
+            "username": mailbox.username,
+            "domain_id": body.domain_id,
+            "quota_bytes": quota,
+        })),
+    )
+    .await;
+
     Ok((StatusCode::CREATED, Json(mailbox.into())))
 }
 
@@ -86,6 +102,17 @@ pub async fn delete_user(
     if !Mailbox::delete(&state.db, id).await? {
         return Err(AppError::NotFound("User not found".to_string()));
     }
+
+    // Added (TMAIL-307): audit-log admin user deletion — critical compliance trail.
+    audit_admin_action(
+        &state.db,
+        &claims,
+        "user.delete",
+        Some("mailbox"),
+        Some(&id.to_string()),
+        None,
+    )
+    .await;
 
     Ok(StatusCode::NO_CONTENT)
 }

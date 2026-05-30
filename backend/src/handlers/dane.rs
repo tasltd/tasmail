@@ -12,6 +12,7 @@ use crate::models::dane::{
     CreateDanePolicyRequest, DaneLookupRequest, DanePolicy, DaneResult, DaneVerification,
     TlsaRecord, VerificationListParams,
 };
+use crate::services::audit::audit_admin_action;
 use crate::services::auth_service::{self, Claims};
 use crate::services::dane_service;
 use crate::state::AppState;
@@ -39,6 +40,21 @@ pub async fn create_policy(
     }
 
     let policy = DanePolicy::upsert(&state.db, &body).await?;
+
+    // Added (TMAIL-307): audit-log DANE policy upsert.
+    audit_admin_action(
+        &state.db,
+        &claims,
+        "dane_policy.upsert",
+        Some("dane_policy"),
+        Some(&policy.id.to_string()),
+        Some(serde_json::json!({
+            "domain": body.domain,
+            "enforce": body.enforce,
+        })),
+    )
+    .await;
+
     Ok((StatusCode::CREATED, Json(policy)))
 }
 
@@ -51,6 +67,16 @@ pub async fn delete_policy(
     auth_service::require_admin(&claims)?; // TMAIL-210
     let deleted = DanePolicy::delete(&state.db, id).await?;
     if deleted {
+        // Added (TMAIL-307): audit-log DANE policy delete.
+        audit_admin_action(
+            &state.db,
+            &claims,
+            "dane_policy.delete",
+            Some("dane_policy"),
+            Some(&id.to_string()),
+            None,
+        )
+        .await;
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(AppError::NotFound(format!("DANE policy '{}' not found", id)))

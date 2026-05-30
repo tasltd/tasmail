@@ -14,6 +14,7 @@ use crate::models::archive::{
     ArchiveSearchResult, CreateArchivePolicyRequest, UpdateArchiveConfigRequest,
     UpdateArchivePolicyRequest,
 };
+use crate::services::audit::audit_admin_action;
 use crate::services::auth_service::{self, Claims};
 use crate::state::AppState;
 
@@ -44,6 +45,21 @@ pub async fn create_policy(
     }
 
     let policy = ArchivePolicy::create(&state.db, &body).await?;
+
+    // Added (TMAIL-307): audit-log archive policy creation.
+    audit_admin_action(
+        &state.db,
+        &claims,
+        "archive_policy.create",
+        Some("archive_policy"),
+        Some(&policy.id.to_string()),
+        Some(serde_json::json!({
+            "name": policy.name,
+            "archive_after_days": policy.archive_after_days,
+        })),
+    )
+    .await;
+
     Ok((StatusCode::CREATED, Json(policy)))
 }
 
@@ -67,6 +83,22 @@ pub async fn update_policy(
     let policy = ArchivePolicy::update(&state.db, id, &body)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Archive policy '{}' not found", id)))?;
+
+    // Added (TMAIL-307): audit-log archive policy update.
+    audit_admin_action(
+        &state.db,
+        &claims,
+        "archive_policy.update",
+        Some("archive_policy"),
+        Some(&id.to_string()),
+        Some(serde_json::json!({
+            "name": body.name,
+            "archive_after_days": body.archive_after_days,
+            "enabled": body.enabled,
+        })),
+    )
+    .await;
+
     Ok(Json(policy))
 }
 
@@ -79,6 +111,16 @@ pub async fn delete_policy(
     auth_service::require_admin(&claims)?; // TMAIL-210
     let deleted = ArchivePolicy::delete(&state.db, id).await?;
     if deleted {
+        // Added (TMAIL-307): audit-log archive policy delete.
+        audit_admin_action(
+            &state.db,
+            &claims,
+            "archive_policy.delete",
+            Some("archive_policy"),
+            Some(&id.to_string()),
+            None,
+        )
+        .await;
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(AppError::NotFound(format!(
@@ -115,6 +157,23 @@ pub async fn update_config(
     }
 
     let config = ArchiveConfig::upsert(&state.db, &body).await?;
+
+    // Added (TMAIL-307): audit-log archive config change. The Piler API key is
+    // intentionally omitted from the audit details.
+    audit_admin_action(
+        &state.db,
+        &claims,
+        "archive_config.update",
+        Some("archive_config"),
+        Some(&config.id.to_string()),
+        Some(serde_json::json!({
+            "piler_url": body.piler_url,
+            "enabled": body.enabled,
+            "retention_years": body.retention_years,
+        })),
+    )
+    .await;
+
     Ok(Json(config))
 }
 

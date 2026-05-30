@@ -11,6 +11,7 @@ use crate::models::retention_policy::{
     CreateLegalHoldRequest, CreateRetentionPolicyRequest, LegalHold, RetentionPolicy,
     UpdateRetentionPolicyRequest,
 };
+use crate::services::audit::audit_admin_action;
 use crate::services::auth_service::Claims;
 use crate::state::AppState;
 
@@ -54,6 +55,21 @@ pub async fn create_retention_policy(
     }
 
     let policy = RetentionPolicy::create(&state.db, &body).await?;
+
+    // Added (TMAIL-307): audit-log retention-policy creation.
+    audit_admin_action(
+        &state.db,
+        &claims,
+        "retention_policy.create",
+        Some("retention_policy"),
+        Some(&policy.id.to_string()),
+        Some(serde_json::json!({
+            "name": policy.name,
+            "retention_days": policy.retention_days,
+        })),
+    )
+    .await;
+
     Ok((StatusCode::CREATED, Json(policy)))
 }
 
@@ -81,6 +97,22 @@ pub async fn update_retention_policy(
     let policy = RetentionPolicy::update(&state.db, id, &body)
         .await?
         .ok_or_else(|| AppError::NotFound("Retention policy not found".to_string()))?;
+
+    // Added (TMAIL-307): audit-log retention-policy update.
+    audit_admin_action(
+        &state.db,
+        &claims,
+        "retention_policy.update",
+        Some("retention_policy"),
+        Some(&id.to_string()),
+        Some(serde_json::json!({
+            "retention_days": body.retention_days,
+            "apply_to_all": body.apply_to_all,
+            "folder_pattern": body.folder_pattern,
+        })),
+    )
+    .await;
+
     Ok(Json(policy))
 }
 
@@ -98,6 +130,17 @@ pub async fn delete_retention_policy(
     if !RetentionPolicy::delete(&state.db, id).await? {
         return Err(AppError::NotFound("Retention policy not found".to_string()));
     }
+
+    // Added (TMAIL-307): audit-log retention-policy delete.
+    audit_admin_action(
+        &state.db,
+        &claims,
+        "retention_policy.delete",
+        Some("retention_policy"),
+        Some(&id.to_string()),
+        None,
+    )
+    .await;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -136,6 +179,21 @@ pub async fn create_legal_hold(
 
     let placed_by = parse_user_id(&claims)?;
     let hold = LegalHold::create(&state.db, &body, placed_by).await?;
+
+    // Added (TMAIL-307): audit-log legal-hold placement — critical compliance trail.
+    audit_admin_action(
+        &state.db,
+        &claims,
+        "legal_hold.create",
+        Some("legal_hold"),
+        Some(&hold.id.to_string()),
+        Some(serde_json::json!({
+            "user_id": body.user_id,
+            "reason": body.reason,
+        })),
+    )
+    .await;
+
     Ok((StatusCode::CREATED, Json(hold)))
 }
 
@@ -155,6 +213,18 @@ pub async fn release_legal_hold(
         .ok_or_else(|| {
             AppError::NotFound("Legal hold not found or already released".to_string())
         })?;
+
+    // Added (TMAIL-307): audit-log legal-hold release — critical compliance trail.
+    audit_admin_action(
+        &state.db,
+        &claims,
+        "legal_hold.release",
+        Some("legal_hold"),
+        Some(&id.to_string()),
+        None,
+    )
+    .await;
+
     Ok(Json(hold))
 }
 

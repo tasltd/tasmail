@@ -14,6 +14,7 @@ use crate::models::oidc_provider::{
     CreateOidcProviderRequest, OidcCallbackRequest, OidcDiscovery, OidcIdTokenClaims,
     OidcLoginProvider, OidcProvider, OidcTokenResponse, OidcUserLink, UpdateOidcProviderRequest,
 };
+use crate::services::audit::audit_admin_action;
 use crate::services::auth_service::{self, Claims, TokenPair};
 use crate::state::AppState;
 
@@ -69,6 +70,24 @@ pub async fn create_oidc_provider(
     let encrypted_secret = &request.client_secret;
 
     let provider = OidcProvider::create(&state.db, &request, encrypted_secret).await?;
+
+    // Added (TMAIL-307): audit-log OIDC provider creation. Client secret is
+    // intentionally omitted from the audit details.
+    audit_admin_action(
+        &state.db,
+        &claims,
+        "oidc_provider.create",
+        Some("oidc_provider"),
+        Some(&provider.id.to_string()),
+        Some(serde_json::json!({
+            "name": provider.name,
+            "issuer_url": provider.issuer_url,
+            "client_id": provider.client_id,
+            "redirect_uri": provider.redirect_uri,
+        })),
+    )
+    .await;
+
     Ok((StatusCode::CREATED, Json(provider)))
 }
 
@@ -92,6 +111,23 @@ pub async fn update_oidc_provider(
 
     let provider =
         OidcProvider::update(&state.db, id, &request, encrypted_secret).await?;
+
+    // Added (TMAIL-307): audit-log OIDC provider update — include whether the
+    // client secret was rotated but never the value itself.
+    audit_admin_action(
+        &state.db,
+        &claims,
+        "oidc_provider.update",
+        Some("oidc_provider"),
+        Some(&id.to_string()),
+        Some(serde_json::json!({
+            "client_secret_rotated": encrypted_secret.is_some(),
+            "name": request.name,
+            "issuer_url": request.issuer_url,
+        })),
+    )
+    .await;
+
     Ok(Json(provider))
 }
 
@@ -109,6 +145,18 @@ pub async fn delete_oidc_provider(
         .map_err(|_| AppError::NotFound(format!("OIDC provider {id} not found")))?;
 
     OidcProvider::delete(&state.db, id).await?;
+
+    // Added (TMAIL-307): audit-log OIDC provider delete.
+    audit_admin_action(
+        &state.db,
+        &claims,
+        "oidc_provider.delete",
+        Some("oidc_provider"),
+        Some(&id.to_string()),
+        None,
+    )
+    .await;
+
     Ok(StatusCode::NO_CONTENT)
 }
 

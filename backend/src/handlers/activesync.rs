@@ -13,6 +13,7 @@ use crate::models::activesync::{
     ActiveSyncDevice, ActiveSyncPolicy, CreatePolicyRequest, RegisterDeviceRequest,
     UpdatePolicyRequest,
 };
+use crate::services::audit::audit_admin_action;
 use crate::services::auth_service::Claims;
 use crate::state::AppState;
 
@@ -133,7 +134,7 @@ pub async fn list_policies(
 /// POST /api/admin/activesync/policies
 pub async fn create_policy(
     State(state): State<AppState>,
-    axum::Extension(_claims): axum::Extension<Claims>,
+    axum::Extension(claims): axum::Extension<Claims>,
     Json(body): Json<CreatePolicyRequest>,
 ) -> Result<(StatusCode, Json<ActiveSyncPolicy>), AppError> {
     // Added: Validate policy name is not empty
@@ -153,6 +154,20 @@ pub async fn create_policy(
     )
     .await?;
 
+    // Added (TMAIL-307): audit-log ActiveSync policy creation.
+    audit_admin_action(
+        &state.db,
+        &claims,
+        "activesync_policy.create",
+        Some("activesync_policy"),
+        Some(&policy.id.to_string()),
+        Some(serde_json::json!({
+            "name": policy.name,
+            "is_default": policy.is_default,
+        })),
+    )
+    .await;
+
     Ok((StatusCode::CREATED, Json(policy)))
 }
 
@@ -160,7 +175,7 @@ pub async fn create_policy(
 /// PUT /api/admin/activesync/policies/{id}
 pub async fn update_policy(
     State(state): State<AppState>,
-    axum::Extension(_claims): axum::Extension<Claims>,
+    axum::Extension(claims): axum::Extension<Claims>,
     Path(id): Path<uuid::Uuid>,
     Json(body): Json<UpdatePolicyRequest>,
 ) -> Result<Json<ActiveSyncPolicy>, AppError> {
@@ -206,6 +221,21 @@ pub async fn update_policy(
     .await?
     .ok_or_else(|| AppError::NotFound("Policy not found".to_string()))?;
 
+    // Added (TMAIL-307): audit-log ActiveSync policy update.
+    audit_admin_action(
+        &state.db,
+        &claims,
+        "activesync_policy.update",
+        Some("activesync_policy"),
+        Some(&id.to_string()),
+        Some(serde_json::json!({
+            "name": name,
+            "is_default": is_default,
+            "require_encryption": require_encryption,
+        })),
+    )
+    .await;
+
     Ok(Json(policy))
 }
 
@@ -213,11 +243,21 @@ pub async fn update_policy(
 /// DELETE /api/admin/activesync/policies/{id}
 pub async fn delete_policy(
     State(state): State<AppState>,
-    axum::Extension(_claims): axum::Extension<Claims>,
+    axum::Extension(claims): axum::Extension<Claims>,
     Path(id): Path<uuid::Uuid>,
 ) -> Result<StatusCode, AppError> {
     let deleted = ActiveSyncPolicy::delete(&state.db, id).await?;
     if deleted {
+        // Added (TMAIL-307): audit-log ActiveSync policy delete.
+        audit_admin_action(
+            &state.db,
+            &claims,
+            "activesync_policy.delete",
+            Some("activesync_policy"),
+            Some(&id.to_string()),
+            None,
+        )
+        .await;
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(AppError::NotFound("Policy not found".to_string()))
