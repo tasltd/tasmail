@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { RouterProvider } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { router, PUBLIC_PATHS } from '@/app/routes';
-import { apiClient } from '@/api/client';
+import { apiClient, TOKEN_CHANGED_EVENT } from '@/api/client';
+import { useWebSocket } from '@/hooks/useWebSocket';
 
 // TMAIL-220 / TMAIL-327: hand the access_token written by the classic SPA
 // (or by the Modern UI's own native /#/login screen) into apiClient on
@@ -37,11 +38,19 @@ function currentHashPath(): string {
 
 function AuthGate({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
+  // Added (TMAIL-328): track the active JWT so the WS hook below can open
+  // /ws?token=... once auth resolves. We keep the source of truth on the
+  // singleton apiClient, but expose it as React state so the hook re-mounts
+  // when it changes (login → logout flips this to null and the hook tears
+  // down the socket; login → swap-account flips it to a new token and the
+  // hook reconnects with the new JWT).
+  const [accessToken, setAccessToken] = useState<string | null>(null);
 
   useEffect(() => {
     const token = readStoredToken();
     if (token) {
       apiClient.setToken(token);
+      setAccessToken(token);
       setReady(true);
       return;
     }
@@ -60,6 +69,33 @@ function AuthGate({ children }: { children: React.ReactNode }) {
     setReady(true);
   }, []);
 
+  // Added (TMAIL-328): keep `accessToken` in lockstep with apiClient over
+  // the session lifetime. The initial-mount effect above only fires once,
+  // but the user may log in, refresh, or sign out without remounting
+  // AuthGate (LoginPage uses React Router navigate, not a full reload).
+  //
+  // Two listeners drive the resync:
+  //   1. TOKEN_CHANGED_EVENT — fired by apiClient.setToken on same-tab
+  //      login / refresh / logout.
+  //   2. storage — fired by the browser on cross-tab localStorage changes
+  //      so a login in another tab still spins up the WS here.
+  useEffect(() => {
+    const sync = () => setAccessToken(readStoredToken());
+    const onCustom = (e: Event) => {
+      const detail = (e as CustomEvent<{ token: string | null }>).detail;
+      setAccessToken(detail?.token ?? readStoredToken());
+    };
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === 'access_token' || e.key === null) sync();
+    };
+    window.addEventListener(TOKEN_CHANGED_EVENT, onCustom);
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener(TOKEN_CHANGED_EVENT, onCustom);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, []);
+
   if (!ready) {
     return (
       <div
@@ -75,7 +111,25 @@ function AuthGate({ children }: { children: React.ReactNode }) {
       </div>
     );
   }
-  return <>{children}</>;
+  return (
+    <>
+      {/* TMAIL-328: real-time push subscription. Mounted INSIDE AuthGate so
+          it only opens after a token is in hand. WsBridge holds the
+          useWebSocket call so toggling auth state cleanly mounts /
+          unmounts the socket along with the rest of the authed UI. */}
+      <WsBridge token={accessToken} />
+      {children}
+    </>
+  );
+}
+
+// TMAIL-328: Tiny presence-component that owns the /ws subscription so the
+// hook lives inside the QueryClientProvider and can invalidate the same
+// query cache the rest of the app reads from. Renders nothing — the only
+// side-effect is the WebSocket lifecycle managed by useWebSocket().
+function WsBridge({ token }: { token: string | null }) {
+  useWebSocket({ token, subscribeFolders: ['INBOX'] });
+  return null;
 }
 
 const queryClient = new QueryClient({

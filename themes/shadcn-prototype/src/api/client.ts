@@ -1,10 +1,24 @@
 import { API_BASE_URL } from './constants';
 
+// TMAIL-328: in-page event so listeners (AuthGate → WsBridge) can react to
+// login / logout / refresh without polling. Cross-tab changes still come
+// through the standard browser `storage` event since both classic and
+// modern UIs persist tokens via localStorage / sessionStorage.
+export const TOKEN_CHANGED_EVENT = 'tasmail:auth-token-changed';
+
 class ApiClient {
   private accessToken: string | null = null;
 
   setToken(token: string | null) {
+    const changed = this.accessToken !== token;
     this.accessToken = token;
+    if (changed && typeof window !== 'undefined' && typeof CustomEvent !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent<{ token: string | null }>(TOKEN_CHANGED_EVENT, {
+          detail: { token },
+        }),
+      );
+    }
   }
 
   getToken(): string | null {
@@ -94,7 +108,10 @@ class ApiClient {
       if (!response.ok) return false;
 
       const data = await response.json();
-      this.accessToken = data.access_token;
+      // Use setToken so the TMAIL-328 in-page change event fires here too —
+      // a refresh that rotates the access token is just as much a "token
+      // changed" moment as a fresh login, and the WS bridge needs to know.
+      this.setToken(data.access_token);
       store.setItem('access_token', data.access_token);
       store.setItem('refresh_token', data.refresh_token);
       return true;
