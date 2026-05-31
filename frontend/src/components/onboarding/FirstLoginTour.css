@@ -1,0 +1,75 @@
+/* TMAIL-401: First-login tour popover. Light backdrop + floating card. */
+
+.first-login-tour {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  pointer-events: none;
+}
+
+.first-login-tour__backdrop {
+  position: absolute;
+  inset: 0;
+  background-color: rgba(15, 23, 42, 0.35);
+  pointer-events: auto;
+}
+
+.first-login-tour__popover {
+  position: absolute;
+  width: 320px;
+  max-width: calc(100vw - 32px);
+  background-color: var(--color-bg-elevated, #ffffff);
+  color: var(--color-text, #0f172a);
+  border-radius: 12px;
+  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.25);
+  padding: 18px 20px;
+  pointer-events: auto;
+  border: 1px solid var(--color-border, rgba(15, 23, 42, 0.08));
+}
+
+.first-login-tour__popover--centered {
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.first-login-tour__step-count {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-secondary, #64748b);
+  margin-bottom: 6px;
+}
+
+.first-login-tour__title {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0 0 6px 0;
+}
+
+.first-login-tour__body {
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--color-text-secondary, #475569);
+  margin: 0 0 16px 0;
+}
+
+.first-login-tour__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.first-login-tour .btn--ghost {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--color-text-secondary, #475569);
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.first-login-tour .btn--ghost:hover {
+  background-color: var(--color-bg-hover, rgba(15, 23, 42, 0.04));
+}

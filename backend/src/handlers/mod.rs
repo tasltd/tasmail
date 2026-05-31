@@ -5,6 +5,8 @@ pub mod attachments;
 pub mod branding;
 pub mod auth;
 pub mod auto_reply;
+// Added (TMAIL-401): per-user preference flags (first-login tour seen, …).
+pub mod preferences;
 // Added: Email comment handlers for TMAIL-128
 pub mod comments;
 pub mod contacts;

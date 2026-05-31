@@ -11,12 +11,22 @@ vi.mock('../../hooks/useMailbox', () => ({
 
 const mockSelectedUid = vi.fn<() => number | null>(() => null);
 const mockSetSelectedUid = vi.fn();
+// TMAIL-401: store mock now includes selectedFolder so MessageList's
+// "render EmptyInboxState for INBOX" branch can be exercised.
+const mockSelectedFolder = vi.fn<() => string>(() => 'Sent');
 vi.mock('../../stores/mailStore', () => ({
   useMailStore: (selector: (s: Record<string, unknown>) => unknown) =>
     selector({
       selectedUid: mockSelectedUid(),
       setSelectedUid: mockSetSelectedUid,
+      selectedFolder: mockSelectedFolder(),
     }),
+}));
+
+// TMAIL-401: stub EmptyInboxState so we don't need to mock the byok query
+// inside MessageList tests — its own test file covers the rendering.
+vi.mock('./EmptyInboxState', () => ({
+  EmptyInboxState: () => <div data-testid="empty-inbox-state-stub">Empty inbox</div>,
 }));
 
 // Mock formatMessageDate to return the date string as-is for predictable assertions
@@ -50,6 +60,7 @@ describe('MessageList', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockSelectedUid.mockReturnValue(null);
+    mockSelectedFolder.mockReturnValue('Sent');
   });
 
   it('shows loading skeleton when loading', () => {
@@ -74,6 +85,20 @@ describe('MessageList', () => {
     });
     render(<MessageList />, { wrapper });
     expect(screen.getByText('No messages in this folder')).toBeInTheDocument();
+  });
+
+  // TMAIL-401: INBOX gets the richer EmptyInboxState component instead of
+  // the bare "No messages" string.
+  it('shows EmptyInboxState when INBOX is selected and there are no messages', () => {
+    mockSelectedFolder.mockReturnValue('INBOX');
+    mockUseCurrentMessages.mockReturnValue({
+      data: { messages: [], total: 0 },
+      isLoading: false,
+      error: null,
+    });
+    render(<MessageList />, { wrapper });
+    expect(screen.getByTestId('empty-inbox-state-stub')).toBeInTheDocument();
+    expect(screen.queryByText('No messages in this folder')).not.toBeInTheDocument();
   });
 
   it('renders message rows with from, subject, date', () => {

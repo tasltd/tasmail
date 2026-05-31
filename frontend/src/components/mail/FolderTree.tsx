@@ -54,8 +54,10 @@ function FolderItem({ folder }: { folder: Folder }) {
   return (
     <button
       // Changed: Added drop handlers and drop-target class for visual feedback (TMAIL-122)
+      // Added (TMAIL-401): data-tour="inbox" anchors the FirstLoginTour step 2 to the Inbox row.
       className={`folder-item ${isActive ? 'folder-item--active' : ''} ${isPrimary ? 'folder-item--primary' : ''} ${isOver ? 'folder-item--drop-target' : ''}`}
       onClick={() => setSelectedFolder(folder.name)}
+      data-tour={isPrimary ? 'inbox' : undefined}
       {...dropHandlers}
     >
       <Icon size={18} />

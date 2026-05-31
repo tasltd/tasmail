@@ -9,6 +9,8 @@ import { formatMessageDate } from '../../utils/date';
 // Added: EML import for TMAIL-68
 import { importEml } from '../../api/eml';
 import { LoadingSkeleton } from '../shared/LoadingSkeleton';
+// Added (TMAIL-401): empty-state copy with user's IMAP address when INBOX is empty.
+import { EmptyInboxState } from './EmptyInboxState';
 import type { MessageEnvelope } from '../../types/mail';
 
 // Added: Normalize subject by stripping Re:/Fwd: prefixes for threading
@@ -166,6 +168,11 @@ export function MessageList() {
   if (isLoading) return <LoadingSkeleton rows={10} />;
   if (error) return <div className="message-list__error">Failed to load messages</div>;
   if (!data?.messages.length) {
+    // TMAIL-401: INBOX gets the rich empty state with the user's configured
+    // IMAP address; other folders keep the bare copy.
+    if (selectedFolder === 'INBOX') {
+      return <EmptyInboxState />;
+    }
     return <div className="message-list__empty">No messages in this folder</div>;
   }
 

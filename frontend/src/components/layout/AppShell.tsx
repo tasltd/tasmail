@@ -15,6 +15,12 @@ import { useResponsive } from '../../hooks/useResponsive';
 import { useSearchUrlSync } from '../../hooks/useSearchUrlSync';
 // Added (TMAIL-88): "Pending sync: N actions" banner for offline queue visibility.
 import { PendingSyncBanner } from '../shared/PendingSyncBanner';
+// Added (TMAIL-401): lazy-loaded first-login product tour. Renders nothing
+// for users who have already dismissed it, so the import + chunk is cheap
+// after the initial visit.
+const FirstLoginTour = lazy(() =>
+  import('../onboarding/FirstLoginTour').then((m) => ({ default: m.FirstLoginTour })),
+);
 
 // Changed (TMAIL-259): Every Settings manager + Composer + SearchResults moved
 // to React.lazy() so the initial mailbox bundle ships only the list/reader
@@ -154,6 +160,12 @@ export function AppShell({ onLogout, content }: AppShellProps) {
       </div>
       {/* Added: Keyboard shortcut help dialog, toggled by '?' key */}
       {showHelp && <KeyboardShortcutHelp onClose={() => setShowHelp(false)} />}
+      {/* Added (TMAIL-401): mount the first-login tour once per shell. The
+          component handles its own visibility — for users who have already
+          dismissed it, it renders null after a single GET. */}
+      <Suspense fallback={null}>
+        <FirstLoginTour />
+      </Suspense>
     </div>
   );
 }

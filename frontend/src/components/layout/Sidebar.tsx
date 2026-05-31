@@ -48,7 +48,12 @@ export function Sidebar() {
 
   return (
     <aside className="sidebar">
-      <button className="btn btn--primary btn--compose" onClick={handleCompose}>
+      {/* data-tour="compose" anchors the FirstLoginTour step 1 (TMAIL-401). */}
+      <button
+        className="btn btn--primary btn--compose"
+        onClick={handleCompose}
+        data-tour="compose"
+      >
         <PenSquare size={18} />
         Compose
       </button>
@@ -76,6 +81,9 @@ export function Sidebar() {
                 key={item.key}
                 className={`folder-item ${isActive ? 'folder-item--active' : ''}`}
                 data-nav-key={item.key}
+                // Added (TMAIL-401): data-tour="settings" anchors the FirstLoginTour
+                // step 3 to the Settings hub entry in the grouped sidebar.
+                data-tour={item.key === 'settings-hub' ? 'settings' : undefined}
                 onClick={() => handleNavItem(item)}
               >
                 <Icon size={18} />

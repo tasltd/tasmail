@@ -1,6 +1,6 @@
 use axum::{
     middleware as axum_middleware,
-    routing::{delete, get, post, put},
+    routing::{delete, get, patch, post, put},
     Router,
 };
 use std::sync::Arc;
@@ -261,6 +261,14 @@ pub fn create_router(state: AppState) -> Router {
         .route(
             "/api/auto-reply",
             get(handlers::auto_reply::get_auto_reply).put(handlers::auto_reply::set_auto_reply),
+        )
+        // TMAIL-401: per-user preference flags. Currently only the
+        // first-login tour seen flag; future flags hang off the same
+        // /api/me/preferences/* prefix.
+        .route(
+            "/api/me/preferences/first-login-tour-seen",
+            get(handlers::preferences::get_first_login_tour_seen)
+                .patch(handlers::preferences::mark_first_login_tour_seen),
         )
         // Two-factor authentication
         .route("/api/2fa/enroll", post(handlers::two_factor::enroll))

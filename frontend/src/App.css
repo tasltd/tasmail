@@ -191,6 +191,39 @@ body {
   color: var(--color-text-secondary);
 }
 
+/* TMAIL-401: empty INBOX state with IMAP address hint. */
+.empty-inbox-state {
+  padding: 56px 24px;
+  text-align: center;
+  color: var(--color-text-secondary);
+  max-width: 520px;
+  margin: 0 auto;
+}
+.empty-inbox-state__icon {
+  color: var(--color-text-secondary);
+  margin-bottom: 16px;
+  display: flex;
+  justify-content: center;
+}
+.empty-inbox-state__title {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0 0 8px 0;
+}
+.empty-inbox-state__sub {
+  font-size: 14px;
+  line-height: 1.5;
+  margin: 0;
+}
+.empty-inbox-state__sub code {
+  background: var(--color-bg-hover, rgba(15, 23, 42, 0.05));
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  font-size: 13px;
+}
+
 /* Message Row */
 .message-row {
   display: grid;
