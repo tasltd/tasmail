@@ -16,6 +16,10 @@ import {
   ADMIN_TAB_SAML,
   ADMIN_TAB_OIDC,
   ADMIN_TAB_LDAP,
+  ADMIN_TAB_RETENTION,
+  ADMIN_TAB_LEGAL_HOLDS,
+  ADMIN_TAB_DLP,
+  ADMIN_TAB_EDISCOVERY,
   ADMIN_TABS,
 } from './audit-log-helpers.ts';
 
@@ -67,6 +71,15 @@ test('parseAdminTab recognises every TMAIL-353 sub-tab id', () => {
   assert.equal(parseAdminTab('ldap'), ADMIN_TAB_LDAP);
 });
 
+// TMAIL-354: same round-trip for the compliance sub-tabs so deep links
+// like `?tab=retention` and `?tab=legal-holds` survive reload.
+test('parseAdminTab recognises every TMAIL-354 compliance sub-tab id', () => {
+  assert.equal(parseAdminTab('retention'), ADMIN_TAB_RETENTION);
+  assert.equal(parseAdminTab('legal-holds'), ADMIN_TAB_LEGAL_HOLDS);
+  assert.equal(parseAdminTab('dlp'), ADMIN_TAB_DLP);
+  assert.equal(parseAdminTab('ediscovery'), ADMIN_TAB_EDISCOVERY);
+});
+
 test('parseAdminTab still rejects values not in the registry', () => {
   // Defends against silent additions slipping past the union type at runtime.
   assert.equal(parseAdminTab('settings'), ADMIN_TAB_OVERVIEW);
@@ -77,6 +90,7 @@ test('ADMIN_TABS registry lists every tab id exactly once', () => {
   const unique = new Set(ADMIN_TABS);
   assert.equal(unique.size, ADMIN_TABS.length, 'no duplicate tab ids');
   // Pin the expected ordering so the TabsList stays predictable.
+  // Updated TMAIL-354: appended retention/legal-holds/dlp/ediscovery.
   assert.deepEqual(Array.from(ADMIN_TABS), [
     'overview',
     'audit-log',
@@ -84,6 +98,10 @@ test('ADMIN_TABS registry lists every tab id exactly once', () => {
     'saml',
     'oidc',
     'ldap',
+    'retention',
+    'legal-holds',
+    'dlp',
+    'ediscovery',
   ]);
 });
 

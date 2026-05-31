@@ -26,6 +26,12 @@ export const ADMIN_TAB_BRANDING = 'branding' as const;
 export const ADMIN_TAB_SAML = 'saml' as const;
 export const ADMIN_TAB_OIDC = 'oidc' as const;
 export const ADMIN_TAB_LDAP = 'ldap' as const;
+// Added (TMAIL-354): compliance sub-tabs — retention policies, legal
+// holds, DLP rules + violations, eDiscovery cases.
+export const ADMIN_TAB_RETENTION = 'retention' as const;
+export const ADMIN_TAB_LEGAL_HOLDS = 'legal-holds' as const;
+export const ADMIN_TAB_DLP = 'dlp' as const;
+export const ADMIN_TAB_EDISCOVERY = 'ediscovery' as const;
 
 export type AdminTab =
   | typeof ADMIN_TAB_OVERVIEW
@@ -33,7 +39,11 @@ export type AdminTab =
   | typeof ADMIN_TAB_BRANDING
   | typeof ADMIN_TAB_SAML
   | typeof ADMIN_TAB_OIDC
-  | typeof ADMIN_TAB_LDAP;
+  | typeof ADMIN_TAB_LDAP
+  | typeof ADMIN_TAB_RETENTION
+  | typeof ADMIN_TAB_LEGAL_HOLDS
+  | typeof ADMIN_TAB_DLP
+  | typeof ADMIN_TAB_EDISCOVERY;
 
 // Single source of truth for the parser + the TabsList rendering order so
 // adding a new tab is one edit, not three.
@@ -44,6 +54,10 @@ export const ADMIN_TABS: readonly AdminTab[] = [
   ADMIN_TAB_SAML,
   ADMIN_TAB_OIDC,
   ADMIN_TAB_LDAP,
+  ADMIN_TAB_RETENTION,
+  ADMIN_TAB_LEGAL_HOLDS,
+  ADMIN_TAB_DLP,
+  ADMIN_TAB_EDISCOVERY,
 ] as const;
 
 /**

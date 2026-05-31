@@ -13,6 +13,12 @@
 // stays a thin shell that just routes the active tab. The tab IDs live
 // in audit-log-helpers (now the AdminTab union) so the parser stays
 // authoritative and adding a tab is a registry-style change.
+//
+// TMAIL-354: added four compliance sub-tabs — Retention policies, Legal
+// holds, DLP rules + violations, eDiscovery cases. Same shell pattern —
+// each sub-tab is its own component file, wired through the registry
+// in audit-log-helpers.ts so adding the next compliance feature is a
+// single registry-entry change.
 import { useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -33,12 +39,20 @@ import { BrandingTab } from './BrandingTab';
 import { SamlTab } from './SamlTab';
 import { OidcTab } from './OidcTab';
 import { LdapTab } from './LdapTab';
+import { RetentionTab } from './RetentionTab';
+import { LegalHoldsTab } from './LegalHoldsTab';
+import { DlpTab } from './DlpTab';
+import { EdiscoveryTab } from './EdiscoveryTab';
 import {
   ADMIN_TAB_AUDIT,
   ADMIN_TAB_BRANDING,
+  ADMIN_TAB_DLP,
+  ADMIN_TAB_EDISCOVERY,
   ADMIN_TAB_LDAP,
+  ADMIN_TAB_LEGAL_HOLDS,
   ADMIN_TAB_OIDC,
   ADMIN_TAB_OVERVIEW,
+  ADMIN_TAB_RETENTION,
   ADMIN_TAB_SAML,
   parseAdminTab,
   type AdminTab,
@@ -193,13 +207,17 @@ export function AdminDashboard() {
           onValueChange={(v) => setActiveTab(parseAdminTab(v))}
           className="space-y-4"
         >
-          <TabsList>
+          <TabsList className="flex-wrap h-auto">
             <TabsTrigger value={ADMIN_TAB_OVERVIEW} data-testid="admin-tab-overview">Overview</TabsTrigger>
             <TabsTrigger value={ADMIN_TAB_AUDIT} data-testid="admin-tab-audit-log">Audit log</TabsTrigger>
             <TabsTrigger value={ADMIN_TAB_BRANDING} data-testid="admin-tab-branding">Branding</TabsTrigger>
             <TabsTrigger value={ADMIN_TAB_SAML} data-testid="admin-tab-saml">SAML</TabsTrigger>
             <TabsTrigger value={ADMIN_TAB_OIDC} data-testid="admin-tab-oidc">OIDC</TabsTrigger>
             <TabsTrigger value={ADMIN_TAB_LDAP} data-testid="admin-tab-ldap">LDAP</TabsTrigger>
+            <TabsTrigger value={ADMIN_TAB_RETENTION} data-testid="admin-tab-retention">Retention</TabsTrigger>
+            <TabsTrigger value={ADMIN_TAB_LEGAL_HOLDS} data-testid="admin-tab-legal-holds">Legal holds</TabsTrigger>
+            <TabsTrigger value={ADMIN_TAB_DLP} data-testid="admin-tab-dlp">DLP</TabsTrigger>
+            <TabsTrigger value={ADMIN_TAB_EDISCOVERY} data-testid="admin-tab-ediscovery">eDiscovery</TabsTrigger>
           </TabsList>
 
           <TabsContent value={ADMIN_TAB_OVERVIEW} className="space-y-6">
@@ -489,6 +507,22 @@ export function AdminDashboard() {
 
           <TabsContent value={ADMIN_TAB_LDAP}>
             <LdapTab />
+          </TabsContent>
+
+          <TabsContent value={ADMIN_TAB_RETENTION}>
+            <RetentionTab />
+          </TabsContent>
+
+          <TabsContent value={ADMIN_TAB_LEGAL_HOLDS}>
+            <LegalHoldsTab />
+          </TabsContent>
+
+          <TabsContent value={ADMIN_TAB_DLP}>
+            <DlpTab />
+          </TabsContent>
+
+          <TabsContent value={ADMIN_TAB_EDISCOVERY}>
+            <EdiscoveryTab />
           </TabsContent>
         </Tabs>
       </div>
