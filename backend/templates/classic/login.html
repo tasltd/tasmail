@@ -1,0 +1,69 @@
+{% extends "classic/base.html" %}
+
+{# TMAIL-359 — Login form for the `/classic` no-JS surface.
+
+   Model:
+     * `email`      — value the user previously submitted (preserved across
+                      failed POSTs so they don't have to retype the address).
+                      Empty string on a fresh GET. Always HTML-escaped by
+                      Askama auto-escape for the .html extension.
+     * `error`      — Some("incorrect email or password") on a failed login
+                      OR a generic lockout / CSRF rejection sentence. None on
+                      a fresh GET. Always rendered inside a role="alert" block
+                      so screen readers announce it.
+     * `csrf_token` — pre-session CSRF token also written to the
+                      `tasmail_classic_login_csrf` cookie. Validated by
+                      POST /classic/login via a double-submit-cookie check
+                      since the canonical csrf middleware needs a
+                      `ClassicSession` row that doesn't exist until AFTER a
+                      successful login.
+     * `csp_nonce`  — per-request CSP nonce required by base.html.
+
+   The form deliberately uses the same `_csrf` field name as the post-login
+   surface (CSRF_FIELD_NAME constant) so a future migration to a unified
+   middleware doesn't have to rename hidden inputs. #}
+
+{% block title %}Sign in{% endblock %}
+
+{% block content %}
+  <h1>Sign in to TASMail Classic</h1>
+
+  {% if let Some(msg) = error %}
+    <div class="alert alert-error" role="alert">
+      <strong>{{ msg }}</strong>
+    </div>
+  {% endif %}
+
+  <form method="post" action="/classic/login" autocomplete="on" novalidate>
+    {# Pre-session double-submit-cookie CSRF token. The matching value sits
+       in the tasmail_classic_login_csrf cookie set by the GET handler. #}
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+
+    <label for="email">Email address</label>
+    <input type="email"
+           id="email"
+           name="email"
+           value="{{ email }}"
+           autocomplete="username"
+           inputmode="email"
+           required
+           aria-required="true"
+           autofocus>
+
+    <label for="password">Password</label>
+    <input type="password"
+           id="password"
+           name="password"
+           autocomplete="current-password"
+           required
+           aria-required="true">
+
+    <button type="submit">Sign in</button>
+  </form>
+
+  <p>
+    <small>
+      No JavaScript needed. This page works in lynx, w3m, and any HTML5 browser.
+    </small>
+  </p>
+{% endblock %}

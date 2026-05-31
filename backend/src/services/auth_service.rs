@@ -203,20 +203,30 @@ pub fn is_currently_locked(state: &LockoutState, now: chrono::DateTime<Utc>) -> 
     state.locked_until.map(|t| t > now).unwrap_or(false)
 }
 
-/// Authenticate user: verify credentials, create tokens, store session
+/// Added (TMAIL-359): Reusable password-evaluation step shared by the JWT
+/// login flow (`authenticate`) AND the Classic UI cookie-session login
+/// (`handlers::classic::auth`). Performs the same three operations:
 ///
-/// Added (TMAIL-273): Enforces per-account brute-force lockout in addition
-/// to the existing per-IP rate limit. Threshold/window/duration come from
-/// `LockoutConfig` so operators can tune the policy.
-pub async fn authenticate(
+///   1. Resolve `username` to a `Mailbox`. Missing / inactive → `Unauthorized`.
+///   2. Honour the existing per-account lockout window (migration 073). Still
+///      locked → `AccountLocked` with the generic LOCKOUT_MESSAGE.
+///   3. Verify the password. On failure, increment the rolling counter and
+///      audit-log; on the *just-locked* transition, return `AccountLocked`
+///      instead of `Unauthorized` so the caller surfaces the right status.
+///   4. On success, clear the lockout columns and return the verified
+///      `Mailbox`. Token / session creation is the caller's concern — that's
+///      what makes this reusable between the two login surfaces.
+///
+/// Auditing matches `authenticate`'s prior behaviour 1:1 so existing audit
+/// dashboards keep producing the same row shapes.
+pub async fn evaluate_password_login(
     pool: &sqlx::PgPool,
-    config: &JwtConfig,
     lockout_cfg: &LockoutConfig,
     username: &str,
     password: &str,
     ip_address: Option<&str>,
     user_agent: Option<&str>,
-) -> Result<TokenPair, AppError> {
+) -> Result<Mailbox, AppError> {
     let mailbox = Mailbox::find_by_username(pool, username)
         .await?
         .ok_or_else(|| AppError::Unauthorized("Invalid credentials".to_string()))?;
@@ -308,6 +318,38 @@ pub async fn authenticate(
         )
         .await;
     }
+
+    Ok(mailbox)
+}
+
+/// Authenticate user: verify credentials, create tokens, store session
+///
+/// Added (TMAIL-273): Enforces per-account brute-force lockout in addition
+/// to the existing per-IP rate limit. Threshold/window/duration come from
+/// `LockoutConfig` so operators can tune the policy.
+///
+/// Changed (TMAIL-359): The password-evaluation + lockout-bookkeeping step
+/// was extracted into `evaluate_password_login` so the Classic UI's
+/// cookie-session login path can share it. This function now wraps that
+/// shared helper with JWT issuance + refresh-token persistence.
+pub async fn authenticate(
+    pool: &sqlx::PgPool,
+    config: &JwtConfig,
+    lockout_cfg: &LockoutConfig,
+    username: &str,
+    password: &str,
+    ip_address: Option<&str>,
+    user_agent: Option<&str>,
+) -> Result<TokenPair, AppError> {
+    let mailbox = evaluate_password_login(
+        pool,
+        lockout_cfg,
+        username,
+        password,
+        ip_address,
+        user_agent,
+    )
+    .await?;
 
     let access_token = create_access_token(config, &mailbox)?;
     let refresh_token = generate_refresh_token();

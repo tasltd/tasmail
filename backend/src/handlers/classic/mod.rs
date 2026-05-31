@@ -50,6 +50,12 @@ pub mod auth;
 pub mod csrf;
 pub use csrf::{render_csrf_error_response, CsrfErrorTemplate, CSRF_FIELD_NAME};
 
+// Added (TMAIL-359): GET + POST /classic/login handlers and the login form
+// template struct. Uses the pre-session double-submit-cookie CSRF pattern
+// since the canonical CSRF middleware needs a ClassicSession that doesn't
+// exist before login completes.
+pub mod login;
+
 // NAME: Session cookie name shared with the Classic UI auth handler that
 // lands in TMAIL-357 (P0 #3). The scaffold only needs to *detect* presence;
 // the cookie value is opaque here and validated later by the dedicated
@@ -89,6 +95,13 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/classic", get(index_redirect))
         .route("/classic/", get(index_redirect))
+        // Added (TMAIL-359): Public login routes — must sit ABOVE the
+        // catch-all and BELOW any authenticated routes (none yet). These
+        // are intentionally NOT behind classic_session_middleware (the
+        // user has no session yet) nor classic_csrf_middleware (it needs
+        // a ClassicSession); the POST handler does its own double-submit-
+        // cookie CSRF check.
+        .route("/classic/login", get(login::get_login).post(login::post_login))
         // PURPOSE: explicit catch-all so the 404 page only fires for paths
         // under `/classic/...`. The `{*rest}` wildcard captures any remaining
         // path segments — child tasks (login, folder, message, compose) will
