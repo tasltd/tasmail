@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use sqlx::{FromRow, PgPool};
+use sqlx::{FromRow, PgConnection, PgPool};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, FromRow)]
@@ -163,6 +163,82 @@ impl MigrationJob {
             .bind(id)
             .execute(pool)
             .await?;
+        Ok(())
+    }
+
+    // TMAIL-345: per-connection variants used by the RLS-aware HTTP handlers
+    // (see handlers/migration.rs). These run the same SQL but against a
+    // caller-supplied PgConnection that has `app.mailbox_id` already SET, so
+    // the migration_jobs RLS policy evaluates correctly. The pool-based
+    // methods above are kept for background workers (email_scheduler, etc.)
+    // which set their own RLS context.
+
+    pub async fn create_imap_conn(
+        conn: &mut PgConnection,
+        mailbox_id: Uuid,
+        req: &CreateImapMigrationRequest,
+    ) -> Result<MigrationJob, sqlx::Error> {
+        sqlx::query_as::<_, MigrationJob>(
+            "INSERT INTO migration_jobs (mailbox_id, job_type, source_host, source_port, source_user, source_password_encrypted, source_use_ssl)
+             VALUES ($1, 'imap', $2, $3, $4, $5, $6)
+             RETURNING *"
+        )
+        .bind(mailbox_id)
+        .bind(&req.source_host)
+        .bind(req.source_port.unwrap_or(993))
+        .bind(&req.source_user)
+        .bind(&req.source_password)
+        .bind(req.source_use_ssl.unwrap_or(true))
+        .fetch_one(conn)
+        .await
+    }
+
+    pub async fn create_mbox_conn(
+        conn: &mut PgConnection,
+        mailbox_id: Uuid,
+        req: &CreateMboxImportRequest,
+    ) -> Result<MigrationJob, sqlx::Error> {
+        sqlx::query_as::<_, MigrationJob>(
+            "INSERT INTO migration_jobs (mailbox_id, job_type, mbox_file_path)
+             VALUES ($1, 'mbox', $2)
+             RETURNING *",
+        )
+        .bind(mailbox_id)
+        .bind(&req.mbox_file_path)
+        .fetch_one(conn)
+        .await
+    }
+
+    pub async fn find_by_id_conn(
+        conn: &mut PgConnection,
+        id: Uuid,
+    ) -> Result<Option<MigrationJob>, sqlx::Error> {
+        sqlx::query_as::<_, MigrationJob>("SELECT * FROM migration_jobs WHERE id = $1")
+            .bind(id)
+            .fetch_optional(conn)
+            .await
+    }
+
+    pub async fn list_by_mailbox_conn(
+        conn: &mut PgConnection,
+        mailbox_id: Uuid,
+    ) -> Result<Vec<MigrationJob>, sqlx::Error> {
+        sqlx::query_as::<_, MigrationJob>(
+            "SELECT * FROM migration_jobs WHERE mailbox_id = $1 ORDER BY created_at DESC",
+        )
+        .bind(mailbox_id)
+        .fetch_all(conn)
+        .await
+    }
+
+    pub async fn cancel_conn(conn: &mut PgConnection, id: Uuid) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "UPDATE migration_jobs SET status = 'cancelled', completed_at = NOW() \
+             WHERE id = $1 AND status IN ('pending', 'running')",
+        )
+        .bind(id)
+        .execute(conn)
+        .await?;
         Ok(())
     }
 }

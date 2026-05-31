@@ -22,9 +22,11 @@ import {
   ShieldCheck,
   Palette,
   Server,
+  Upload,
   type LucideIcon,
 } from 'lucide-react';
 import { SignaturesPanel } from '@/features/settings/SignaturesPanel';
+import { MigrationPanel } from '@/features/settings/MigrationPanel';
 
 export interface SettingsTab {
   /** URL slug under /settings (e.g. "profile" → /settings/profile) */
@@ -111,6 +113,16 @@ export const SETTINGS_TABS: SettingsTab[] = [
     description:
       'BYOK mail-server credentials — IMAP fetch and SMTP submission endpoints.',
     testId: 'settings-tab-imap-smtp',
+  },
+  {
+    slug: 'import',
+    label: 'Import',
+    icon: Upload,
+    description:
+      'Email migration — IMAP-to-IMAP, MBOX file import, and Outlook PST upload with progress tracking.',
+    testId: 'settings-tab-import',
+    // TMAIL-345: real pane with IMAP/MBOX/PST sub-tabs and live job history.
+    component: MigrationPanel,
   },
 ];
 

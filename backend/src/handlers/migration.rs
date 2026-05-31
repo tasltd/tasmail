@@ -1,8 +1,16 @@
-use axum::{
-    extract::{Path, State},
-    http::StatusCode,
-    Json,
-};
+// TMAIL-345: migration handlers switched from `&state.db` to the `RlsConn`
+// extractor so the INSERT/UPDATE/SELECT queries run against a connection
+// that has `app.mailbox_id` pre-set to the request's JWT subject.
+//
+// The previous pattern (`&state.db` directly) was the root cause of an
+// intermittent "new row violates row-level security policy for table
+// migration_jobs" 500 — when a fresh acquire pulled a pool connection that
+// carried a stale `app.mailbox_id` from a different prior request, the
+// CHECK on INSERT failed. The fix matches the helper documented in
+// services::db_session (TMAIL-309) — this handler module is the first
+// caller of `RlsConn`, setting the migration precedent for the other
+// 60+ handlers to convert incrementally.
+use axum::{extract::Path, http::StatusCode, Json};
 use uuid::Uuid;
 
 use crate::error::AppError;
@@ -10,7 +18,7 @@ use crate::models::migration_job::{
     CreateImapMigrationRequest, CreateMboxImportRequest, MigrationJob,
 };
 use crate::services::auth_service::Claims;
-use crate::state::AppState;
+use crate::services::db_session::RlsConn;
 
 fn parse_mailbox_id(claims: &Claims) -> Result<Uuid, AppError> {
     claims
@@ -21,18 +29,22 @@ fn parse_mailbox_id(claims: &Claims) -> Result<Uuid, AppError> {
 
 /// POST /api/migration/imap — Start an IMAP-to-IMAP migration
 pub async fn start_imap_migration(
-    State(state): State<AppState>,
+    mut rls: RlsConn,
     axum::Extension(claims): axum::Extension<Claims>,
     Json(body): Json<CreateImapMigrationRequest>,
 ) -> Result<(StatusCode, Json<MigrationJob>), AppError> {
     let mailbox_id = parse_mailbox_id(&claims)?;
 
-    // Validate required fields
-    if body.source_host.is_empty() || body.source_user.is_empty() || body.source_password.is_empty() {
-        return Err(AppError::BadRequest("Source host, user, and password are required".to_string()));
+    if body.source_host.is_empty()
+        || body.source_user.is_empty()
+        || body.source_password.is_empty()
+    {
+        return Err(AppError::BadRequest(
+            "Source host, user, and password are required".to_string(),
+        ));
     }
 
-    let job = MigrationJob::create_imap(&state.db, mailbox_id, &body).await?;
+    let job = MigrationJob::create_imap_conn(&mut *rls, mailbox_id, &body).await?;
 
     // NOTE: The actual migration execution is handled by a background worker
     // that polls for pending jobs. In production, this would invoke imapsync.
@@ -43,7 +55,7 @@ pub async fn start_imap_migration(
 
 /// POST /api/migration/mbox — Start an MBOX file import
 pub async fn start_mbox_import(
-    State(state): State<AppState>,
+    mut rls: RlsConn,
     axum::Extension(claims): axum::Extension<Claims>,
     Json(body): Json<CreateMboxImportRequest>,
 ) -> Result<(StatusCode, Json<MigrationJob>), AppError> {
@@ -53,27 +65,27 @@ pub async fn start_mbox_import(
         return Err(AppError::BadRequest("MBOX file path is required".to_string()));
     }
 
-    let job = MigrationJob::create_mbox(&state.db, mailbox_id, &body).await?;
+    let job = MigrationJob::create_mbox_conn(&mut *rls, mailbox_id, &body).await?;
 
     Ok((StatusCode::CREATED, Json(job)))
 }
 
 /// GET /api/migration — List migration jobs for the current user
 pub async fn list_migrations(
-    State(state): State<AppState>,
+    mut rls: RlsConn,
     axum::Extension(claims): axum::Extension<Claims>,
 ) -> Result<Json<Vec<MigrationJob>>, AppError> {
     let mailbox_id = parse_mailbox_id(&claims)?;
-    let jobs = MigrationJob::list_by_mailbox(&state.db, mailbox_id).await?;
+    let jobs = MigrationJob::list_by_mailbox_conn(&mut *rls, mailbox_id).await?;
     Ok(Json(jobs))
 }
 
 /// GET /api/migration/:id — Get migration job status
 pub async fn get_migration(
-    State(state): State<AppState>,
+    mut rls: RlsConn,
     Path(id): Path<Uuid>,
 ) -> Result<Json<MigrationJob>, AppError> {
-    let job = MigrationJob::find_by_id(&state.db, id)
+    let job = MigrationJob::find_by_id_conn(&mut *rls, id)
         .await?
         .ok_or_else(|| AppError::NotFound("Migration job not found".to_string()))?;
     Ok(Json(job))
@@ -81,13 +93,13 @@ pub async fn get_migration(
 
 /// POST /api/migration/:id/cancel — Cancel a pending/running migration
 pub async fn cancel_migration(
-    State(state): State<AppState>,
+    mut rls: RlsConn,
     axum::Extension(claims): axum::Extension<Claims>,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
     let mailbox_id = parse_mailbox_id(&claims)?;
 
-    let job = MigrationJob::find_by_id(&state.db, id)
+    let job = MigrationJob::find_by_id_conn(&mut *rls, id)
         .await?
         .ok_or_else(|| AppError::NotFound("Migration job not found".to_string()))?;
 
@@ -96,12 +108,13 @@ pub async fn cancel_migration(
     }
 
     if job.status != "pending" && job.status != "running" {
-        return Err(AppError::BadRequest(
-            format!("Cannot cancel job in '{}' state", job.status),
-        ));
+        return Err(AppError::BadRequest(format!(
+            "Cannot cancel job in '{}' state",
+            job.status
+        )));
     }
 
-    MigrationJob::cancel(&state.db, id).await?;
+    MigrationJob::cancel_conn(&mut *rls, id).await?;
     Ok(StatusCode::OK)
 }
 

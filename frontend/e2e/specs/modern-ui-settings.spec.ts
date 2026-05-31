@@ -43,6 +43,10 @@ const EXPECTED_TABS: Array<{ slug: string; label: string; testId: string }> = [
   { slug: 'mfa', label: 'MFA', testId: 'settings-tab-mfa' },
   { slug: 'theme', label: 'Theme', testId: 'settings-tab-theme' },
   { slug: 'imap-smtp', label: 'IMAP / SMTP', testId: 'settings-tab-imap-smtp' },
+  // TMAIL-345: Import tab — IMAP/MBOX/PST migration wizard, ships a real
+  // pane (MigrationPanel) so the "Coming soon" placeholder branch is skipped
+  // below, same exception path Signatures (TMAIL-331) takes.
+  { slug: 'import', label: 'Import', testId: 'settings-tab-import' },
 ];
 
 test.describe('TMAIL-323 alt-UI Settings shell — Navbar button + side-tab navigation', () => {
@@ -146,18 +150,23 @@ test.describe('TMAIL-323 alt-UI Settings shell — Navbar button + side-tab navi
         page.getByTestId(`${t.testId}-pane`),
         `${t.label} pane must render after clicking its tab`,
       ).toBeVisible({ timeout: 10_000 });
-      // TMAIL-331: Signatures now ships a real pane (SignaturesPanel) so it
-      // no longer renders the "Coming soon" placeholder. Every other tab is
-      // still placeholder-backed for now.
-      if (t.slug !== 'signatures') {
-        await expect(
-          page.getByTestId(`${t.testId}-coming-soon`),
-          `${t.label} pane must render its "Coming soon" placeholder`,
-        ).toBeVisible();
-      } else {
+      // TMAIL-331: Signatures ships a real pane (SignaturesPanel).
+      // TMAIL-345: Import ships a real pane (MigrationPanel).
+      // Every other tab is still placeholder-backed for now.
+      if (t.slug === 'signatures') {
         await expect(
           page.getByTestId('signatures-new-button'),
           'Signatures pane renders its New signature CTA',
+        ).toBeVisible();
+      } else if (t.slug === 'import') {
+        await expect(
+          page.getByTestId('migration-imap-form'),
+          'Import pane renders the IMAP migration form (default sub-tab)',
+        ).toBeVisible();
+      } else {
+        await expect(
+          page.getByTestId(`${t.testId}-coming-soon`),
+          `${t.label} pane must render its "Coming soon" placeholder`,
         ).toBeVisible();
       }
 
@@ -165,14 +174,15 @@ test.describe('TMAIL-323 alt-UI Settings shell — Navbar button + side-tab navi
     }
 
     // ── 6. deep-link survives reload (URL is the source of truth) ──────────
-    // Already on /settings/imap-smtp after the loop. Reload and assert the
-    // same pane is still active — proves we read state from the URL, not
-    // from a transient in-memory `useState`.
+    // Already on /settings/import after the loop (TMAIL-345 added Import as
+    // the new trailing tab). Reload and assert the same pane is still
+    // active — proves we read state from the URL, not from a transient
+    // in-memory `useState`.
     await page.reload();
     await page.waitForLoadState('domcontentloaded');
     await expect(
-      page.getByTestId('settings-tab-imap-smtp-pane'),
-      'IMAP/SMTP pane must survive a full-page reload',
+      page.getByTestId('settings-tab-import-pane'),
+      'Import pane must survive a full-page reload',
     ).toBeVisible({ timeout: 15_000 });
     await takeScreenshot(page, `${SCREENSHOT_DIR}/04-reload-survives`);
   });
