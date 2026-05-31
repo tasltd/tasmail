@@ -219,7 +219,13 @@
          a place to submit to, and the CSRF token is already threaded
          through. The action="" attribute makes a stray submission a
          no-op refresh of the current page. #}
-      <form class="bulk-actions" method="post" action="">
+      {# TMAIL-369: id="classic-bulk-actions" lets the per-row checkboxes
+         below reference this form via the `form=` attribute even though
+         they sit in the <table> sibling. The previous markup used `form=""`
+         on the checkboxes, which is invalid HTML (axe flags it: an empty
+         form reference is ambiguous). Future bulk-action hookup
+         (TMAIL-376/377/380) will keep this binding in place. #}
+      <form id="classic-bulk-actions" class="bulk-actions" method="post" action="">
         <input type="hidden" name="_csrf" value="{{ csrf_token }}">
         <button type="submit" name="action" value="mark_read" disabled>Mark read</button>
         <button type="submit" name="action" value="mark_unread" disabled>Mark unread</button>
@@ -246,7 +252,12 @@
             {% for m in messages %}
               <tr class="msg-row{% if !m.is_read %} msg-row-unread{% endif %}">
                 <td class="col-check">
-                  <input type="checkbox" form="" name="uid" value="{{ m.uid }}" aria-label="Select message from {{ m.from }}">
+                  {# TMAIL-369: bind to the bulk-actions form by id rather
+                     than the previous empty `form=""` (axe-core flags an
+                     empty form reference as invalid). The form lives in
+                     the sibling above this <table>, so the per-row
+                     checkboxes have to declare the binding explicitly. #}
+                  <input type="checkbox" form="classic-bulk-actions" name="uid" value="{{ m.uid }}" aria-label="Select message from {{ m.from }}">
                 </td>
                 <td class="col-sender">{{ m.from }}</td>
                 <td class="col-subject">

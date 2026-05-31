@@ -65,6 +65,22 @@
       z-index: 100;
     }
     .skip-link:focus { transform: translateY(0); outline: 3px solid var(--tm-focus-ring); }
+    /* TMAIL-369: WCAG-compliant visually-hidden utility for screen-reader-only
+       labels (used by the brand "TASMail" suffix, the folder-list checkbox
+       column header, and the Move-to dropdown label). Keeps the text in the
+       accessibility tree without showing it on screen. Standard SR-only
+       recipe: 1×1px, clipped, no overflow, but NOT display:none. */
+    .visually-hidden {
+      position: absolute !important;
+      width: 1px !important;
+      height: 1px !important;
+      padding: 0 !important;
+      margin: -1px !important;
+      overflow: hidden !important;
+      clip: rect(0, 0, 0, 0) !important;
+      white-space: nowrap !important;
+      border: 0 !important;
+    }
     /* ===== Landmark layout (header → nav → main → footer) ===== */
     .site-header {
       background: var(--tm-charcoal-900);
