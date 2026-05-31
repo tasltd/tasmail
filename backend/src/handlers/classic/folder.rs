@@ -109,12 +109,19 @@ fn message_is_read(env: &MessageEnvelope) -> bool {
 /// Added (TMAIL-366): `sent=1` is appended by the compose POST handler on
 /// a successful send and surfaces as a green "Message sent" banner on
 /// this view. Any other value (or absence) means no banner.
+///
+/// Added (TMAIL-367): `deleted=1` is appended by the delete POST handler
+/// after a successful move-to-Trash OR permanent expunge from Trash, and
+/// surfaces as a green "Message deleted" banner. Same truthy-value
+/// matching as `sent` so a future `?deleted=true` link still works.
 #[derive(Debug, Deserialize, Default)]
 pub struct FolderQuery {
     #[serde(default)]
     pub page: Option<u32>,
     #[serde(default)]
     pub sent: Option<String>,
+    #[serde(default)]
+    pub deleted: Option<String>,
 }
 
 impl FolderQuery {
@@ -126,6 +133,16 @@ impl FolderQuery {
     /// might emit) is present. Used to flip the success banner on.
     fn sent_banner(&self) -> bool {
         match self.sent.as_deref() {
+            Some(v) => matches!(v, "1" | "true" | "yes"),
+            None => false,
+        }
+    }
+
+    /// Added (TMAIL-367): True when `?deleted=1` is present, set by the
+    /// delete POST handler on a successful move-to-Trash OR permanent
+    /// expunge from Trash. Drives the one-time confirmation banner.
+    fn deleted_banner(&self) -> bool {
+        match self.deleted.as_deref() {
             Some(v) => matches!(v, "1" | "true" | "yes"),
             None => false,
         }
@@ -212,6 +229,12 @@ pub struct FolderTemplate {
     /// at the top of the message list so the user gets confirmation that
     /// the message they just composed was actually accepted by SMTP.
     pub sent_banner: bool,
+    /// Added (TMAIL-367): true when the user landed here via the delete
+    /// POST-Redirect-Get with `?deleted=1`. Drives a one-time green
+    /// banner at the top of the message list so the user gets confirmation
+    /// that their delete action actually completed (either moved to Trash
+    /// or permanently expunged when already in Trash).
+    pub deleted_banner: bool,
     /// Per-request CSP nonce. Required by base.html (TMAIL-356).
     pub csp_nonce: String,
 }
@@ -404,6 +427,7 @@ pub async fn get_folder(
         messages,
         csrf_token: session.csrf_token.clone(),
         sent_banner: query.sent_banner(),
+        deleted_banner: query.deleted_banner(),
         csp_nonce: CspNonce::new().into_string(),
     };
 
@@ -464,6 +488,7 @@ mod tests {
             messages: vec![],
             csrf_token: "test-csrf-token".to_string(),
             sent_banner: false,
+            deleted_banner: false,
             csp_nonce: "test-nonce-fixed".to_string(),
         }
     }
@@ -639,7 +664,7 @@ mod tests {
 
     #[test]
     fn folder_query_defaults_to_page_zero() {
-        let q = FolderQuery { page: None, sent: None };
+        let q = FolderQuery { page: None, sent: None, deleted: None };
         assert_eq!(q.page(), 0);
         let q = FolderQuery::default();
         assert_eq!(q.page(), 0);
@@ -647,7 +672,7 @@ mod tests {
 
     #[test]
     fn folder_query_passes_explicit_page() {
-        let q = FolderQuery { page: Some(3), sent: None };
+        let q = FolderQuery { page: Some(3), sent: None, deleted: None };
         assert_eq!(q.page(), 3);
     }
 
@@ -665,6 +690,7 @@ mod tests {
             let q = FolderQuery {
                 page: None,
                 sent: Some((*val).to_string()),
+                deleted: None,
             };
             assert!(q.sent_banner(), "?sent={val} should turn the banner on");
         }
@@ -678,8 +704,43 @@ mod tests {
             let q = FolderQuery {
                 page: None,
                 sent: Some((*val).to_string()),
+                deleted: None,
             };
             assert!(!q.sent_banner(), "?sent={val} should NOT turn the banner on");
+        }
+    }
+
+    // ----- deleted_banner (TMAIL-367) -----
+
+    #[test]
+    fn folder_query_deleted_banner_off_by_default() {
+        let q = FolderQuery::default();
+        assert!(!q.deleted_banner());
+    }
+
+    #[test]
+    fn folder_query_deleted_banner_on_for_truthy_values() {
+        for val in &["1", "true", "yes"] {
+            let q = FolderQuery {
+                page: None,
+                sent: None,
+                deleted: Some((*val).to_string()),
+            };
+            assert!(q.deleted_banner(), "?deleted={val} should turn the banner on");
+        }
+    }
+
+    #[test]
+    fn folder_query_deleted_banner_off_for_other_values() {
+        // A malformed bookmark with `?deleted=oops` shouldn't flash a
+        // green success banner — only canonical truthy values flip it.
+        for val in &["0", "false", "no", "oops", ""] {
+            let q = FolderQuery {
+                page: None,
+                sent: None,
+                deleted: Some((*val).to_string()),
+            };
+            assert!(!q.deleted_banner(), "?deleted={val} should NOT turn the banner on");
         }
     }
 
@@ -729,6 +790,34 @@ mod tests {
         assert!(
             !body.contains("Message sent"),
             "success copy must NOT render when sent_banner = false: {body}"
+        );
+    }
+
+    // ----- TMAIL-367: deleted banner -----
+
+    #[test]
+    fn folder_template_renders_deleted_success_banner_when_flag_set() {
+        let mut t = fresh_template();
+        t.deleted_banner = true;
+        let body = t.render().expect("template renders");
+        assert!(
+            body.contains("alert-success"),
+            "success alert class missing when deleted_banner = true: {body}"
+        );
+        assert!(
+            body.contains("Message deleted"),
+            "deleted banner copy missing: {body}"
+        );
+    }
+
+    #[test]
+    fn folder_template_omits_deleted_success_banner_by_default() {
+        // fresh_template() has deleted_banner = false. A green "Message
+        // deleted" on a regular folder open would be misleading.
+        let body = fresh_template().render().expect("template renders");
+        assert!(
+            !body.contains("Message deleted"),
+            "deleted copy must NOT render when deleted_banner = false: {body}"
         );
     }
 

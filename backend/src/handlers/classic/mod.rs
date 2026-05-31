@@ -98,6 +98,14 @@ pub mod attachment;
 // the session and CSRF middleware.
 pub mod compose;
 
+// Added (TMAIL-367): POST /classic/folders/{folder}/messages/{uid}/delete.
+// Branches on the source folder — moves to Trash from anywhere else, or
+// renders a confirm page (and only on confirm POSTs through to a
+// permanent IMAP EXPUNGE) when the user is already in Trash. Mounts on
+// the authenticated sub-router so it inherits both the session and CSRF
+// middleware.
+pub mod delete;
+
 // NAME: Session cookie name shared with the Classic UI auth handler that
 // lands in TMAIL-357 (P0 #3). The scaffold only needs to *detect* presence;
 // the cookie value is opaque here and validated later by the dedicated
@@ -247,6 +255,16 @@ fn authenticated_router(state: AppState) -> Router<AppState> {
         .route(
             "/classic/compose",
             get(compose::get_compose).post(compose::post_compose),
+        )
+        // Added (TMAIL-367): POST-only delete endpoint. Renders a confirm
+        // page when the source folder IS the user's trash folder (so a
+        // double-confirm gates the permanent EXPUNGE), otherwise moves to
+        // trash and 303-redirects back to the source folder. The CSRF
+        // middleware below already buffers + validates `_csrf` for every
+        // POST on this sub-router.
+        .route(
+            "/classic/folders/{folder}/messages/{uid}/delete",
+            post(delete::post_delete),
         )
         // Inner layer: CSRF check on state-changing methods. Runs AFTER
         // the session middleware on the request side, so the session row

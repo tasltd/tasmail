@@ -1,0 +1,150 @@
+{% extends "classic/base.html" %}
+
+{# TMAIL-367 — Permanent-delete confirmation page for the /classic no-JS
+   surface. Rendered ONLY when the user POSTs the initial Delete from a
+   message that already lives in the user's resolved trash folder
+   (`ImapService::trash_folder()`). The confirm form below POSTs back to
+   the SAME endpoint with `confirm=1` so the handler branches into the
+   IMAP EXPUNGE path.
+
+   Required template context (set by `handlers::classic::delete::post_delete`):
+     * `current_folder`       — display name (e.g. Trash, Deleted Items)
+     * `current_folder_href`  — URL-encoded segment for the form action +
+                                cancel-link + back-to-folder href
+     * `uid`                  — message UID (drives <title> + form action)
+     * `subject`              — pre-cleaned subject, `(no subject)` substituted
+     * `from`                 — display "Name <addr@host>"; empty string = omit row
+     * `form_action`          — POST endpoint (same path as the Delete button)
+     * `cancel_href`          — back-to-message link
+     * `csrf_token`           — threaded into confirm form + logout partial
+     * `csp_nonce`            — required by base.html #}
+
+{% block title %}Delete permanently — {{ subject }}{% endblock %}
+
+{% block logout_form %}{% include "classic/_logout_form.html" %}{% endblock %}
+
+{% block content %}
+  <style nonce="{{ csp_nonce }}">
+    /* Destructive-action confirm layout. Inherits base.html palette
+       tokens. Uses the same .alert-error styling that the CSRF page does
+       so the visual weight matches the gravity of the action. */
+    .confirm-back {
+      display: inline-block;
+      margin: 0 0 0.75rem;
+      font-size: 0.875rem;
+    }
+    .confirm-headers {
+      margin: 0 0 1rem;
+      padding: 0.75rem 1rem;
+      background: var(--tm-bg-light);
+      border: 1px solid var(--tm-border);
+      border-radius: 4px;
+    }
+    .confirm-headers dt {
+      float: left;
+      clear: left;
+      width: 5rem;
+      font-weight: 700;
+      color: var(--tm-muted);
+      padding: 0.125rem 0;
+    }
+    .confirm-headers dd {
+      margin: 0 0 0 5rem;
+      padding: 0.125rem 0;
+      color: var(--tm-charcoal-900);
+      word-break: break-word;
+    }
+    .confirm-headers dl::after {
+      content: "";
+      display: block;
+      clear: both;
+    }
+    .confirm-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      align-items: center;
+      margin: 1.5rem 0 0;
+      padding-top: 1rem;
+      border-top: 1px solid var(--tm-border);
+    }
+    .confirm-actions form {
+      display: inline;
+      margin: 0;
+    }
+    .confirm-actions button {
+      display: inline-block;
+      padding: 0.4rem 0.85rem;
+      font-size: 0.9375rem;
+      border-radius: 3px;
+      cursor: pointer;
+    }
+    .confirm-actions button.danger {
+      background: var(--tm-danger);
+      color: #ffffff;
+      border: 1px solid var(--tm-danger);
+    }
+    .confirm-actions a.cancel-link {
+      display: inline-block;
+      padding: 0.4rem 0.85rem;
+      font-size: 0.9375rem;
+      border-radius: 3px;
+      text-decoration: none;
+      background: var(--tm-surface);
+      color: var(--tm-link);
+      border: 1px solid var(--tm-border);
+    }
+    .confirm-actions a.cancel-link:hover {
+      background: var(--tm-bg-light);
+      text-decoration: underline;
+    }
+    @media (max-width: 36em) {
+      .confirm-headers dt { float: none; width: auto; }
+      .confirm-headers dd { margin-left: 0; }
+    }
+  </style>
+
+  <p class="confirm-back">
+    <a href="/classic/folders/{{ current_folder_href|safe }}">&larr; Back to {{ current_folder }}</a>
+  </p>
+
+  <h1>Delete this message permanently?</h1>
+
+  {# Destructive-action warning. Lives at the top so a user who skim-reads
+     the page still gets the "this cannot be undone" signal before reaching
+     the button. role="alert" so assistive tech announces it on page load. #}
+  <div class="alert alert-error" role="alert">
+    <strong>This action is permanent and cannot be undone.</strong>
+    The message will be removed from the {{ current_folder }} folder via
+    an IMAP EXPUNGE and will not appear in any other folder.
+  </div>
+
+  {# Target-message summary so the user can verify they're deleting the
+     right row. Same semantic <dl> shape as the read view header block. #}
+  <section class="confirm-headers" aria-label="Message about to be deleted">
+    <dl>
+      <dt>Subject</dt>
+      <dd>{{ subject }}</dd>
+
+      {% if !from.is_empty() %}
+        <dt>From</dt>
+        <dd>{{ from }}</dd>
+      {% endif %}
+    </dl>
+  </section>
+
+  {# Confirm + Cancel row. The destructive action gets the danger styling
+     so it's visually distinct from Cancel — but the user still has to
+     click it explicitly. There is NO "Confirm" autofocus or default-
+     submit gimmick: hitting Enter on this page shouldn't permanently
+     delete anything. The form's button is the only POST trigger. #}
+  <div class="confirm-actions" role="group" aria-label="Confirm deletion">
+    <form method="post" action="{{ form_action }}">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <input type="hidden" name="confirm" value="1">
+      <button type="submit" class="danger">Delete permanently</button>
+    </form>
+
+    <a class="cancel-link" href="{{ cancel_href }}">Cancel</a>
+  </div>
+{% endblock %}
