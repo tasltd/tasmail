@@ -1,6 +1,10 @@
 // TMAIL-352: pure helpers for the admin audit log viewer. Extracted so the
 // shadcn-prototype workspace can unit-test them with node's native test
 // runner (no DOM, no React Testing Library set up here).
+//
+// TMAIL-353: extended with the Branding / SAML / OIDC / LDAP tab IDs so
+// the same `parseAdminTab` keeps URL ↔ tab routing consistent across the
+// whole AdminDashboard.
 
 /**
  * Convert a `<input type="datetime-local">` value (no timezone info) into
@@ -17,7 +21,30 @@ export function localToIso(local: string | undefined | null): string | undefined
 
 export const ADMIN_TAB_OVERVIEW = 'overview' as const;
 export const ADMIN_TAB_AUDIT = 'audit-log' as const;
-export type AdminTab = typeof ADMIN_TAB_OVERVIEW | typeof ADMIN_TAB_AUDIT;
+// Added (TMAIL-353): new sub-tabs for Branding + SSO + Directory.
+export const ADMIN_TAB_BRANDING = 'branding' as const;
+export const ADMIN_TAB_SAML = 'saml' as const;
+export const ADMIN_TAB_OIDC = 'oidc' as const;
+export const ADMIN_TAB_LDAP = 'ldap' as const;
+
+export type AdminTab =
+  | typeof ADMIN_TAB_OVERVIEW
+  | typeof ADMIN_TAB_AUDIT
+  | typeof ADMIN_TAB_BRANDING
+  | typeof ADMIN_TAB_SAML
+  | typeof ADMIN_TAB_OIDC
+  | typeof ADMIN_TAB_LDAP;
+
+// Single source of truth for the parser + the TabsList rendering order so
+// adding a new tab is one edit, not three.
+export const ADMIN_TABS: readonly AdminTab[] = [
+  ADMIN_TAB_OVERVIEW,
+  ADMIN_TAB_AUDIT,
+  ADMIN_TAB_BRANDING,
+  ADMIN_TAB_SAML,
+  ADMIN_TAB_OIDC,
+  ADMIN_TAB_LDAP,
+] as const;
 
 /**
  * Coerce an arbitrary `?tab=` query string value to a known AdminTab,
@@ -25,7 +52,8 @@ export type AdminTab = typeof ADMIN_TAB_OVERVIEW | typeof ADMIN_TAB_AUDIT;
  * tampers with the URL.
  */
 export function parseAdminTab(raw: string | null | undefined): AdminTab {
-  return raw === ADMIN_TAB_AUDIT ? ADMIN_TAB_AUDIT : ADMIN_TAB_OVERVIEW;
+  if (!raw) return ADMIN_TAB_OVERVIEW;
+  return (ADMIN_TABS as readonly string[]).includes(raw) ? (raw as AdminTab) : ADMIN_TAB_OVERVIEW;
 }
 
 // Re-export the query-string helper from the API client. Lives here as

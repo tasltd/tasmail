@@ -7,6 +7,12 @@
 // the historical view) and Audit log (paginated, filterable viewer for
 // /api/admin/audit-log). Tabs are URL-synced via the `?tab=` query param
 // so deep links and reloads keep the active pane.
+//
+// TMAIL-353: added four more sub-tabs — Branding, SAML providers, OIDC
+// providers, LDAP sources — each a separate component so AdminDashboard
+// stays a thin shell that just routes the active tab. The tab IDs live
+// in audit-log-helpers (now the AdminTab union) so the parser stays
+// authoritative and adding a tab is a registry-style change.
 import { useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -23,9 +29,17 @@ import { adminDomainsApi, type Domain } from '@/api/admin-domains';
 import { quotaApi } from '@/api/quota';
 import { isAdmin } from '@/lib/jwt';
 import { AuditLogTab } from './AuditLogTab';
+import { BrandingTab } from './BrandingTab';
+import { SamlTab } from './SamlTab';
+import { OidcTab } from './OidcTab';
+import { LdapTab } from './LdapTab';
 import {
   ADMIN_TAB_AUDIT,
+  ADMIN_TAB_BRANDING,
+  ADMIN_TAB_LDAP,
+  ADMIN_TAB_OIDC,
   ADMIN_TAB_OVERVIEW,
+  ADMIN_TAB_SAML,
   parseAdminTab,
   type AdminTab,
 } from './audit-log-helpers';
@@ -182,6 +196,10 @@ export function AdminDashboard() {
           <TabsList>
             <TabsTrigger value={ADMIN_TAB_OVERVIEW} data-testid="admin-tab-overview">Overview</TabsTrigger>
             <TabsTrigger value={ADMIN_TAB_AUDIT} data-testid="admin-tab-audit-log">Audit log</TabsTrigger>
+            <TabsTrigger value={ADMIN_TAB_BRANDING} data-testid="admin-tab-branding">Branding</TabsTrigger>
+            <TabsTrigger value={ADMIN_TAB_SAML} data-testid="admin-tab-saml">SAML</TabsTrigger>
+            <TabsTrigger value={ADMIN_TAB_OIDC} data-testid="admin-tab-oidc">OIDC</TabsTrigger>
+            <TabsTrigger value={ADMIN_TAB_LDAP} data-testid="admin-tab-ldap">LDAP</TabsTrigger>
           </TabsList>
 
           <TabsContent value={ADMIN_TAB_OVERVIEW} className="space-y-6">
@@ -455,6 +473,22 @@ export function AdminDashboard() {
 
           <TabsContent value={ADMIN_TAB_AUDIT}>
             <AuditLogTab />
+          </TabsContent>
+
+          <TabsContent value={ADMIN_TAB_BRANDING}>
+            <BrandingTab />
+          </TabsContent>
+
+          <TabsContent value={ADMIN_TAB_SAML}>
+            <SamlTab />
+          </TabsContent>
+
+          <TabsContent value={ADMIN_TAB_OIDC}>
+            <OidcTab />
+          </TabsContent>
+
+          <TabsContent value={ADMIN_TAB_LDAP}>
+            <LdapTab />
           </TabsContent>
         </Tabs>
       </div>

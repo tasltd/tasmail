@@ -12,6 +12,11 @@ import {
   buildAuditLogQueryString,
   ADMIN_TAB_AUDIT,
   ADMIN_TAB_OVERVIEW,
+  ADMIN_TAB_BRANDING,
+  ADMIN_TAB_SAML,
+  ADMIN_TAB_OIDC,
+  ADMIN_TAB_LDAP,
+  ADMIN_TABS,
 } from './audit-log-helpers.ts';
 
 // --- localToIso -------------------------------------------------------------
@@ -51,6 +56,35 @@ test('parseAdminTab recognises the audit-log tab id exactly', () => {
 test('parseAdminTab is case-sensitive (mirrors URL param convention)', () => {
   assert.equal(parseAdminTab('Audit-Log'), ADMIN_TAB_OVERVIEW);
   assert.equal(parseAdminTab('AUDIT-LOG'), ADMIN_TAB_OVERVIEW);
+});
+
+// TMAIL-353: ensure the four new sub-tabs round-trip through the parser
+// so deep links like `?tab=branding` keep the right pane open after reload.
+test('parseAdminTab recognises every TMAIL-353 sub-tab id', () => {
+  assert.equal(parseAdminTab('branding'), ADMIN_TAB_BRANDING);
+  assert.equal(parseAdminTab('saml'), ADMIN_TAB_SAML);
+  assert.equal(parseAdminTab('oidc'), ADMIN_TAB_OIDC);
+  assert.equal(parseAdminTab('ldap'), ADMIN_TAB_LDAP);
+});
+
+test('parseAdminTab still rejects values not in the registry', () => {
+  // Defends against silent additions slipping past the union type at runtime.
+  assert.equal(parseAdminTab('settings'), ADMIN_TAB_OVERVIEW);
+  assert.equal(parseAdminTab('SAML'), ADMIN_TAB_OVERVIEW);
+});
+
+test('ADMIN_TABS registry lists every tab id exactly once', () => {
+  const unique = new Set(ADMIN_TABS);
+  assert.equal(unique.size, ADMIN_TABS.length, 'no duplicate tab ids');
+  // Pin the expected ordering so the TabsList stays predictable.
+  assert.deepEqual(Array.from(ADMIN_TABS), [
+    'overview',
+    'audit-log',
+    'branding',
+    'saml',
+    'oidc',
+    'ldap',
+  ]);
 });
 
 // --- buildAuditLogQueryString ----------------------------------------------
