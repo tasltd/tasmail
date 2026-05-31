@@ -37,6 +37,12 @@ use crate::state::AppState;
 pub mod nonce;
 pub use nonce::CspNonce;
 
+// Added (TMAIL-357): Skeleton auth helpers — generate_csrf_token,
+// create_session_and_cookie, destroy_session_and_cookie. The actual route
+// handlers for /classic/login + /classic/logout land in TMAIL-359 / TMAIL-360
+// and will register themselves in the router via this module.
+pub mod auth;
+
 // NAME: Session cookie name shared with the Classic UI auth handler that
 // lands in TMAIL-357 (P0 #3). The scaffold only needs to *detect* presence;
 // the cookie value is opaque here and validated later by the dedicated

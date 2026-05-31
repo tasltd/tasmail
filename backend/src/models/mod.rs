@@ -100,3 +100,5 @@ pub mod warmup;
 pub mod payment_provider_config;
 // Added (TMAIL-165): Runtime feature flags surfaced in the admin dashboard.
 pub mod feature_flag;
+// Added (TMAIL-357): Server-side session rows for the /classic no-JS surface.
+pub mod classic_session;

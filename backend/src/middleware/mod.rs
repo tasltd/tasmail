@@ -7,3 +7,5 @@ pub mod rate_limit;
 pub mod rls_context;
 // Added: Security headers middleware for OWASP compliance (TMAIL-37)
 pub mod security_headers;
+// Added (TMAIL-357): Cookie-based session middleware for the /classic no-JS surface.
+pub mod classic_session;
