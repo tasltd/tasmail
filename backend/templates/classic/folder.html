@@ -110,11 +110,21 @@
     }
     .msg-table th { background: var(--tm-bg-light); color: var(--tm-muted); }
     .msg-table .col-check { width: 2rem; }
+    .msg-table .col-star { width: 1.5rem; text-align: center; }
     .msg-table .col-date { width: 11rem; white-space: nowrap; color: var(--tm-muted); }
     .msg-table .col-sender { width: 12rem; }
     .msg-row-unread { background: var(--tm-bg-light); }
     .msg-row-unread .col-sender,
     .msg-row-unread .col-subject a { font-weight: 700; }
+    /* TMAIL-371 — visible ★ indicator for starred rows. Lynx renders the
+       glyph as a literal `*` (acceptable fallback); GUI browsers see the
+       solid star coloured in the teal palette token. Empty cell for
+       unstarred rows so the column stays a stable width. */
+    .col-star .star-on {
+      color: var(--tm-teal-400);
+      font-size: 1rem;
+      line-height: 1;
+    }
     .msg-empty {
       padding: 2rem 1rem;
       text-align: center;
@@ -224,8 +234,15 @@
         <div class="alert alert-success" role="status">
           {% if banner.is_read() %}
             <strong>Marked {{ banner.count }} message{% if banner.count != 1 %}s{% endif %} as read.</strong>
-          {% else %}
+          {% else if banner.is_unread() %}
             <strong>Marked {{ banner.count }} message{% if banner.count != 1 %}s{% endif %} as unread.</strong>
+          {% else if banner.is_star() %}
+            {# TMAIL-371 — banner after star/unstar action. Wording uses
+               the verb form ("Starred N") rather than "Marked N as starred"
+               which reads awkwardly. #}
+            <strong>Starred {{ banner.count }} message{% if banner.count != 1 %}s{% endif %}.</strong>
+          {% else if banner.is_unstar() %}
+            <strong>Unstarred {{ banner.count }} message{% if banner.count != 1 %}s{% endif %}.</strong>
           {% endif %}
         </div>
       {% endif %}
@@ -250,6 +267,11 @@
         <input type="hidden" name="_csrf" value="{{ csrf_token }}">
         <button type="submit" name="action" value="mark_read">Mark read</button>
         <button type="submit" name="action" value="mark_unread">Mark unread</button>
+        {# TMAIL-371 — Star / Unstar bulk actions. POST to the same /bulk
+           endpoint; the handler dispatches on the `action` value and
+           toggles `\Flagged` instead of `\Seen`. #}
+        <button type="submit" name="action" value="star">Star</button>
+        <button type="submit" name="action" value="unstar">Unstar</button>
         <button type="submit" name="action" value="move" disabled>Move…</button>
         <button type="submit" name="action" value="delete" disabled>Delete</button>
         <span class="stub-note">Move and bulk-delete arrive in a follow-up release.</span>
@@ -261,6 +283,12 @@
             <th scope="col" class="col-check">
               <span class="visually-hidden">Select</span>
             </th>
+            {# TMAIL-371 — Star indicator column. Header label is screen-
+               reader only so the visual column stays as narrow as the
+               glyph itself. #}
+            <th scope="col" class="col-star">
+              <span class="visually-hidden">Starred</span>
+            </th>
             <th scope="col" class="col-sender">Sender</th>
             <th scope="col" class="col-subject">Subject</th>
             <th scope="col" class="col-date">Date</th>
@@ -268,10 +296,10 @@
         </thead>
         <tbody>
           {% if messages.is_empty() %}
-            <tr><td colspan="4" class="msg-empty">No messages in this folder.</td></tr>
+            <tr><td colspan="5" class="msg-empty">No messages in this folder.</td></tr>
           {% else %}
             {% for m in messages %}
-              <tr class="msg-row{% if !m.is_read %} msg-row-unread{% endif %}">
+              <tr class="msg-row{% if !m.is_read %} msg-row-unread{% endif %}{% if m.is_starred %} msg-row-starred{% endif %}">
                 <td class="col-check">
                   {# TMAIL-369: bind to the bulk-actions form by id rather
                      than the previous empty `form=""` (axe-core flags an
@@ -279,6 +307,17 @@
                      the sibling above this <table>, so the per-row
                      checkboxes have to declare the binding explicitly. #}
                   <input type="checkbox" form="classic-bulk-actions" name="uid" value="{{ m.uid }}" aria-label="Select message from {{ m.from }}">
+                </td>
+                {# TMAIL-371 — visible ★ indicator for starred rows.
+                   Renders the literal star glyph wrapped in a span so the
+                   stylesheet's `.col-star .star-on` rule can colour it
+                   in the brand teal token. Lynx falls back to rendering
+                   the glyph as an ASCII `*`. Unstarred rows leave the
+                   cell empty so the column stays a stable width. #}
+                <td class="col-star">
+                  {% if m.is_starred %}
+                    <span class="star-on" aria-label="Starred" title="Starred">&#9733;</span>
+                  {% endif %}
                 </td>
                 <td class="col-sender">{{ m.from }}</td>
                 <td class="col-subject">

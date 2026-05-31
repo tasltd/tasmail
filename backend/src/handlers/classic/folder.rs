@@ -99,6 +99,21 @@ fn message_is_read(env: &MessageEnvelope) -> bool {
         .any(|f| f.eq_ignore_ascii_case("Seen") || f.eq_ignore_ascii_case("\\Seen"))
 }
 
+/// Added (TMAIL-371): True when the IMAP `\Flagged` flag is set on the
+/// envelope — drives the visible ★ indicator on each folder row. Matches
+/// the same `Flagged` vs `\Flagged` Debug-shape variance the read check
+/// already tolerates, plus the Gmail-specific `$Starred` keyword some
+/// servers surface alongside `\Flagged`. Returning `false` for an
+/// unrecognised spelling means an obscure server with a non-standard
+/// flag name shows an unstarred row rather than a panicking handler.
+fn message_is_starred(env: &MessageEnvelope) -> bool {
+    env.flags.iter().any(|f| {
+        f.eq_ignore_ascii_case("Flagged")
+            || f.eq_ignore_ascii_case("\\Flagged")
+            || f.eq_ignore_ascii_case("$Starred")
+    })
+}
+
 /// Query string for `GET /classic/folders/{folder}?page=N`.
 ///
 /// `page` is **0-based** — page 0 is the newest 25 messages. Anything
@@ -171,6 +186,11 @@ impl FolderQuery {
         let action = match key {
             "read" => MarkedDirection::Read,
             "unread" => MarkedDirection::Unread,
+            // Added (TMAIL-371): star/unstar redirects from the flag
+            // handler land here with `?marked=starred|unstarred`, mirroring
+            // the same URL shape the read/unread pair uses.
+            "starred" => MarkedDirection::Star,
+            "unstarred" => MarkedDirection::Unstar,
             _ => return None,
         };
         let count = self
@@ -184,10 +204,16 @@ impl FolderQuery {
 /// Added (TMAIL-370): Resolved marked-banner direction. Mirrors the
 /// `MarkAction` enum in the flag module but lives separately because the
 /// banner is a UI concern (whereas `MarkAction` is a control-flow concern).
+///
+/// Extended (TMAIL-371): `Star` and `Unstar` variants drive the
+/// "Starred N messages" / "Unstarred N messages" banner branches the
+/// template renders after the star/unstar flow lands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MarkedDirection {
     Read,
     Unread,
+    Star,
+    Unstar,
 }
 
 /// Added (TMAIL-370): Banner view-model. Distinct from the boolean
@@ -204,6 +230,24 @@ impl MarkedBanner {
     /// directly without the `match_pattern` feature.
     pub fn is_read(&self) -> bool {
         matches!(self.action, MarkedDirection::Read)
+    }
+
+    /// Added (TMAIL-371): True for "Mark unread" banners. Needed alongside
+    /// `is_read` / `is_star` / `is_unstar` because the four directions
+    /// drive distinct banner copy ("Marked N as read" vs "Starred N" vs
+    /// "Unstarred N") and Askama doesn't `match` on the enum directly.
+    pub fn is_unread(&self) -> bool {
+        matches!(self.action, MarkedDirection::Unread)
+    }
+
+    /// Added (TMAIL-371): True for the "Starred N messages" banner branch.
+    pub fn is_star(&self) -> bool {
+        matches!(self.action, MarkedDirection::Star)
+    }
+
+    /// Added (TMAIL-371): True for the "Unstarred N messages" banner branch.
+    pub fn is_unstar(&self) -> bool {
+        matches!(self.action, MarkedDirection::Unstar)
     }
 }
 
@@ -235,6 +279,12 @@ pub struct MessageRow {
     pub subject: String,
     pub date: String,
     pub is_read: bool,
+    /// Added (TMAIL-371): True when IMAP `\Flagged` is set on the
+    /// envelope. Drives the visible ★ glyph in the row's check column so
+    /// starred rows are spottable from the folder listing without opening
+    /// the message. Lynx renders the literal `★` so the indicator works
+    /// in the no-JS browser the Classic UI explicitly targets.
+    pub is_starred: bool,
     /// Pre-built `href` for the row link — the per-folder + per-uid path
     /// the read view (P0 #9) will own.
     pub message_href: String,
@@ -392,6 +442,9 @@ fn envelope_to_row(env: MessageEnvelope, folder_href_segment: &str) -> MessageRo
             folder_href_segment, env.uid
         ),
         is_read: message_is_read(&env),
+        // Added (TMAIL-371): detect the IMAP `\Flagged` flag so the row
+        // renders the ★ glyph in the check column.
+        is_starred: message_is_starred(&env),
         uid: env.uid,
         from: env.from.unwrap_or_default(),
         subject: env
@@ -1076,8 +1129,10 @@ mod tests {
     #[test]
     fn folder_template_renders_live_bulk_action_form() {
         // TMAIL-370 wired Mark read / Mark unread on the bulk-action bar.
-        // The form must POST to the dedicated /bulk endpoint and the
-        // mark_read / mark_unread buttons must NO LONGER be disabled.
+        // TMAIL-371 added Star / Unstar to the same bar.
+        // The form must POST to the dedicated /bulk endpoint and every
+        // live action's button must NOT be disabled. Move / Delete remain
+        // placeholders until their dedicated tasks land.
         let body = fresh_template().render().expect("template renders");
         assert!(
             body.contains("action=\"/classic/folders/INBOX/bulk\""),
@@ -1094,6 +1149,17 @@ mod tests {
             !mu_tag.contains("disabled"),
             "Mark unread button must NOT be disabled: {mu_tag}"
         );
+        // Added (TMAIL-371): Star + Unstar buttons are now live.
+        let star_tag = extract_button_tag(&body, "star");
+        assert!(
+            !star_tag.contains("disabled"),
+            "Star button must NOT be disabled: {star_tag}"
+        );
+        let unstar_tag = extract_button_tag(&body, "unstar");
+        assert!(
+            !unstar_tag.contains("disabled"),
+            "Unstar button must NOT be disabled: {unstar_tag}"
+        );
         // Move + Delete remain placeholders, must STILL be disabled.
         let move_tag = extract_button_tag(&body, "move");
         assert!(
@@ -1105,6 +1171,186 @@ mod tests {
             delete_tag.contains("disabled"),
             "Bulk Delete button must remain disabled until P1 #29 lands: {delete_tag}"
         );
+    }
+
+    // ----- TMAIL-371: star indicator + starred banner -----
+
+    #[test]
+    fn folder_template_renders_star_glyph_for_starred_row() {
+        // A starred row must render the ★ glyph in the col-star cell and
+        // carry the `msg-row-starred` class on its <tr> so the stylesheet
+        // (and any monochrome viewer) can pick it out.
+        let mut t = fresh_template();
+        t.total_messages = 1;
+        t.last_index = 1;
+        t.first_index = 1;
+        t.messages = vec![MessageRow {
+            uid: 7,
+            from: "x@y".to_string(),
+            subject: "starred one".to_string(),
+            date: "today".to_string(),
+            is_read: true,
+            is_starred: true,
+            message_href: "/classic/folders/INBOX/messages/7".to_string(),
+        }];
+        let body = t.render().expect("template renders");
+        // Numeric entity for ★ — Askama emits the entity verbatim from
+        // the template source. Lynx decodes it to the literal star.
+        assert!(
+            body.contains("&#9733;"),
+            "starred row must render the ★ glyph (&#9733;): {body}"
+        );
+        // aria-label exposes the meaning to screen readers without
+        // requiring them to decode the unicode codepoint.
+        assert!(
+            body.contains("aria-label=\"Starred\""),
+            "star glyph must carry an aria-label for screen readers: {body}"
+        );
+        // The starred state propagates to a class on the <tr> so styling
+        // / future per-row triage logic has a stable hook.
+        assert!(
+            body.contains("msg-row-starred"),
+            "starred row must carry msg-row-starred class on its <tr>: {body}"
+        );
+    }
+
+    #[test]
+    fn folder_template_omits_star_glyph_for_unstarred_row() {
+        // An unstarred row must NOT render the ★ glyph — the col-star
+        // cell stays empty and the <tr> must NOT carry msg-row-starred.
+        let mut t = fresh_template();
+        t.total_messages = 1;
+        t.last_index = 1;
+        t.first_index = 1;
+        t.messages = vec![MessageRow {
+            uid: 8,
+            from: "x@y".to_string(),
+            subject: "unstarred one".to_string(),
+            date: "today".to_string(),
+            is_read: true,
+            is_starred: false,
+            message_href: "/classic/folders/INBOX/messages/8".to_string(),
+        }];
+        let body = t.render().expect("template renders");
+        assert!(
+            !body.contains("&#9733;"),
+            "unstarred row must NOT render the ★ glyph: {body}"
+        );
+        assert!(
+            !body.contains("msg-row-starred"),
+            "unstarred row must NOT carry the msg-row-starred class: {body}"
+        );
+    }
+
+    #[test]
+    fn folder_template_renders_starred_banner_when_set() {
+        // After a successful star bulk action the handler 303s with
+        // ?marked=starred&count=N — the banner must read in the verb
+        // form ("Starred N messages") rather than "Marked N as starred".
+        let mut t = fresh_template();
+        t.marked_banner = Some(MarkedBanner {
+            action: MarkedDirection::Star,
+            count: 4,
+        });
+        let body = t.render().expect("template renders");
+        assert!(
+            body.contains("Starred 4 messages."),
+            "starred banner copy missing: {body}"
+        );
+    }
+
+    #[test]
+    fn folder_template_renders_unstarred_banner_when_set() {
+        let mut t = fresh_template();
+        t.marked_banner = Some(MarkedBanner {
+            action: MarkedDirection::Unstar,
+            count: 2,
+        });
+        let body = t.render().expect("template renders");
+        assert!(
+            body.contains("Unstarred 2 messages."),
+            "unstarred banner copy missing: {body}"
+        );
+    }
+
+    #[test]
+    fn folder_template_singularises_starred_banner_for_one_message() {
+        // "Starred 1 messages" reads weirdly — the template must drop
+        // the trailing s when only one row changed state.
+        let mut t = fresh_template();
+        t.marked_banner = Some(MarkedBanner {
+            action: MarkedDirection::Star,
+            count: 1,
+        });
+        let body = t.render().expect("template renders");
+        assert!(
+            body.contains("Starred 1 message."),
+            "starred banner must use singular wording for count = 1: {body}"
+        );
+        assert!(
+            !body.contains("Starred 1 messages."),
+            "starred banner must NOT pluralise for count = 1: {body}"
+        );
+    }
+
+    // ----- TMAIL-371: marked_banner parser accepts starred/unstarred -----
+
+    #[test]
+    fn folder_query_marked_banner_resolves_starred_direction() {
+        let q = FolderQuery {
+            marked: Some("starred".to_string()),
+            count: Some(5),
+            ..empty_query()
+        };
+        let banner = q.marked_banner().expect("starred banner present");
+        assert!(banner.is_star(), "direction should be Star");
+        assert_eq!(banner.count, 5);
+    }
+
+    #[test]
+    fn folder_query_marked_banner_resolves_unstarred_direction() {
+        let q = FolderQuery {
+            marked: Some("unstarred".to_string()),
+            count: Some(2),
+            ..empty_query()
+        };
+        let banner = q.marked_banner().expect("unstarred banner present");
+        assert!(banner.is_unstar(), "direction should be Unstar");
+        assert_eq!(banner.count, 2);
+    }
+
+    // ----- TMAIL-371: message_is_starred + envelope_to_row -----
+
+    #[test]
+    fn message_is_starred_recognises_flagged_variants() {
+        // Same tolerance for spelling variance as `message_is_read`:
+        // bare `Flagged` (async-imap Debug shape), backslash-prefixed
+        // `\Flagged` (RFC 3501), and Gmail's `$Starred` keyword.
+        assert!(message_is_starred(&env(1, None, None, &["Flagged"])));
+        assert!(message_is_starred(&env(1, None, None, &["\\Flagged"])));
+        assert!(message_is_starred(&env(1, None, None, &["FLAGGED"])));
+        assert!(message_is_starred(&env(1, None, None, &["$Starred"])));
+        assert!(message_is_starred(&env(1, None, None, &["Seen", "\\Flagged"])));
+    }
+
+    #[test]
+    fn message_is_starred_returns_false_when_flag_absent() {
+        assert!(!message_is_starred(&env(1, None, None, &[])));
+        assert!(!message_is_starred(&env(1, None, None, &["Seen"])));
+        assert!(!message_is_starred(&env(1, None, None, &["Recent"])));
+        assert!(!message_is_starred(&env(1, None, None, &["\\Seen", "Recent"])));
+    }
+
+    #[test]
+    fn envelope_to_row_propagates_starred_flag() {
+        // is_starred must thread through from the envelope's IMAP flag
+        // set to the rendered row. Otherwise the ★ glyph never lights up
+        // even when the message is actually starred on the server.
+        let row = envelope_to_row(env(1, Some("hi"), None, &["\\Flagged"]), "INBOX");
+        assert!(row.is_starred, "row.is_starred must be true for a \\Flagged envelope");
+
+        let row = envelope_to_row(env(1, Some("hi"), None, &["Seen"]), "INBOX");
+        assert!(!row.is_starred, "row.is_starred must be false when \\Flagged is absent");
     }
 
     #[test]
@@ -1120,6 +1366,7 @@ mod tests {
                 subject: "Hi from Alice".to_string(),
                 date: "Mon, 1 Jan 2026".to_string(),
                 is_read: false,
+                is_starred: false,
                 message_href: "/classic/folders/INBOX/messages/12".to_string(),
             },
             MessageRow {
@@ -1128,6 +1375,7 @@ mod tests {
                 subject: "Re: Hi from Alice".to_string(),
                 date: "Mon, 1 Jan 2026".to_string(),
                 is_read: true,
+                is_starred: false,
                 message_href: "/classic/folders/INBOX/messages/13".to_string(),
             },
         ];
@@ -1158,6 +1406,7 @@ mod tests {
             subject: "unread one".to_string(),
             date: "today".to_string(),
             is_read: false,
+            is_starred: false,
             message_href: "/classic/folders/INBOX/messages/1".to_string(),
         }];
         let body = t.render().expect("template renders");
@@ -1183,6 +1432,7 @@ mod tests {
             subject: "read one".to_string(),
             date: "today".to_string(),
             is_read: true,
+            is_starred: false,
             message_href: "/classic/folders/INBOX/messages/1".to_string(),
         }];
         let body = t.render().expect("template renders");
@@ -1215,6 +1465,7 @@ mod tests {
             subject: "<script>alert('subj')</script>".to_string(),
             date: "today".to_string(),
             is_read: true,
+            is_starred: false,
             message_href: "/classic/folders/INBOX/messages/1".to_string(),
         }];
         let body = t.render().expect("template renders");
@@ -1366,6 +1617,7 @@ mod tests {
             subject: "row".to_string(),
             date: "today".to_string(),
             is_read: true,
+            is_starred: false,
             message_href: "/classic/folders/INBOX/messages/99".to_string(),
         }];
         let body = t.render().expect("template renders");

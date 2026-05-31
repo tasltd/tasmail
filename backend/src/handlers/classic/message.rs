@@ -152,6 +152,20 @@ pub fn build_body(text_body: Option<&str>, html_body: Option<&str>) -> BodyRende
     BodyRendering::Empty
 }
 
+/// Added (TMAIL-371): Detect whether the message's IMAP flag set carries
+/// `\Flagged` (a.k.a. the "starred" flag). Tolerates the `Flagged` vs
+/// `\Flagged` Debug-shape variance plus Gmail's `$Starred` keyword so the
+/// read view's Star button toggles correctly across the providers our
+/// BYOK target list covers (Gmail, Outlook, Yahoo, Zoho, FastMail,
+/// iCloud, ProtonMail Bridge, self-hosted Dovecot, Stalwart).
+pub fn message_is_starred(flags: &[String]) -> bool {
+    flags.iter().any(|f| {
+        f.eq_ignore_ascii_case("Flagged")
+            || f.eq_ignore_ascii_case("\\Flagged")
+            || f.eq_ignore_ascii_case("$Starred")
+    })
+}
+
 /// Build the per-attachment view-model list from the IMAP fetch result.
 /// `folder_href` is the URL-encoded folder name already in the page URL.
 pub fn build_attachment_rows(
@@ -231,6 +245,12 @@ pub struct MessageTemplate {
     /// read view), but the read view always renders "Mark unread" since
     /// opening the message already marks it `\Seen` as a side-effect.
     pub flag_action: String,
+    /// Added (TMAIL-371): true when the IMAP `\Flagged` flag is set on
+    /// this message. Drives the read view's Star button — when starred,
+    /// the button reads "Unstar" and POSTs `mark=unstar`; when unstarred,
+    /// it reads "Star" and POSTs `mark=star`. Both forms hit the same
+    /// `flag_action` endpoint above.
+    pub is_starred: bool,
     /// Session CSRF token threaded into every action form (Delete today,
     /// Star / Mark-unread / Move when those flip from placeholder to
     /// real). Also into the logout form partial.
@@ -294,6 +314,10 @@ pub async fn get_message(
     let date = full.date.unwrap_or_default();
     let body = build_body(full.text_body.as_deref(), full.html_body.as_deref());
     let attachments = build_attachment_rows(&full.attachments, &folder_href, full.uid);
+    // Added (TMAIL-371): resolve the starred state from the message's IMAP
+    // flag set so the read view's Star button renders as "Star" vs
+    // "Unstar" with the matching `mark=star|unstar` hidden field.
+    let is_starred = message_is_starred(&full.flags);
 
     // Action endpoints — base path shared across every form action /
     // compose link so a future renamer (e.g. /classic/mail/...) only
@@ -326,6 +350,7 @@ pub async fn get_message(
         forward_href,
         delete_action,
         flag_action,
+        is_starred,
         csrf_token: session.csrf_token.clone(),
         csp_nonce: csp_nonce.into_string(),
     };
@@ -374,6 +399,7 @@ mod tests {
             forward_href: "/classic/compose?forward=42&folder=INBOX".to_string(),
             delete_action: "/classic/folders/INBOX/messages/42/delete".to_string(),
             flag_action: "/classic/folders/INBOX/messages/42/flag".to_string(),
+            is_starred: false,
             csrf_token: "test-csrf-token".to_string(),
             csp_nonce: "test-nonce-fixed".to_string(),
         }
@@ -705,26 +731,130 @@ mod tests {
 
     #[test]
     fn message_template_renders_disabled_placeholders_for_deferred_actions() {
-        // P1 placeholders — Move-to-folder dropdown + Star (TMAIL-377).
-        // Mark unread (TMAIL-370) was flipped from placeholder to LIVE,
-        // so it now renders without the `disabled` attribute. Each
-        // remaining placeholder still renders so the layout doesn't shift
-        // when their handlers land.
+        // P1 placeholders — Move-to-folder dropdown only. Star (TMAIL-371)
+        // and Mark unread (TMAIL-370) have both been flipped from
+        // placeholder to LIVE, so they no longer carry the `disabled`
+        // attribute. The Move dropdown remains a placeholder until
+        // TMAIL-380 lands.
         let body = fresh_template().render().expect("template renders");
-        assert!(
-            body.contains(">Star<"),
-            "Star button placeholder missing: {body}"
-        );
         assert!(
             body.contains("<select"),
             "Move-to-folder <select> missing: {body}"
         );
-        // At least Star + Move-to-folder remain disabled.
+        // At least the Move-to-folder <select> remains disabled.
         let disabled_count = body.matches("disabled").count();
         assert!(
-            disabled_count >= 2,
-            "expected at least 2 disabled controls (Star, Move): {body}"
+            disabled_count >= 1,
+            "expected at least 1 disabled control (Move): {body}"
         );
+    }
+
+    // ----- TMAIL-371: Star toggle is now live -----
+
+    #[test]
+    fn message_template_renders_live_star_form_for_unstarred_message() {
+        // The Star button is no longer a placeholder. For an unstarred
+        // message it must render labelled "Star", POST to the flag
+        // endpoint, carry `mark=star` + the session CSRF token, and
+        // MUST NOT be disabled.
+        let mut t = fresh_template();
+        t.is_starred = false;
+        let body = t.render().expect("template renders");
+        assert!(
+            body.contains(">Star<"),
+            "Star button label must render for an unstarred message: {body}"
+        );
+        // Locate the Star button and check the surrounding form.
+        let star_at = body
+            .find(">Star<")
+            .expect("Star button must render");
+        let form_start = body[..star_at]
+            .rfind("<form")
+            .expect("Star button must sit inside a <form>");
+        let form_segment = &body[form_start..star_at + 20];
+        assert!(
+            form_segment.contains("action=\"/classic/folders/INBOX/messages/42/flag\""),
+            "Star form must POST to the flag endpoint: {form_segment}"
+        );
+        assert!(
+            form_segment.contains("name=\"_csrf\" value=\"test-csrf-token\""),
+            "Star form must carry the session csrf_token: {form_segment}"
+        );
+        assert!(
+            form_segment.contains("name=\"mark\" value=\"star\""),
+            "Star form must include the mark=star hidden field: {form_segment}"
+        );
+        assert!(
+            !form_segment.contains("disabled"),
+            "Star button must NOT be disabled: {form_segment}"
+        );
+    }
+
+    #[test]
+    fn message_template_renders_live_unstar_form_for_starred_message() {
+        // For an already-starred message, the same button flips to
+        // "Unstar" and posts `mark=unstar` so toggling it back works as
+        // expected. The form action stays the same — only the label and
+        // hidden field change.
+        let mut t = fresh_template();
+        t.is_starred = true;
+        let body = t.render().expect("template renders");
+        assert!(
+            body.contains(">Unstar<"),
+            "Unstar button label must render for a starred message: {body}"
+        );
+        // The standalone "Star" word must NOT leak through — `>Star<` would
+        // mean the form is rendering the wrong label for a starred message.
+        // The closing-tag form `>Star<` is the precise needle the unstarred
+        // branch uses, so checking it here catches a swapped if/else block.
+        assert!(
+            !body.contains(">Star<"),
+            "Star label must NOT render on a starred message — only Unstar: {body}"
+        );
+        let unstar_at = body
+            .find(">Unstar<")
+            .expect("Unstar button must render");
+        let form_start = body[..unstar_at]
+            .rfind("<form")
+            .expect("Unstar button must sit inside a <form>");
+        let form_segment = &body[form_start..unstar_at + 20];
+        assert!(
+            form_segment.contains("action=\"/classic/folders/INBOX/messages/42/flag\""),
+            "Unstar form must POST to the flag endpoint: {form_segment}"
+        );
+        assert!(
+            form_segment.contains("name=\"mark\" value=\"unstar\""),
+            "Unstar form must include the mark=unstar hidden field: {form_segment}"
+        );
+        assert!(
+            !form_segment.contains("disabled"),
+            "Unstar button must NOT be disabled: {form_segment}"
+        );
+    }
+
+    // ----- TMAIL-371: message_is_starred helper -----
+
+    #[test]
+    fn message_is_starred_recognises_flagged_variants() {
+        // Same flag-spelling variance the read-detection helper tolerates:
+        // bare "Flagged" (async-imap Debug shape), "\\Flagged" (RFC 3501),
+        // and Gmail's `$Starred` keyword.
+        assert!(message_is_starred(&["Flagged".to_string()]));
+        assert!(message_is_starred(&["\\Flagged".to_string()]));
+        assert!(message_is_starred(&["FLAGGED".to_string()]));
+        assert!(message_is_starred(&["$Starred".to_string()]));
+        assert!(message_is_starred(&[
+            "Seen".to_string(),
+            "\\Flagged".to_string()
+        ]));
+    }
+
+    #[test]
+    fn message_is_starred_returns_false_when_flag_absent() {
+        assert!(!message_is_starred(&[]));
+        assert!(!message_is_starred(&["Seen".to_string()]));
+        assert!(!message_is_starred(&["Recent".to_string()]));
+        assert!(!message_is_starred(&["\\Seen".to_string(), "Recent".to_string()]));
     }
 
     // ----- TMAIL-370: Mark unread is now live -----

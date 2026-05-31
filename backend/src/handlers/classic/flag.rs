@@ -3,33 +3,41 @@
 // Classic UI surface (driver TMAIL-299, gap-analysis
 // `docs/gap-analysis/classic-ui.md` P1 #16 + P1 #29 partial).
 //
+// Extended (TMAIL-371 / P1 #17): the same two endpoints now also toggle
+// the IMAP `\Flagged` flag (star / unstar). The single endpoint accepts
+// `mark=star` and `mark=unstar` alongside the existing read/unread values;
+// the bulk endpoint accepts `action=star` and `action=unstar` alongside
+// `mark_read` / `mark_unread`. A single MarkAction enum carries both the
+// IMAP flag name (\Seen vs \Flagged) and the add/strip direction so each
+// handler's IMAP call site stays one-line.
+//
 // What this owns
 // --------------
-// Two endpoints, both touching the IMAP `\Seen` flag:
+// Two endpoints, each toggling either the `\Seen` (read/unread) or
+// `\Flagged` (star/unstar) IMAP flag:
 //
 //   1. POST /classic/folders/{folder}/messages/{uid}/flag
-//      Form: `_csrf`, `mark` = "read" | "unread".
-//      Backs the single "Mark unread" button rendered in the message read
-//      view (TMAIL-363). Redirects to the folder view with
-//      `?marked=read&count=1` or `?marked=unread&count=1` so the footer
-//      flashes a one-time confirmation banner.
+//      Form: `_csrf`, `mark` = "read" | "unread" | "star" | "unstar".
+//      Backs the "Mark unread" + "Star/Unstar" buttons rendered in the
+//      message read view (TMAIL-363 / TMAIL-371). Redirects to the folder
+//      view with `?marked=read&count=1`, `?marked=unread&count=1`,
+//      `?marked=starred&count=1` or `?marked=unstarred&count=1` so the
+//      folder banner flashes a one-time confirmation.
 //
 //   2. POST /classic/folders/{folder}/bulk
-//      Form: `_csrf`, `action` = "mark_read" | "mark_unread", `uid` (repeats).
-//      Backs the bulk-action bar on the folder view (TMAIL-362) — every
-//      checked row submits its uid alongside the action. Redirects back to
-//      the folder view with `?marked=read&count=N` / `?marked=unread&count=N`.
+//      Form: `_csrf`, `action` = "mark_read" | "mark_unread" | "star" |
+//      "unstar", plus `uid` (repeats once per checked row).
+//      Backs the bulk-action bar on the folder view (TMAIL-362 /
+//      TMAIL-371). Redirects back to the folder with the same `?marked=…`
+//      shape so the same banner code covers both flows.
 //
 // Why two endpoints (and not one)
 // -------------------------------
 // The single endpoint sits on the message-scoped path so the read view's
-// Delete button + the future Star button + Move button all share one URL
+// Delete button + the Star button + Mark-unread button all share one URL
 // shape (`…/messages/{uid}/{action}`). The bulk endpoint lives at the
 // folder level because the rows on a single page may target different
 // uids — embedding the uid in the path would be a lie.
-//
-// Both endpoints share `apply_seen_change` so the actual IMAP work is
-// defined once.
 //
 // CSRF protection
 // ---------------
@@ -42,18 +50,19 @@
 //   * The other buttons on the bulk-action bar (Move…, Delete) — those are
 //     P1 #18 (TMAIL-380) and P1 #29 follow-ups, both of which will mount
 //     more `action` branches on this same `post_bulk` handler.
-//   * Star toggle (#17 / TMAIL-377) — separate flag, separate task.
-//   * Per-row "Mark read" button on the folder view — the bulk action bar
-//     covers that case (select-one + click).
+//   * Per-row inline star toggle on the folder view — the bulk action bar
+//     covers that case (tick the row, click Star/Unstar). A future polish
+//     task may add a per-row form button for one-click toggling, but the
+//     star indicator already renders today (TMAIL-371 row template).
 //
 // Why redirect to the folder view (not the read view) on success
 // --------------------------------------------------------------
-// "Mark unread" from a message you just opened is almost always a triage
-// gesture — the user is signalling that the message needs follow-up and
-// wants to leave it in the inbox boldface. Dropping them back on the
-// folder view confirms that the row is now bold, which is exactly the
-// signal they're after. If they wanted to keep reading, they wouldn't have
-// hit the button.
+// "Mark unread" / "Star" from a message you just opened is almost always
+// a triage gesture — the user is signalling that the message needs
+// follow-up and wants to leave it visibly flagged in the inbox. Dropping
+// them back on the folder view confirms the row is now bold / starred,
+// which is exactly the signal they're after. If they wanted to keep
+// reading, they wouldn't have hit the button.
 
 use askama::Template;
 use axum::{
@@ -81,6 +90,13 @@ pub const MAX_BULK_UIDS: usize = 200;
 /// a future flag change (or escape-handling tweak) only touches one line.
 const SEEN_FLAG: &str = "\\Seen";
 
+/// Added (TMAIL-371): IMAP flag for "starred" (a.k.a. "flagged" in the RFC).
+/// Every webmail UI surfaces this as a star icon, even though the IMAP
+/// flag is `\Flagged`. Same centralisation rationale as `SEEN_FLAG` —
+/// one source of truth so a future server-specific tweak (e.g. Gmail's
+/// `$Starred` keyword aliasing) only touches this constant.
+const FLAGGED_FLAG: &str = "\\Flagged";
+
 /// Form body for the single-message endpoint.
 ///
 /// `mark` is required and validated against the [`MarkAction`] enum below.
@@ -107,10 +123,17 @@ pub struct BulkActionForm {
 
 /// Resolved mark direction. Centralised so the template, the form parser,
 /// and the redirect builder all agree on the same set of valid values.
+///
+/// Extended (TMAIL-371): the `Star` and `Unstar` variants toggle the IMAP
+/// `\Flagged` flag, mirroring the existing Read/Unread pair for `\Seen`.
+/// `imap_flag()` returns the right flag string per variant so the handler
+/// can stay agnostic of which underlying flag is being toggled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MarkAction {
     Read,
     Unread,
+    Star,
+    Unstar,
 }
 
 impl MarkAction {
@@ -120,8 +143,10 @@ impl MarkAction {
         match raw {
             "read" => Ok(Self::Read),
             "unread" => Ok(Self::Unread),
+            "star" => Ok(Self::Star),
+            "unstar" => Ok(Self::Unstar),
             other => Err(AppError::BadRequest(format!(
-                "Unknown mark direction: {other:?} (expected 'read' or 'unread')"
+                "Unknown mark direction: {other:?} (expected 'read', 'unread', 'star' or 'unstar')"
             ))),
         }
     }
@@ -130,25 +155,51 @@ impl MarkAction {
     /// for non-mark actions (move / delete) so the bulk handler can hand
     /// off to a future sibling routine without a noisy error path. Returns
     /// `Err` only when the value is recognised-but-malformed.
+    ///
+    /// Star / Unstar use the bare verbs (`star` / `unstar`) on the bulk
+    /// endpoint rather than the `mark_…` prefix the read/unread pair uses,
+    /// because "Star" reads better as a button label than "Mark starred"
+    /// and the URL needs to round-trip the label directly via the
+    /// `<button value="…">` attribute.
     pub fn from_bulk(raw: &str) -> Option<Self> {
         match raw {
             "mark_read" => Some(Self::Read),
             "mark_unread" => Some(Self::Unread),
+            "star" => Some(Self::Star),
+            "unstar" => Some(Self::Unstar),
             _ => None,
         }
     }
 
-    /// Whether this action ADDs the `\Seen` flag (true = mark read,
-    /// false = mark unread = strip the flag).
-    pub fn adds_seen_flag(self) -> bool {
-        matches!(self, Self::Read)
+    /// The IMAP flag string this action toggles. `\Seen` for the read/unread
+    /// pair, `\Flagged` for the star/unstar pair. Returned by-value as
+    /// `&'static str` so the caller can pass it straight to
+    /// `ImapService::set_flag` without an extra allocation.
+    pub fn imap_flag(self) -> &'static str {
+        match self {
+            Self::Read | Self::Unread => SEEN_FLAG,
+            Self::Star | Self::Unstar => FLAGGED_FLAG,
+        }
+    }
+
+    /// Whether this action ADDs the flag (true) or strips it (false).
+    /// Read + Star both ADD their respective flag; Unread + Unstar both
+    /// strip it. The handler passes this directly into `set_flag(... add)`.
+    pub fn adds_flag(self) -> bool {
+        matches!(self, Self::Read | Self::Star)
     }
 
     /// The query-param value the folder view's `?marked=…` banner expects.
+    /// The starred/unstarred keys are spelled in their UI-readable form
+    /// (not "star"/"unstar") because the folder banner copy renders as
+    /// "Starred N messages" / "Unstarred N messages", matching the URL key
+    /// makes the banner template branches read naturally.
     pub fn as_banner_key(self) -> &'static str {
         match self {
             Self::Read => "read",
             Self::Unread => "unread",
+            Self::Star => "starred",
+            Self::Unstar => "unstarred",
         }
     }
 }
@@ -239,8 +290,8 @@ pub async fn post_message_flag(
             &password,
             &folder,
             uid,
-            SEEN_FLAG,
-            action.adds_seen_flag(),
+            action.imap_flag(),
+            action.adds_flag(),
         )
         .await?;
 
@@ -292,8 +343,8 @@ pub async fn post_bulk(
         // friendly page so the user gets a hint instead of silence.
         return render_flag_error(
             &format!(
-                "The bulk action {action_raw:?} isn't wired up yet. Mark read and \
-                 Mark unread are the only actions available right now."
+                "The bulk action {action_raw:?} isn't wired up yet. Mark read, \
+                 Mark unread, Star and Unstar are the only actions available right now."
             ),
             &folder_href,
             &session.csrf_token,
@@ -325,8 +376,8 @@ pub async fn post_bulk(
             &password,
             &folder,
             &uids,
-            SEEN_FLAG,
-            action.adds_seen_flag(),
+            action.imap_flag(),
+            action.adds_flag(),
         )
         .await?;
 
@@ -375,11 +426,31 @@ mod tests {
         assert_eq!(MarkAction::from_single("unread").unwrap(), MarkAction::Unread);
     }
 
+    // Added (TMAIL-371): Star + Unstar single-endpoint parsing. Same shape
+    // as the read/unread pair above so the message-read-view's Star button
+    // can POST through the existing `/flag` endpoint with `mark=star` /
+    // `mark=unstar` without needing a parallel route.
+    #[test]
+    fn from_single_accepts_star() {
+        assert_eq!(MarkAction::from_single("star").unwrap(), MarkAction::Star);
+    }
+
+    #[test]
+    fn from_single_accepts_unstar() {
+        assert_eq!(MarkAction::from_single("unstar").unwrap(), MarkAction::Unstar);
+    }
+
     #[test]
     fn from_single_rejects_unknown_values() {
         // A renamed button or stale browser cache shouldn't silently turn
         // into a no-op — fail loud with a BadRequest the user can spot.
-        for raw in ["", "READ", " read ", "1", "true", "yes", "mark_read", "seen"] {
+        // STAR/UNSTAR (uppercase) + the bulk-prefixed `mark_read` shape
+        // must also fail here — the single endpoint accepts only the bare
+        // lowercase verbs.
+        for raw in [
+            "", "READ", " read ", "1", "true", "yes", "mark_read", "seen",
+            "STAR", "Star", "starred", "mark_star", "flagged",
+        ] {
             let err = MarkAction::from_single(raw).expect_err(&format!(
                 "from_single({raw:?}) should have failed but returned a value"
             ));
@@ -401,13 +472,30 @@ mod tests {
         );
     }
 
+    // Added (TMAIL-371): Star + Unstar bulk parsing. Uses the bare verb
+    // (`star` / `unstar`) rather than the `mark_…` prefix the read/unread
+    // pair uses so the button labels round-trip the `value=` attribute
+    // directly. `from_bulk` is the only caller that has to know about that
+    // inconsistency, which is acceptable.
+    #[test]
+    fn from_bulk_accepts_star_and_unstar() {
+        assert_eq!(MarkAction::from_bulk("star"), Some(MarkAction::Star));
+        assert_eq!(MarkAction::from_bulk("unstar"), Some(MarkAction::Unstar));
+    }
+
     #[test]
     fn from_bulk_returns_none_for_other_actions() {
         // The Move and Delete actions ship in follow-up tasks. The bulk
         // handler distinguishes "known-but-unwired" from "known-and-handled"
         // by getting `None` here, then dispatching to the friendly error
         // page rather than 400'ing through the JSON error envelope.
-        for raw in ["move", "delete", "archive", "", "MARK_READ", "junk"] {
+        // STAR/UNSTAR uppercase + the single-endpoint `read`/`unread`
+        // shapes must also fall through — the bulk endpoint uses different
+        // verbs for the seen/flagged pairs by design.
+        for raw in [
+            "move", "delete", "archive", "", "MARK_READ", "junk",
+            "STAR", "Star", "starred", "mark_star", "read", "unread",
+        ] {
             assert_eq!(MarkAction::from_bulk(raw), None, "raw={raw:?}");
         }
     }
@@ -415,15 +503,41 @@ mod tests {
     // ───────────── MarkAction helpers ─────────────
 
     #[test]
-    fn adds_seen_flag_is_true_for_mark_read() {
-        assert!(MarkAction::Read.adds_seen_flag());
-        assert!(!MarkAction::Unread.adds_seen_flag());
+    fn adds_flag_is_true_for_read_and_star() {
+        // Read + Star both ADD their respective IMAP flag; Unread + Unstar
+        // both strip it. Locked-in invariant — flipping this matrix would
+        // silently turn every Star into Unstar on production.
+        assert!(MarkAction::Read.adds_flag());
+        assert!(MarkAction::Star.adds_flag());
+        assert!(!MarkAction::Unread.adds_flag());
+        assert!(!MarkAction::Unstar.adds_flag());
+    }
+
+    // Added (TMAIL-371): Verify each variant maps to the right IMAP flag.
+    // A renamed constant or a stray Star→\Seen mapping would silently
+    // mark messages read when the user clicks Star — the exact kind of
+    // bug a unit test on a closed enum should catch up front.
+    #[test]
+    fn imap_flag_maps_seen_for_read_pair() {
+        assert_eq!(MarkAction::Read.imap_flag(), "\\Seen");
+        assert_eq!(MarkAction::Unread.imap_flag(), "\\Seen");
+    }
+
+    #[test]
+    fn imap_flag_maps_flagged_for_star_pair() {
+        assert_eq!(MarkAction::Star.imap_flag(), "\\Flagged");
+        assert_eq!(MarkAction::Unstar.imap_flag(), "\\Flagged");
     }
 
     #[test]
     fn banner_key_round_trips() {
         assert_eq!(MarkAction::Read.as_banner_key(), "read");
         assert_eq!(MarkAction::Unread.as_banner_key(), "unread");
+        // Added (TMAIL-371): the star/unstar pair uses the UI-readable
+        // form ("starred" / "unstarred") rather than the bare verb so the
+        // folder banner copy ("Starred N messages") matches the URL key.
+        assert_eq!(MarkAction::Star.as_banner_key(), "starred");
+        assert_eq!(MarkAction::Unstar.as_banner_key(), "unstarred");
     }
 
     // ───────────── extract_uids ─────────────
@@ -521,6 +635,17 @@ mod tests {
         assert_eq!(
             marked_redirect("INBOX", MarkAction::Unread, 1),
             "/classic/folders/INBOX?marked=unread&count=1"
+        );
+        // Added (TMAIL-371): star/unstar redirects use the same URL shape
+        // — the folder view's `marked_banner()` parser dispatches on the
+        // value so the same banner template covers all four directions.
+        assert_eq!(
+            marked_redirect("INBOX", MarkAction::Star, 2),
+            "/classic/folders/INBOX?marked=starred&count=2"
+        );
+        assert_eq!(
+            marked_redirect("INBOX", MarkAction::Unstar, 1),
+            "/classic/folders/INBOX?marked=unstarred&count=1"
         );
     }
 

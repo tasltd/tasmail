@@ -289,10 +289,22 @@
       <button type="submit" class="danger">Delete</button>
     </form>
 
-    {# P1 #17 — Star toggle. Placeholder until TMAIL-377. #}
-    <form method="post" action="">
+    {# TMAIL-371 — Star toggle (P1 #17). Live action.
+       Renders as "Unstar" when the message already carries the IMAP
+       `\Flagged` flag (so the same button toggles back), otherwise as
+       "Star". POSTs to the shared /flag endpoint with `mark=star` /
+       `mark=unstar`; the handler dispatches on the value, toggles the
+       IMAP flag, and 303-redirects back to the source folder where the
+       row's ★ indicator confirms the new state. #}
+    <form method="post" action="{{ flag_action }}">
       <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-      <button type="submit" class="secondary" disabled>Star</button>
+      {% if is_starred %}
+        <input type="hidden" name="mark" value="unstar">
+        <button type="submit" class="secondary">Unstar</button>
+      {% else %}
+        <input type="hidden" name="mark" value="star">
+        <button type="submit" class="secondary">Star</button>
+      {% endif %}
     </form>
 
     {# TMAIL-370 — Mark unread (P1 #16). Live action.
