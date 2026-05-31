@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TASMail Sidebar Redesign - Interactive Mockup</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      background: #f5f5f5;
+      padding: 20px;
+      line-height: 1.5;
+    }
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      gap: 20px;
+    }
+    .header {
+      grid-column: 1 / -1;
+      margin-bottom: 20px;
+    }
+    h1 {
+      font-size: 24px;
+      margin-bottom: 8px;
+      color: #1a1a1a;
+    }
+    .subtitle {
+      color: #666;
+      font-size: 14px;
+    }
+    /* Sidebar Styles */
+    .sidebar {
+      background: white;
+      border-radius: 8px;
+      padding: 16px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+      height: fit-content;
+      position: sticky;
+      top: 20px;
+    }
+    .compose-btn {
+      width: 100%;
+      padding: 12px 16px;
+      background: linear-gradient(135deg, #ff6b35 0%, #ff5722 100%);
+      color: white;
+      border: none;
+      border-radius: 6px;
+      font-weight: 600;
+      font-size: 14px;
+      cursor: pointer;
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: transform 0.1s, box-shadow 0.1s;
+    }
+    .compose-btn:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(255, 91, 34, 0.3);
+    }
+    .compose-btn::before {
+      content: '✎';
+      font-size: 16px;
+    }
+    /* Section Styles */
+    .nav-section {
+      margin-bottom: 24px;
+    }
+    .nav-section-title {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      color: #999;
+      letter-spacing: 0.5px;
+      margin-bottom: 12px;
+      padding: 0 4px;
+    }
+    .nav-section-title.hidden {
+      display: none;
+    }
+    .nav-item {
+      padding: 10px 12px;
+      margin-bottom: 4px;
+      border-radius: 6px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 14px;
+      color: #333;
+      transition: all 0.15s;
+      border: 1px solid transparent;
+      position: relative;
+    }
+    .nav-item:hover {
+      background: #f0f0f0;
+      color: #ff5722;
+    }
+    .nav-item.active {
+      background: #fff3e0;
+      color: #ff5722;
+      font-weight: 600;
+      border-color: #ff5722;
+    }
+    .nav-item.admin-only {
+      opacity: 0.7;
+    }
+    .nav-item.admin-only::before {
+      content: '🔒';
+      position: absolute;
+      right: 8px;
+      font-size: 10px;
+    }
+    .nav-item-icon {
+      width: 20px;
+      text-align: center;
+      font-size: 16px;
+    }
+    .nav-item-label {
+      flex: 1;
+    }
+    .nav-item-badge {
+      background: #ff5722;
+      color: white;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 6px;
+      border-radius: 10px;
+      min-width: 20px;
+      text-align: center;
+    }
+    /* Folder tree styling (simplified) */
+    .folder-tree {
+      margin-top: 12px;
+    }
+    .folder-item {
+      padding: 8px 12px;
+      margin-bottom: 2px;
+      border-radius: 4px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 13px;
+      color: #555;
+      transition: all 0.15s;
+    }
+    .folder-item:hover {
+      background: #f9f9f9;
+    }
+    .folder-item.active {
+      background: #fce4ec;
+      color: #d81b60;
+      font-weight: 600;
+    }
+    .folder-icon {
+      font-size: 14px;
+    }
+    .folder-count {
+      margin-left: auto;
+      font-size: 11px;
+      color: #999;
+      background: #f0f0f0;
+      padding: 2px 6px;
+      border-radius: 3px;
+    }
+    /* Quota bar */
+    .quota-bar {
+      margin-top: 16px;
+      padding-top: 16px;
+      border-top: 1px solid #eee;
+    }
+    .quota-label {
+      font-size: 11px;
+      color: #999;
+      margin-bottom: 6px;
+    }
+    .quota-progress {
+      width: 100%;
+      height: 6px;
+      background: #eee;
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    .quota-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #4caf50 0%, #ff9800 70%, #f44336 100%);
+      width: 45%;
+    }
+    .quota-text {
+      font-size: 10px;
+      color: #999;
+      margin-top: 4px;
+    }
+    /* Main content area */
+    .content {
+      background: white;
+      border-radius: 8px;
+      padding: 32px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    }
+    h2 {
+      font-size: 18px;
+      margin-bottom: 12px;
+      color: #1a1a1a;
+    }
+    .content-section {
+      margin-bottom: 24px;
+    }
+    .content-section p {
+      color: #666;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+    .content-section ul {
+      margin: 12px 0 12px 24px;
+      color: #666;
+      font-size: 14px;
+    }
+    .content-section li {
+      margin-bottom: 8px;
+    }
+    .code-block {
+      background: #f5f5f5;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      padding: 12px;
+      font-family: 'Monaco', 'Courier New', monospace;
+      font-size: 12px;
+      overflow-x: auto;
+      margin: 12px 0;
+      color: #333;
+    }
+    .tab-demo {
+      display: flex;
+      gap: 8px;
+      margin: 12px 0;
+      border-bottom: 1px solid #ddd;
+    }
+    .tab-demo button {
+      padding: 8px 16px;
+      border: none;
+      background: none;
+      color: #666;
+      cursor: pointer;
+      font-size: 13px;
+      border-bottom: 2px solid transparent;
+      transition: all 0.15s;
+    }
+    .tab-demo button.active {
+      color: #ff5722;
+      border-bottom-color: #ff5722;
+    }
+    .admin-badge {
+      display: inline-block;
+      background: #ffcccc;
+      color: #c62828;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+      margin-left: 8px;
+    }
+    @media (max-width: 768px) {
+      .container {
+        grid-template-columns: 1fr;
+      }
+      .sidebar {
+        position: static;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>TASMail Sidebar Redesign</h1>
+      <p class="subtitle">Interactive mockup of the proposed navigation structure (left: new sidebar; right: explanation)</p>
+    </div>
+
+    <!-- SIDEBAR -->
+    <div class="sidebar">
+      <button class="compose-btn">Compose</button>
+
+      <!-- Mail Folders -->
+      <div class="nav-section">
+        <div class="nav-section-title hidden">Mail Folders</div>
+        <div class="folder-tree">
+          <div class="folder-item active">
+            <span class="folder-icon">📥</span>
+            <span class="folder-item-label">Inbox</span>
+            <span class="folder-count">3</span>
+          </div>
+          <div class="folder-item">
+            <span class="folder-icon">📤</span>
+            <span class="folder-item-label">Sent</span>
+          </div>
+          <div class="folder-item">
+            <span class="folder-icon">📝</span>
+            <span class="folder-item-label">Drafts</span>
+            <span class="folder-count">1</span>
+          </div>
+          <div class="folder-item">
+            <span class="folder-icon">⚠️</span>
+            <span class="folder-item-label">Spam</span>
+          </div>
+          <div class="folder-item">
+            <span class="folder-icon">🗑</span>
+            <span class="folder-item-label">Trash</span>
+          </div>
+          <div class="folder-item">
+            <span class="folder-icon">📦</span>
+            <span class="folder-item-label">Archive</span>
+          </div>
+          <div style="padding: 8px 12px; color: #999; font-size: 12px; margin-top: 4px; cursor: pointer; transition: color 0.15s;" onmouseover="this.style.color='#ff5722'" onmouseout="this.style.color='#999'">
+            + Add Label
+          </div>
+        </div>
+      </div>
+
+      <!-- Apps -->
+      <div class="nav-section">
+        <div class="nav-section-title">Apps</div>
+        <div class="nav-item">
+          <span class="nav-item-icon">📅</span>
+          <span class="nav-item-label">Calendar</span>
+        </div>
+        <div class="nav-item">
+          <span class="nav-item-icon">👥</span>
+          <span class="nav-item-label">Contacts</span>
+        </div>
+        <div class="nav-item">
+          <span class="nav-item-icon">✓</span>
+          <span class="nav-item-label">Tasks</span>
+        </div>
+        <div class="nav-item">
+          <span class="nav-item-icon">📋</span>
+          <span class="nav-item-label">Templates</span>
+        </div>
+      </div>
+
+      <!-- User Settings -->
+      <div class="nav-section">
+        <div class="nav-section-title">User</div>
+        <div class="nav-item">
+          <span class="nav-item-icon">⚙</span>
+          <span class="nav-item-label">Settings</span>
+        </div>
+      </div>
+
+      <!-- Admin (hidden by default unless user.isAdmin=true) -->
+      <div class="nav-section" id="admin-section">
+        <div class="nav-section-title">Administration</div>
+        <div class="nav-item admin-only">
+          <span class="nav-item-icon">👤</span>
+          <span class="nav-item-label">Users & Domains</span>
+        </div>
+        <div class="nav-item admin-only">
+          <span class="nav-item-icon">🔐</span>
+          <span class="nav-item-label">Security</span>
+        </div>
+        <div class="nav-item admin-only">
+          <span class="nav-item-icon">📊</span>
+          <span class="nav-item-label">Compliance</span>
+        </div>
+        <div class="nav-item admin-only">
+          <span class="nav-item-icon">🎨</span>
+          <span class="nav-item-label">Branding</span>
+        </div>
+        <div class="nav-item admin-only">
+          <span class="nav-item-icon">🔧</span>
+          <span class="nav-item-label">Advanced</span>
+        </div>
+        <div class="nav-item admin-only">
+          <span class="nav-item-icon">💳</span>
+          <span class="nav-item-label">Billing</span>
+        </div>
+        <div class="nav-item admin-only">
+          <span class="nav-item-icon">📈</span>
+          <span class="nav-item-label">Deliverability</span>
+        </div>
+      </div>
+
+      <!-- Quota -->
+      <div class="quota-bar">
+        <div class="quota-label">Storage Used</div>
+        <div class="quota-progress">
+          <div class="quota-fill"></div>
+        </div>
+        <div class="quota-text">4.5 GB / 10 GB (45%)</div>
+      </div>
+    </div>
+
+    <!-- CONTENT AREA -->
+    <div class="content">
+      <h2>Redesign Overview</h2>
+
+      <div class="content-section">
+        <p><strong>Problem:</strong> Current sidebar has 41 flat settings buttons, all at same visual weight as Inbox. New users can't find email.</p>
+        <p style="margin-top: 12px;"><strong>Solution:</strong> Group into 5 buckets: Mail (FolderTree), Apps (Calendar/Contacts/Tasks/Templates), User Settings (one gear button), Admin (gated), Quota.</p>
+      </div>
+
+      <div class="content-section">
+        <h3 style="font-size: 15px; margin-bottom: 10px; color: #1a1a1a;">Key Changes</h3>
+        <ul>
+          <li><strong>Compose remains top CTA</strong> — large, blue, unmissable</li>
+          <li><strong>Inbox is folder #1</strong> with unread count badge (e.g., "3")</li>
+          <li><strong>Default folders</strong> (Sent, Drafts, Spam, Trash, Archive) visually dominant</li>
+          <li><strong>Apps section:</strong> Calendar, Contacts, Tasks, Templates as peer top-level entries (users expect these as separate surfaces, not forms)</li>
+          <li><strong>Settings = single gear icon</strong> opens a Settings Hub page with 8 left-rail tabs (Account, Mail, Notifications, Security, Storage, Appearance, Integration, Billing)</li>
+          <li><strong>Admin section</strong> visible only when <code>user.isAdmin === true</code>; holds LDAP, SAML, OIDC, DLP, eDiscovery, Retention, Webhooks, Plugins, ActiveSync, CalDAV, Ollama, Rspamd, DANE, Hostnames, SMTP, Deliverability, Billing, Branding</li>
+          <li><strong>Quota bar</strong> stays at bottom (shows storage usage, 0–100%)</li>
+        </ul>
+      </div>
+
+      <div class="content-section">
+        <h3 style="font-size: 15px; margin-bottom: 10px; color: #1a1a1a;">Settings Hub Structure</h3>
+        <p>When user clicks the Settings gear, they navigate to <code>/settings</code> which renders a full-page Settings Hub with left-rail tabs:</p>
+        <div class="tab-demo">
+          <button class="active">Account</button>
+          <button>Mail</button>
+          <button>Notifications</button>
+          <button>Security</button>
+          <button>Storage</button>
+          <button>Appearance</button>
+          <button>Integration</button>
+          <button>Billing</button>
+        </div>
+        <p><strong>Account:</strong> IMAP/SMTP config, Encryption, Change Password</p>
+        <p><strong>Mail:</strong> Signatures, Filters, Templates, Spam Rules, Auto-reply/Vacation, Shared Mailboxes</p>
+        <p><strong>Notifications:</strong> Push Devices, Email Frequency, Do-not-disturb quiet hours</p>
+        <p><strong>Security:</strong> 2FA (TOTP, SMS, WebAuthn), Login Activity, Sessions, Bandwidth limits</p>
+        <p><strong>Storage:</strong> Quota, Archive policy, Retention rules, Migration</p>
+        <p><strong>Appearance:</strong> Theme, Font size, Sidebar collapse/expand, Density</p>
+        <p><strong>Integration:</strong> CalDAV/CardDAV, POP3 access, Shared Files, AI Config</p>
+        <p><strong>Billing:</strong> Subscription, Invoices, Usage breakdown</p>
+      </div>
+
+      <div class="content-section">
+        <h3 style="font-size: 15px; margin-bottom: 10px; color: #1a1a1a;">Admin Visibility Logic</h3>
+        <p>Admin section only renders when <code>useAuth().isAdmin === true</code>. In the sidebar, this means:</p>
+        <div class="code-block">
+const { isAdmin } = useAuth();
+return (
+  &lt;aside className="sidebar"&gt;
+    &lt;!-- ... Compose, FolderTree, Apps, Settings ... --&gt;
+    {isAdmin && (
+      &lt;div className="nav-section"&gt;
+        &lt;div className="nav-section-title"&gt;Administration&lt;/div&gt;
+        &lt;!-- Admin items here --&gt;
+      &lt;/div&gt;
+    )}
+  &lt;/aside&gt;
+);
+        </div>
+        <p>Same pattern as the existing <code>RequireAdmin</code> component in <code>frontend/src/components/admin/</code>.</p>
+      </div>
+
+      <div class="content-section">
+        <h3 style="font-size: 15px; margin-bottom: 10px; color: #1a1a1a;">Empty-Inbox UX</h3>
+        <p>When user opens Inbox with no messages:</p>
+        <div style="background: #f9f9f9; border: 1px solid #ddd; border-radius: 4px; padding: 20px; text-align: center; margin: 12px 0;">
+          <p style="font-size: 14px; color: #666;"><strong>You're all caught up!</strong></p>
+          <p style="font-size: 13px; color: #999; margin-top: 8px;">Emails from your IMAP server will appear here.</p>
+        </div>
+        <p>This mirrors Gmail, Outlook, Zoho, FastMail, ProtonMail.</p>
+      </div>
+
+      <div class="content-section">
+        <h3 style="font-size: 15px; margin-bottom: 10px; color: #1a1a1a;">First-Login Tour (Optional)</h3>
+        <p>3-step lightweight tooltip tour on first login (dismissible, re-trigger via Help menu):</p>
+        <ol style="margin: 12px 0 12px 24px; color: #666; font-size: 14px;">
+          <li><strong>Compose button:</strong> "Click here to write a new email"</li>
+          <li><strong>FolderTree:</strong> "Your emails are organized in folders. Check Inbox for incoming mail."</li>
+          <li><strong>Settings gear:</strong> "Customize your experience: signatures, filters, security, and more."</li>
+        </ol>
+        <p>Uses <code>react-joyride</code> or similar; tracked via localStorage <code>hasSeenTour</code> so it only shows once.</p>
+      </div>
+
+      <div class="content-section">
+        <h3 style="font-size: 15px; margin-bottom: 10px; color: #1a1a1a;">Keyboard Shortcuts</h3>
+        <p>Preserve existing shortcuts in <code>useKeyboardShortcuts</code> hook:</p>
+        <ul>
+          <li><kbd>g i</kbd> → Inbox</li>
+          <li><kbd>g s</kbd> → Sent</li>
+          <li><kbd>c</kbd> → Compose</li>
+          <li><kbd>?</kbd> → Help (shortcuts modal)</li>
+          <li><kbd>g e</kbd> → Settings (new; mirrors Gmail)</li>
+        </ul>
+      </div>
+
+      <div class="content-section">
+        <h3 style="font-size: 15px; margin-bottom: 10px; color: #1a1a1a;">Migration Path</h3>
+        <ul>
+          <li><strong>Week 1:</strong> Build <code>navConfig.ts</code> + <code>SettingsHub</code> component + admin gating. Run <code>npm run trace-check</code>.</li>
+          <li><strong>Week 2:</strong> Consolidate 8 user-facing settings managers into SettingsHub tabs. Test each tab.</li>
+          <li><strong>Week 3:</strong> Fold admin routes into sidebar (visible only to admins). Add keyboard shortcut tests.</li>
+          <li><strong>Week 4:</strong> Empty-inbox copy + optional first-login tour. Mobile QA (sidebar collapse/expand).</li>
+        </ul>
+      </div>
+
+      <div class="content-section" style="padding-top: 16px; border-top: 1px solid #ddd;">
+        <p style="font-size: 12px; color: #999;">
+          <strong>References:</strong> Gmail (support.google.com/mail), Outlook (support.microsoft.com/office), Zoho Mail (help.zoho.com), FastMail (fastmail.help), ProtonMail (proton.me/support), Tutanota (tutanota.com), Roundcube (roundcube.net)
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Make admin section toggleable for demo purposes
+    const toggleAdminBtn = document.querySelector('[onclick*="toggleAdmin"]');
+    const adminSection = document.getElementById('admin-section');
+
+    // Demo: Show/hide admin section when clicking admin items
+    const adminItems = document.querySelectorAll('.nav-item.admin-only');
+    adminItems.forEach(item => {
+      item.addEventListener('click', () => {
+        alert('🔒 Admin access required. In the real app, this is gated by useAuth().isAdmin.');
+      });
+    });
+
+    // Make nav items clickable for demo
+    const navItems = document.querySelectorAll('.nav-item:not(.admin-only), .folder-item');
+    navItems.forEach(item => {
+      item.addEventListener('click', () => {
+        // Remove active state from siblings
+        navItems.forEach(i => i.classList.remove('active'));
+        // Add active state to clicked item
+        item.classList.add('active');
+      });
+    });
+
+    // Compose button click
+    document.querySelector('.compose-btn').addEventListener('click', () => {
+      alert('📝 Compose modal would open here.');
+    });
+  </script>
+</body>
+</html>
