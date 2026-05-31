@@ -14,6 +14,7 @@ import {
   Archive,
   Star,
   Download,
+  FileDown,
   ShieldAlert,
   ShieldCheck,
 } from 'lucide-react';
@@ -21,6 +22,10 @@ import { format } from 'date-fns';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { downloadAttachment, fetchMessage } from '@/api/messages';
+// Added (TMAIL-349): per-message EML export — single click downloads the raw
+// RFC822 bytes of the open message as `message_<uid>.eml`. Shares the same
+// blob → object URL → anchor click lifecycle as the attachment download.
+import { exportEml, triggerBlobDownload } from '@/api/eml';
 // Added (TMAIL-347): phishing scan / report client. Same backend contract the
 // classic SPA's MessageView consumes — see `themes/shadcn-prototype/src/api/phishing.ts`.
 import {
@@ -148,6 +153,29 @@ export function EmailReader({
   // shape tiny without pulling in a full mutation per row.
   const [downloadingPartId, setDownloadingPartId] = useState<string | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
+
+  // Added (TMAIL-349): per-message EML export state. We surface a tiny error
+  // string under the toolbar on failure so the user sees something specific
+  // (the alt-UI has no global toast layer yet — same pattern as
+  // downloadError above).
+  const [isExportingEml, setIsExportingEml] = useState(false);
+  const [emlExportError, setEmlExportError] = useState<string | null>(null);
+
+  const handleExportEml = async () => {
+    if (uid == null) return;
+    setIsExportingEml(true);
+    setEmlExportError(null);
+    try {
+      const { blob, filename } = await exportEml(folder, uid);
+      triggerBlobDownload(blob, filename);
+    } catch (err) {
+      setEmlExportError(
+        err instanceof Error ? err.message : 'Failed to export message as EML',
+      );
+    } finally {
+      setIsExportingEml(false);
+    }
+  };
 
   const handleDownloadAttachment = async (attachment: Attachment) => {
     if (uid == null) return;
@@ -298,6 +326,23 @@ export function EmailReader({
             <Forward className="size-4 sm:mr-2" />
             <span className="hidden sm:inline">Forward</span>
           </Button>
+          {/* Added (TMAIL-349): Export the open message as a raw .eml file via
+              GET /api/folders/{folder}/messages/{uid}/eml. Disabled until the
+              message body has loaded so the export always corresponds to the
+              currently-rendered message. */}
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={uid == null || m == null || isExportingEml}
+            aria-label={`Export email from ${from} as EML file`}
+            onClick={handleExportEml}
+            data-testid="modern-export-eml"
+          >
+            <FileDown className="size-4 sm:mr-2" />
+            <span className="hidden sm:inline">
+              {isExportingEml ? 'Exporting…' : 'Export EML'}
+            </span>
+          </Button>
           <div className="flex-1" />
           {/* Added: TMAIL-317 — wires to /move via EmailClient's archiveMutation
               targeting the IMAP "Archive" folder (auto-created on first use). */}
@@ -335,6 +380,18 @@ export function EmailReader({
             <span className="hidden sm:inline">Delete</span>
           </Button>
         </div>
+        {/* Added (TMAIL-349): inline error for EML export failures. Placed
+            outside the action row so a long server message wraps without
+            breaking the toolbar layout. */}
+        {emlExportError && (
+          <div
+            role="alert"
+            data-testid="modern-export-eml-error"
+            className="mt-2 text-sm text-red-600 dark:text-red-400"
+          >
+            {emlExportError}
+          </div>
+        )}
       </div>
 
       <div className="flex-1 overflow-y-auto p-6">

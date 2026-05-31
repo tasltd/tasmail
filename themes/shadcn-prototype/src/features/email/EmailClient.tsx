@@ -4,7 +4,7 @@
 // component is the adapter that maps the real backend types to those
 // shapes. EmailReader (TMAIL-218) and ComposeModal (TMAIL-219) own their
 // own data fetches.
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
 import {
   useInfiniteQuery,
@@ -24,6 +24,8 @@ import {
   Archive as ArchiveIcon,
   Trash2,
   FolderInput,
+  FolderDown,
+  FolderUp,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -40,6 +42,10 @@ import { ComposeModal } from '@/features/email/ComposeModal';
 import { buildReplyContext, type ReplyContext, type ReplyKind } from '@/features/email/replyContext';
 import { fetchFolders, createFolder, deleteFolder } from '@/api/folders';
 import { deleteMessage, fetchMessages, flagMessage, moveMessage } from '@/api/messages';
+// Added (TMAIL-349): per-folder MBOX export + EML import. Both endpoints
+// require auth and exchange raw RFC822 / mbox bytes — see api/eml.ts for the
+// fetch wrappers and triggerBlobDownload for the blob → anchor lifecycle.
+import { exportFolderMbox, importEmlToFolder, triggerBlobDownload } from '@/api/eml';
 import {
   MESSAGES_PAGE_SIZE,
   nextMessagesPageParam,
@@ -580,6 +586,59 @@ export function EmailClient() {
   // role/kind field per folder.
   const isPermanentDelete = isTrashFolder(activeFolder);
 
+  // Added (TMAIL-349): per-folder MBOX export. The download is binary so we
+  // don't put the request through TanStack Query — a `useMutation` would
+  // serialise the response as JSON and break the blob handoff. The hidden
+  // ref-backed <input type="file"> below pairs with `handleImportEmlClick`
+  // for the corresponding EML import.
+  const [isExportingMbox, setIsExportingMbox] = useState(false);
+  const [isImportingEml, setIsImportingEml] = useState(false);
+  const [mboxFlashMessage, setMboxFlashMessage] = useState<string | null>(null);
+  const emlFileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const handleExportMbox = async () => {
+    setIsExportingMbox(true);
+    setMboxFlashMessage(null);
+    try {
+      const { blob, filename } = await exportFolderMbox(activeFolder);
+      triggerBlobDownload(blob, filename);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'MBOX export failed';
+      if (typeof window !== 'undefined') window.alert(msg);
+    } finally {
+      setIsExportingMbox(false);
+    }
+  };
+
+  const handleImportEmlClick = () => {
+    emlFileInputRef.current?.click();
+  };
+
+  const handleEmlFileChange = async (
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = event.target.files?.[0];
+    // Reset so picking the same file twice in a row still re-fires the change.
+    event.target.value = '';
+    if (!file) return;
+    setIsImportingEml(true);
+    setMboxFlashMessage(null);
+    try {
+      await importEmlToFolder(activeFolder, file);
+      setMboxFlashMessage(`Imported ${file.name} into ${activeFolder}`);
+      // Re-fetch the active folder + folder list so the new envelope appears
+      // and the unseen badge updates. Mirrors what archiveMutation does on
+      // settle so import behaves identically to a real new-mail arrival.
+      queryClient.invalidateQueries({ queryKey: ['messages', activeFolder] });
+      queryClient.invalidateQueries({ queryKey: ['folders'] });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'EML import failed';
+      if (typeof window !== 'undefined') window.alert(msg);
+    } finally {
+      setIsImportingEml(false);
+    }
+  };
+
   // Adapt /api/folders shape → Sidebar's Folder shape.
   // TMAIL-324: tag any non-built-in folder as `isCustom` so the sidebar shows
   // the delete (×) button on hover. The set of built-ins mirrors the
@@ -949,11 +1008,62 @@ export function EmailClient() {
                 </Button>
                 <h2 className="font-semibold capitalize">{activeFolder}</h2>
               </div>
-              <Link to="/admin">
-                <Button variant="ghost" size="icon" title="Admin Dashboard">
-                  <Settings className="size-4" />
+              <div className="flex items-center gap-1">
+                {/* Added (TMAIL-349): per-folder MBOX export + EML import.
+                    Rendered as plain icon buttons with explicit aria-labels
+                    rather than a dropdown so screen readers, keyboard users,
+                    and E2E tests all interact with a stable click target
+                    (no portal timing / focus traps to fight). */}
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={handleExportMbox}
+                  disabled={isExportingMbox}
+                  title={`Export ${activeFolder} as MBOX`}
+                  aria-label={`Export folder ${activeFolder} as MBOX file`}
+                  data-testid="modern-export-mbox"
+                >
+                  <FolderDown className="size-4" aria-hidden="true" />
                 </Button>
-              </Link>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={handleImportEmlClick}
+                  disabled={isImportingEml}
+                  title={`Import EML into ${activeFolder}`}
+                  aria-label={`Import EML file into ${activeFolder}`}
+                  data-testid="modern-import-eml-trigger"
+                >
+                  <FolderUp className="size-4" aria-hidden="true" />
+                </Button>
+                <Link to="/admin">
+                  <Button variant="ghost" size="icon" title="Admin Dashboard">
+                    <Settings className="size-4" />
+                  </Button>
+                </Link>
+              </div>
+              {/* Hidden file input — `accept=".eml,message/rfc822"` hints the
+                  picker to default to EML files but the backend's empty-body
+                  guard still validates server-side. */}
+              <input
+                ref={emlFileInputRef}
+                type="file"
+                accept=".eml,message/rfc822"
+                onChange={handleEmlFileChange}
+                className="hidden"
+                data-testid="modern-import-eml-input"
+                aria-hidden="true"
+                tabIndex={-1}
+              />
+              {mboxFlashMessage && (
+                <span
+                  role="status"
+                  data-testid="modern-import-eml-flash"
+                  className="sr-only"
+                >
+                  {mboxFlashMessage}
+                </span>
+              )}
             </div>
           )}
           <div className="flex-1 overflow-y-auto">
