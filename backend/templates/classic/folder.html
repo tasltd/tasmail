@@ -38,6 +38,11 @@
 
 {% block logout_form %}{% include "classic/_logout_form.html" %}{% endblock %}
 
+{# TMAIL-384: hydrate the footer "Using X of Y" indicator. The block is
+   defined in base.html's <footer>; the partial reads the `quota_indicator`
+   field that get_folder sets on FolderTemplate. #}
+{% block quota_indicator %}{% include "classic/_quota_indicator.html" %}{% endblock %}
+
 {% block content %}
   <style nonce="{{ csp_nonce }}">
     /* Folder view-specific layout. Inherits base.html palette tokens. */

@@ -175,6 +175,10 @@ pub struct SearchTemplate {
     pub csrf_token: String,
     /// Per-request CSP nonce. Required by base.html (TMAIL-356).
     pub csp_nonce: String,
+    /// Added (TMAIL-384): Footer quota indicator ("Using X of Y · NN%").
+    /// `None` when the loader couldn't reach the cache + DB; the partial
+    /// renders nothing in that branch so the rest of the page still loads.
+    pub quota_indicator: Option<super::QuotaIndicator>,
 }
 
 /// URL-encode a folder name for path-segment use. Same helper shape as
@@ -298,6 +302,13 @@ pub async fn get_search(
         }
     };
 
+    // Added (TMAIL-384): hydrate the footer quota indicator once per
+    // request. Cache-first via `state.cache.get_quota`; on miss it runs
+    // the same DB queries `/api/quota` uses. Returns `None` on any error
+    // so the partial silently omits the footer line rather than 500-ing
+    // the search page.
+    let quota_indicator = super::load_quota_indicator(&state, mailbox_id).await;
+
     // Empty-state path: no q means no IMAP work.
     let Some(trimmed_query) = trimmed else {
         let template = SearchTemplate {
@@ -317,6 +328,7 @@ pub async fn get_search(
             results: Vec::new(),
             csrf_token: session.csrf_token.clone(),
             csp_nonce: csp_nonce.into_string(),
+            quota_indicator: quota_indicator.clone(),
         };
         let body = template.render().map_err(|e| {
             AppError::Internal(anyhow::anyhow!(
@@ -392,6 +404,7 @@ pub async fn get_search(
         results,
         csrf_token: session.csrf_token.clone(),
         csp_nonce: csp_nonce.into_string(),
+        quota_indicator,
     };
 
     let body = template.render().map_err(|e| {
@@ -448,6 +461,7 @@ mod tests {
             results: Vec::new(),
             csrf_token: "test-csrf-token".to_string(),
             csp_nonce: "test-nonce-fixed".to_string(),
+            quota_indicator: None,
         }
     }
 

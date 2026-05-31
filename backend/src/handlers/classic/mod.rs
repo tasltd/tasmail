@@ -38,6 +38,14 @@ use crate::state::AppState;
 pub mod nonce;
 pub use nonce::CspNonce;
 
+// Added (TMAIL-384): Shared per-request context loader for the Classic UI
+// footer's "Using X of Y" quota indicator (P1 #30). Owns the
+// `QuotaIndicator` view-model used by every authenticated template + the
+// cache-first `load_quota_indicator` helper every authenticated handler
+// calls when assembling its template struct.
+pub mod context;
+pub use context::{load_quota_indicator, QuotaIndicator};
+
 // Added (TMAIL-357): Skeleton auth helpers — generate_csrf_token,
 // create_session_and_cookie, destroy_session_and_cookie. The actual route
 // handlers for /classic/login + /classic/logout land in TMAIL-359 / TMAIL-360

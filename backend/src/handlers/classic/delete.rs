@@ -122,6 +122,10 @@ pub struct BulkDeleteConfirmTemplate {
     pub csrf_token: String,
     /// Per-request CSP nonce. Required by base.html.
     pub csp_nonce: String,
+    /// Added (TMAIL-384): Footer quota indicator. `None` when the cache
+    /// + DB couldn't be reached — the partial renders nothing in that
+    /// case so the confirm page still renders.
+    pub quota_indicator: Option<super::QuotaIndicator>,
 }
 
 /// Askama template for the Trash-folder permanent-delete confirmation page.
@@ -163,6 +167,9 @@ pub struct DeleteConfirmTemplate {
     pub csrf_token: String,
     /// Per-request CSP nonce. Required by base.html (TMAIL-356).
     pub csp_nonce: String,
+    /// Added (TMAIL-384): Footer quota indicator. `None` on cache + DB
+    /// outage — the partial renders nothing in that case.
+    pub quota_indicator: Option<super::QuotaIndicator>,
 }
 
 /// POST /classic/folders/{folder}/messages/{uid}/delete
@@ -256,6 +263,11 @@ pub async fn post_delete(
     let form_action = format!("/classic/folders/{folder_href}/messages/{uid}/delete");
     let cancel_href = format!("/classic/folders/{folder_href}/messages/{uid}");
 
+    // Added (TMAIL-384): hydrate the footer quota indicator. Loads once
+    // per render call; cheap (cache-first). `None` on outage so the
+    // confirm page still renders without the footer line.
+    let quota_indicator = super::load_quota_indicator(&state, mailbox_id).await;
+
     let template = DeleteConfirmTemplate {
         current_folder: folder,
         current_folder_href: folder_href,
@@ -266,6 +278,7 @@ pub async fn post_delete(
         cancel_href,
         csrf_token: session.csrf_token.clone(),
         csp_nonce: csp_nonce.into_string(),
+        quota_indicator,
     };
 
     let html = template
@@ -326,6 +339,11 @@ pub async fn handle_bulk_delete(
 
     let folder_href = urlencoding::encode(&folder).into_owned();
 
+    // Added (TMAIL-384): hydrate the footer quota indicator once at the
+    // top of post_bulk_delete so every render branch (flag-error +
+    // bulk-confirm) carries the same indicator. Cloned per render site.
+    let quota_indicator = super::load_quota_indicator(&state, mailbox_id).await;
+
     // Re-parse the UID set off the form pairs every time — same shape as the
     // move handler, same trust boundary. A forged `confirm=1` POST with a
     // different uid set than the original confirm-page render still has to
@@ -340,6 +358,7 @@ pub async fn handle_bulk_delete(
             back_href: format!("/classic/folders/{folder_href}"),
             csrf_token: session.csrf_token.clone(),
             csp_nonce: csp_nonce.into_string(),
+            quota_indicator: quota_indicator.clone(),
         }
         .render()
         .map_err(|e| {
@@ -417,6 +436,7 @@ pub async fn handle_bulk_delete(
         cancel_href,
         csrf_token: session.csrf_token.clone(),
         csp_nonce: csp_nonce.into_string(),
+        quota_indicator,
     };
 
     let html = template.render().map_err(|e| {
@@ -486,6 +506,7 @@ mod tests {
             cancel_href: "/classic/folders/Trash/messages/42".to_string(),
             csrf_token: "test-csrf-token".to_string(),
             csp_nonce: "test-nonce-fixed".to_string(),
+            quota_indicator: None,
         }
     }
 

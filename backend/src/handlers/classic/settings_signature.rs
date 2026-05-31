@@ -152,6 +152,9 @@ pub struct SignatureFormTemplate {
     pub csrf_token: String,
     /// Per-request CSP nonce required by base.html (TMAIL-356).
     pub csp_nonce: String,
+    /// Added (TMAIL-384): Footer quota indicator. `None` on cache + DB
+    /// outage — the partial renders nothing.
+    pub quota_indicator: Option<super::QuotaIndicator>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -201,6 +204,11 @@ pub async fn get_signature(
         None => (String::new(), String::new(), false, true),
     };
 
+    // Added (TMAIL-384): hydrate the footer quota indicator. Loaded
+    // once per GET so the indicator stays in sync with every other
+    // authenticated page.
+    let quota_indicator = super::load_quota_indicator(&state, mailbox_id).await;
+
     let template = SignatureFormTemplate {
         body,
         is_default,
@@ -209,6 +217,7 @@ pub async fn get_signature(
         flash: build_flash(&query),
         csrf_token: session.csrf_token.clone(),
         csp_nonce: csp_nonce.into_string(),
+        quota_indicator,
     };
     render_html(StatusCode::OK, &template)
 }
@@ -408,6 +417,10 @@ async fn render_form_error(
         sanitize_email_html(&body)
     };
 
+    // Added (TMAIL-384): hydrate the footer quota indicator for the
+    // error re-render so it carries the same indicator as the GET.
+    let quota_indicator = super::load_quota_indicator(state, mailbox_id).await;
+
     let template = SignatureFormTemplate {
         body,
         is_default,
@@ -416,6 +429,7 @@ async fn render_form_error(
         flash: Some(("error".to_string(), error.to_string())),
         csrf_token: csrf_token.to_string(),
         csp_nonce: csp_nonce.to_string(),
+        quota_indicator,
     };
     render_html(status, &template)
 }
@@ -466,6 +480,7 @@ mod tests {
             flash: None,
             csrf_token: "test-csrf-token".to_string(),
             csp_nonce: "test-nonce".to_string(),
+            quota_indicator: None,
         }
     }
 

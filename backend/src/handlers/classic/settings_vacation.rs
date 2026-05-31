@@ -148,6 +148,9 @@ pub struct VacationFormTemplate {
     pub csrf_token: String,
     /// Per-request CSP nonce required by base.html (TMAIL-356).
     pub csp_nonce: String,
+    /// Added (TMAIL-384): Footer quota indicator. `None` on cache + DB
+    /// outage — the partial renders nothing.
+    pub quota_indicator: Option<super::QuotaIndicator>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -189,6 +192,11 @@ pub async fn get_vacation(
         .await
         .map_err(|e| AppError::Internal(anyhow::anyhow!("load auto-reply rule: {e}")))?;
 
+    // Added (TMAIL-384): hydrate the footer quota indicator. Loaded once
+    // per GET; cache-first.
+    let quota_indicator = super::load_quota_indicator(&state, mailbox_id).await;
+    let csp_nonce_str = csp_nonce.into_string();
+
     let template = match existing {
         Some(rule) => VacationFormTemplate {
             enabled: rule.enabled,
@@ -199,7 +207,8 @@ pub async fn get_vacation(
             external_only: rule.exclude_lists,
             flash: build_flash(&query),
             csrf_token: session.csrf_token.clone(),
-            csp_nonce: csp_nonce.into_string(),
+            csp_nonce: csp_nonce_str,
+            quota_indicator,
         },
         None => VacationFormTemplate {
             enabled: false,
@@ -212,7 +221,8 @@ pub async fn get_vacation(
             external_only: true,
             flash: build_flash(&query),
             csrf_token: session.csrf_token.clone(),
-            csp_nonce: csp_nonce.into_string(),
+            csp_nonce: csp_nonce_str,
+            quota_indicator,
         },
     };
 
@@ -230,6 +240,12 @@ pub async fn post_vacation(
     let mailbox_id = parse_mailbox_id(&claims)?;
     let csrf_token = session.csrf_token.clone();
     let csp_nonce_str = csp_nonce.into_string();
+
+    // Added (TMAIL-384): hydrate the footer quota indicator once at the
+    // top of post_vacation so every render_error branch (and the success
+    // redirect — no template body) carries the same indicator the GET
+    // path would have shown.
+    let quota_indicator = super::load_quota_indicator(&state, mailbox_id).await;
 
     let enabled = form.enabled.is_some();
     let external_only = form.external_only.is_some();
@@ -252,6 +268,7 @@ pub async fn post_vacation(
             flash: Some(("error".to_string(), msg.to_string())),
             csrf_token: csrf_token.clone(),
             csp_nonce: csp_nonce_str.clone(),
+            quota_indicator: quota_indicator.clone(),
         };
         render_html(status, &tpl)
     };
@@ -438,6 +455,7 @@ mod tests {
             flash: None,
             csrf_token: "test-csrf-token".to_string(),
             csp_nonce: "test-nonce".to_string(),
+            quota_indicator: None,
         }
     }
 

@@ -215,6 +215,10 @@ pub struct FlagErrorTemplate {
     pub back_href: String,
     pub csrf_token: String,
     pub csp_nonce: String,
+    /// Added (TMAIL-384): Footer quota indicator. `None` on cache + DB
+    /// outage — the partial renders nothing in that case so the error
+    /// page still renders.
+    pub quota_indicator: Option<super::QuotaIndicator>,
 }
 
 /// Pull the `uid` field out of a form body that already-deserialised
@@ -324,6 +328,12 @@ pub async fn post_bulk(
 
     let folder_href = urlencoding::encode(&folder).into_owned();
 
+    // Added (TMAIL-384): hydrate the footer quota indicator once at the
+    // top of post_bulk so every render_flag_error branch carries it.
+    // Cloned per render site; the loader itself is cache-first so this
+    // call is sub-ms on the hot path.
+    let quota_indicator = super::load_quota_indicator(&state, mailbox_id).await;
+
     // The `action` field is required. A submission with no `action` (which
     // can happen if a future button is dropped onto the bar without a
     // value attribute) renders the friendly error page rather than 400'ing
@@ -334,6 +344,7 @@ pub async fn post_bulk(
             &folder_href,
             &session.csrf_token,
             csp_nonce.into_string(),
+            quota_indicator,
         );
     };
 
@@ -384,6 +395,7 @@ pub async fn post_bulk(
             &folder_href,
             &session.csrf_token,
             csp_nonce.into_string(),
+            quota_indicator,
         );
     };
 
@@ -395,6 +407,7 @@ pub async fn post_bulk(
             &folder_href,
             &session.csrf_token,
             csp_nonce.into_string(),
+            quota_indicator,
         );
     }
 
@@ -427,12 +440,18 @@ fn render_flag_error(
     folder_href: &str,
     csrf_token: &str,
     csp_nonce: String,
+    // Added (TMAIL-384): caller threads the per-request quota indicator
+    // here so the error page renders the same footer line as the rest of
+    // the authenticated surface. `None` when the loader couldn't reach
+    // the cache + DB.
+    quota_indicator: Option<super::QuotaIndicator>,
 ) -> Result<Response, AppError> {
     let template = FlagErrorTemplate {
         message: message.to_string(),
         back_href: format!("/classic/folders/{folder_href}"),
         csrf_token: csrf_token.to_string(),
         csp_nonce,
+        quota_indicator,
     };
     let html = template
         .render()
@@ -703,6 +722,7 @@ mod tests {
             back_href: "/classic/folders/INBOX".to_string(),
             csrf_token: "test-csrf-token".to_string(),
             csp_nonce: "test-nonce-fixed".to_string(),
+            quota_indicator: None,
         }
     }
 

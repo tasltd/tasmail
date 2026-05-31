@@ -269,6 +269,11 @@ pub struct MessageTemplate {
     pub csrf_token: String,
     /// Per-request CSP nonce. Required by base.html (TMAIL-356).
     pub csp_nonce: String,
+    /// Added (TMAIL-384): Footer "Using X of Y · NN%" quota indicator.
+    /// Hydrated by `super::load_quota_indicator`; `None` means the loader
+    /// couldn't reach the cache + DB, in which case the partial just
+    /// renders nothing so the rest of the read view still loads.
+    pub quota_indicator: Option<super::QuotaIndicator>,
 }
 
 /// GET /classic/folders/{folder}/messages/{uid} — render the message
@@ -364,6 +369,11 @@ pub async fn get_message(
     // and `/flag` so the URL layout stays consistent.
     let move_action = format!("{}/move", base);
 
+    // Added (TMAIL-384): hydrate the footer quota indicator. Cache-first
+    // (see context::load_quota_indicator) — `None` on Redis + DB outage,
+    // which the partial silently omits.
+    let quota_indicator = super::load_quota_indicator(&state, mailbox_id).await;
+
     let template = MessageTemplate {
         current_folder: folder,
         current_folder_href: folder_href,
@@ -385,6 +395,7 @@ pub async fn get_message(
         move_targets,
         csrf_token: session.csrf_token.clone(),
         csp_nonce: csp_nonce.into_string(),
+        quota_indicator,
     };
 
     let html = template.render().map_err(|e| {
@@ -443,6 +454,7 @@ mod tests {
             ],
             csrf_token: "test-csrf-token".to_string(),
             csp_nonce: "test-nonce-fixed".to_string(),
+            quota_indicator: None,
         }
     }
 

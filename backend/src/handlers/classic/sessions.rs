@@ -129,6 +129,9 @@ pub struct SessionsListTemplate {
     pub flash: Option<(String, String)>,
     pub csrf_token: String,
     pub csp_nonce: String,
+    /// Added (TMAIL-384): Footer quota indicator. `None` when the cache
+    /// + DB couldn't be reached — the partial renders nothing.
+    pub quota_indicator: Option<super::QuotaIndicator>,
 }
 
 #[derive(Template)]
@@ -138,6 +141,9 @@ pub struct RevokeAllConfirmTemplate {
     pub spa_count: usize,
     pub csrf_token: String,
     pub csp_nonce: String,
+    /// Added (TMAIL-384): Footer quota indicator. `None` on cache + DB
+    /// outage — the partial renders nothing in that case.
+    pub quota_indicator: Option<super::QuotaIndicator>,
 }
 
 // ---------- Form bodies ----------
@@ -300,11 +306,16 @@ pub async fn post_revoke_all(
             ))
         })?;
 
+    // Added (TMAIL-384): hydrate the footer quota indicator for the
+    // confirm page render.
+    let quota_indicator = super::load_quota_indicator(&state, mailbox_id).await;
+
     let template = RevokeAllConfirmTemplate {
         classic_count: classic_rows.len(),
         spa_count: spa_rows.len(),
         csrf_token: session.csrf_token.clone(),
         csp_nonce: csp_nonce.into_string(),
+        quota_indicator,
     };
     render_html(StatusCode::OK, &template)
 }
@@ -425,12 +436,18 @@ async fn render_list(
         })
         .collect();
 
+    // Added (TMAIL-384): hydrate the footer quota indicator. Loaded
+    // here (rather than at each call site) so both the GET and the
+    // POST-revoke re-render share one cache lookup per request.
+    let quota_indicator = super::load_quota_indicator(state, mailbox_id).await;
+
     let template = SessionsListTemplate {
         classic_rows,
         spa_rows,
         flash,
         csrf_token: session.csrf_token.clone(),
         csp_nonce: csp_nonce.into_string(),
+        quota_indicator,
     };
     render_html(StatusCode::OK, &template)
 }
@@ -524,6 +541,7 @@ mod tests {
             flash,
             csrf_token: "test-csrf-token".to_string(),
             csp_nonce: "test-nonce".to_string(),
+            quota_indicator: None,
         }
     }
 
@@ -533,6 +551,7 @@ mod tests {
             spa_count: 5,
             csrf_token: "test-csrf-token".to_string(),
             csp_nonce: "test-nonce".to_string(),
+            quota_indicator: None,
         }
     }
 

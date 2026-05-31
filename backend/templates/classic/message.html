@@ -35,6 +35,9 @@
 
 {% block logout_form %}{% include "classic/_logout_form.html" %}{% endblock %}
 
+{# TMAIL-384: hydrate the footer quota indicator. #}
+{% block quota_indicator %}{% include "classic/_quota_indicator.html" %}{% endblock %}
+
 {% block content %}
   <style nonce="{{ csp_nonce }}">
     /* Read-view layout. Inherits base.html palette tokens. */

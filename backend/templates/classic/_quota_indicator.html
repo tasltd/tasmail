@@ -1,0 +1,68 @@
+{# TMAIL-384 — Reusable quota indicator partial for the Classic UI footer.
+
+   Authenticated child templates extend base.html and override the
+   `quota_indicator` block by `include`-ing this file. Render path:
+
+       footer (base.html)
+         └─ {% block quota_indicator %} (empty by default)
+             └─ child override → include classic/_quota_indicator.html
+                 └─ <p class="quota-indicator">…<meter>…</meter></p>
+
+   Required template context:
+     * `quota_indicator: Option<QuotaIndicator>` — built by
+       `handlers::classic::load_quota_indicator(state, mailbox_id)`.
+       `None` (cache + DB outage) renders nothing rather than a broken
+       indicator — handlers always pass the field, the loader decides
+       whether to populate it.
+
+   The rendered <meter> element is the WCAG-friendly choice (assistive
+   tech announces "37 percent of 100", or in our case the matching label
+   + value attributes). Coloured warning at 80 %, danger at 95 % — the
+   underlying CSS rules live in base.html so the look stays consistent
+   across every authenticated page.
+
+   The `min`/`max`/`low`/`high`/`optimum` attributes on <meter> are what
+   makes the bar itself paint differently in the browser's default
+   rendering — we set `low=80 high=95 optimum=0` so:
+     * value < 80  → "optimal" (green-ish in native rendering)
+     * 80 ≤ v < 95 → "suboptimal" (yellow/orange)
+     * value ≥ 95  → "least optimal" (red)
+   That's the colour story for users with stylesheets disabled / lynx;
+   the CSS in base.html paints the same gradient when our stylesheet
+   loads. Brand palette stays in CSS — never inline.
+
+   The footer line ALWAYS announces the same shape, just with different
+   class hooks for screen styling. Keeping the `<meter>` even when the
+   value is 0 means a screen reader user always hears the same structure
+   regardless of fullness. #}
+{% if let Some(qi) = quota_indicator %}
+<p class="quota-indicator{% if qi.is_danger %} quota-indicator-danger{% else if qi.is_warning %} quota-indicator-warning{% endif %}">
+  {% if qi.unlimited %}
+    {# Unlimited mailbox (quota_bytes = 0). No meter / percent — that
+       would render as a misleading 0 %. Just announce usage to date. #}
+    <span class="quota-indicator-label">Using {{ qi.used_display }} of unlimited storage</span>
+  {% else %}
+    <label for="classic-quota-meter" class="quota-indicator-label">
+      Using {{ qi.used_display }} of {{ qi.quota_display }}
+      <span class="quota-indicator-percent" aria-hidden="true">· {{ qi.percent_label }}%</span>
+    </label>
+    <meter
+      id="classic-quota-meter"
+      class="quota-indicator-meter"
+      min="0"
+      low="80"
+      high="95"
+      max="100"
+      optimum="0"
+      value="{{ qi.percent }}"
+      aria-label="Storage used: {{ qi.percent_label }} percent of {{ qi.quota_display }}">
+      {{ qi.percent_label }}%
+    </meter>
+    {% if qi.is_danger %}
+      <span class="quota-indicator-status" role="status">Storage almost full — delete or archive messages soon.</span>
+    {% else if qi.is_warning %}
+      <span class="quota-indicator-status" role="status">Storage filling up.</span>
+    {% endif %}
+  {% endif %}
+</p>
+{% endif %}

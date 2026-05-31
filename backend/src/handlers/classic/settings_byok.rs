@@ -156,6 +156,9 @@ pub struct ByokFormTemplate {
     pub csrf_token: String,
     /// Per-request CSP nonce required by base.html.
     pub csp_nonce: String,
+    /// Added (TMAIL-384): Footer quota indicator. `None` on cache + DB
+    /// outage — the partial renders nothing in that case.
+    pub quota_indicator: Option<super::QuotaIndicator>,
 }
 
 /// Trimmed view of `provider_presets()` for the template. The raw
@@ -303,6 +306,8 @@ pub async fn get_byok(
 
         csrf_token: session.csrf_token.clone(),
         csp_nonce: csp_nonce.into_string(),
+        // Added (TMAIL-384): hydrate the footer indicator.
+        quota_indicator: super::load_quota_indicator(&state, user_id).await,
     };
 
     render_html(StatusCode::OK, &template)
@@ -930,7 +935,10 @@ fn render_html<T: Template>(status: StatusCode, template: &T) -> Result<Response
 /// are NEVER echoed back — the fields render blank.
 #[allow(clippy::too_many_arguments)]
 async fn re_render_form(
-    _state: &AppState,
+    // Changed (TMAIL-384): `_state` + `_user_id` are now load-bearing —
+    // used to hydrate the footer quota indicator. The underscore prefix
+    // is dropped accordingly.
+    state: &AppState,
     form: &ByokForm,
     imap_existing: bool,
     smtp_existing: bool,
@@ -941,7 +949,7 @@ async fn re_render_form(
     tested_ok: bool,
     csrf_token: &str,
     csp_nonce: &str,
-    _user_id: Uuid,
+    user_id: Uuid,
     status: StatusCode,
 ) -> Result<Response, AppError> {
     let presets = build_preset_views();
@@ -951,6 +959,12 @@ async fn re_render_form(
         .find(|p| p.name == picked_name)
         .map(|p| p.hint.clone())
         .unwrap_or_default();
+
+    // Added (TMAIL-384): hydrate the footer "Using X of Y" indicator
+    // before assembling the template. Cache-first, falls back to two
+    // indexed Postgres queries; `None` on Redis + DB outage so the
+    // partial silently omits the line and the form still renders.
+    let quota_indicator = super::load_quota_indicator(state, user_id).await;
 
     let template = ByokFormTemplate {
         imap_existing,
@@ -985,6 +999,7 @@ async fn re_render_form(
 
         csrf_token: csrf_token.to_string(),
         csp_nonce: csp_nonce.to_string(),
+        quota_indicator,
     };
 
     render_html(status, &template)
@@ -1079,6 +1094,7 @@ mod tests {
             tested_ok: String::new(),
             csrf_token: "test-csrf-token".to_string(),
             csp_nonce: "test-nonce".to_string(),
+            quota_indicator: None,
         }
     }
 

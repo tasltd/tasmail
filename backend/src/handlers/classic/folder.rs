@@ -440,6 +440,11 @@ pub struct FolderTemplate {
     pub move_targets: Vec<String>,
     /// Per-request CSP nonce. Required by base.html (TMAIL-356).
     pub csp_nonce: String,
+    /// Added (TMAIL-384): Footer quota indicator ("Using X of Y · NN%").
+    /// Hydrated by `super::load_quota_indicator` once per request; `None`
+    /// when the loader couldn't reach the cache + DB — the partial then
+    /// renders nothing, the rest of the page still loads.
+    pub quota_indicator: Option<super::QuotaIndicator>,
 }
 
 /// URL-encode an IMAP folder name for use inside a path segment. Names like
@@ -630,6 +635,12 @@ pub async fn get_folder(
         String::new()
     };
 
+    // Added (TMAIL-384): hydrate the footer "Using X of Y" indicator.
+    // The loader hits the same Redis namespace `/api/quota` uses (60s
+    // TTL by default), so both surfaces share a single warm path and
+    // there's no second IMAP round-trip per page view.
+    let quota_indicator = super::load_quota_indicator(&state, mailbox_id).await;
+
     let template = FolderTemplate {
         current_folder: folder,
         current_folder_href: folder_href,
@@ -652,6 +663,7 @@ pub async fn get_folder(
         moved_banner: query.moved_banner(),
         move_targets,
         csp_nonce: csp_nonce.into_string(),
+        quota_indicator,
     };
 
     let body = template.render().map_err(|e| {
@@ -724,6 +736,10 @@ mod tests {
                 "Trash".to_string(),
             ],
             csp_nonce: "test-nonce-fixed".to_string(),
+            // TMAIL-384: fixture leaves the indicator off so the existing
+            // assertions still match the rendered HTML exactly. Dedicated
+            // quota-indicator render tests live in `context::tests`.
+            quota_indicator: None,
         }
     }
 
@@ -1134,6 +1150,186 @@ mod tests {
     }
 
     // ----- Template rendering -----
+
+    // ----- TMAIL-384: quota indicator in footer -----
+    //
+    // The footer "Using X of Y" indicator lives in base.html and is
+    // hydrated through the `quota_indicator` field on every authenticated
+    // template. These tests render the indicator through `FolderTemplate`
+    // (the busiest authenticated surface) to lock down the four key
+    // states: omitted, ok, warning, danger. The conversion logic + maths
+    // is exercised separately in `context::tests`; here we only validate
+    // that the partial is actually included and reads the right field
+    // names off the wrapping struct.
+
+    fn template_with_quota(qi: super::super::QuotaIndicator) -> FolderTemplate {
+        let mut t = fresh_template();
+        t.quota_indicator = Some(qi);
+        t
+    }
+
+    #[test]
+    fn folder_template_omits_indicator_when_field_is_none() {
+        // Default fixture leaves `quota_indicator = None`. The partial
+        // is wrapped in `{% if let Some(qi) %}` so nothing renders — pin
+        // it so a future refactor can't accidentally surface a half-built
+        // indicator on Redis + DB outages.
+        // The `.quota-indicator` CSS rule + a literal `<meter>` mention
+        // in a base.html CSS comment both appear regardless of branch,
+        // so we assert on the rendered ATTRIBUTE shape (`class="…"`,
+        // `id="classic-quota-meter"`) which only comes from the partial.
+        let body = fresh_template().render().expect("renders");
+        assert!(
+            !body.contains("class=\"quota-indicator"),
+            "no rendered .quota-indicator element should appear when \
+             field is None: {body}"
+        );
+        assert!(
+            !body.contains("id=\"classic-quota-meter\""),
+            "no rendered <meter> should appear when field is None"
+        );
+        // "Using " on its own appears in several places (CSS comments,
+        // other UI copy); anchor on the partial-unique label class.
+        assert!(
+            !body.contains("class=\"quota-indicator-label\""),
+            "no quota-indicator-label should render when field is None"
+        );
+    }
+
+    #[test]
+    fn folder_template_renders_ok_tier_indicator() {
+        let ind = super::super::QuotaIndicator {
+            used_display: "2.0 GB".to_string(),
+            quota_display: "10.0 GB".to_string(),
+            percent: 20.0,
+            percent_label: 20,
+            is_warning: false,
+            is_danger: false,
+            unlimited: false,
+        };
+        let body = template_with_quota(ind).render().expect("renders");
+        // Assert on the rendered attribute — bare `.quota-indicator-*`
+        // class names appear in the CSS stylesheet regardless of tier.
+        assert!(
+            body.contains("class=\"quota-indicator\""),
+            "ok tier must render plain `class=\"quota-indicator\"` \
+             with no warning/danger modifier: {body}"
+        );
+        assert!(body.contains("<meter"), "must render <meter> element");
+        assert!(
+            body.contains("Using 2.0 GB of 10.0 GB"),
+            "must show used / quota label: {body}"
+        );
+        assert!(
+            body.contains("· 20%"),
+            "must show percent label: {body}"
+        );
+    }
+
+    #[test]
+    fn folder_template_renders_warning_tier_indicator() {
+        let ind = super::super::QuotaIndicator {
+            used_display: "8.5 GB".to_string(),
+            quota_display: "10.0 GB".to_string(),
+            percent: 85.0,
+            percent_label: 85,
+            is_warning: true,
+            is_danger: false,
+            unlimited: false,
+        };
+        let body = template_with_quota(ind).render().expect("renders");
+        assert!(
+            body.contains("class=\"quota-indicator quota-indicator-warning\""),
+            "warning tier must render with warning modifier class: {body}"
+        );
+        assert!(
+            !body.contains("quota-indicator-danger\""),
+            "warning tier must NOT also carry danger modifier"
+        );
+        assert!(
+            body.contains("Storage filling up"),
+            "warning copy missing: {body}"
+        );
+    }
+
+    #[test]
+    fn folder_template_renders_danger_tier_indicator() {
+        let ind = super::super::QuotaIndicator {
+            used_display: "9.7 GB".to_string(),
+            quota_display: "10.0 GB".to_string(),
+            percent: 97.0,
+            percent_label: 97,
+            is_warning: true,
+            is_danger: true,
+            unlimited: false,
+        };
+        let body = template_with_quota(ind).render().expect("renders");
+        assert!(
+            body.contains("class=\"quota-indicator quota-indicator-danger\""),
+            "danger tier must render with danger modifier class: {body}"
+        );
+        assert!(
+            body.contains("Storage almost full"),
+            "danger copy missing: {body}"
+        );
+    }
+
+    #[test]
+    fn folder_template_renders_unlimited_indicator_without_meter() {
+        // quota_bytes = 0 (unlimited) — the partial renders the "Using X
+        // of unlimited storage" branch and OMITS the <meter> so we don't
+        // imply a meaningless 0%.
+        let ind = super::super::QuotaIndicator {
+            used_display: "1.3 GB".to_string(),
+            quota_display: "0 B".to_string(),
+            percent: 0.0,
+            percent_label: 0,
+            is_warning: false,
+            is_danger: false,
+            unlimited: true,
+        };
+        let body = template_with_quota(ind).render().expect("renders");
+        assert!(
+            body.contains("Using 1.3 GB of unlimited storage"),
+            "unlimited copy missing: {body}"
+        );
+        // The CSS comment in base.html contains a literal `<meter>` so
+        // we anchor on the rendered element's `id` attribute, which only
+        // appears in the partial's non-unlimited branch.
+        assert!(
+            !body.contains("id=\"classic-quota-meter\""),
+            "unlimited mailbox must NOT render a <meter> element"
+        );
+    }
+
+    #[test]
+    fn folder_template_quota_indicator_lives_inside_footer_landmark() {
+        // Lock the indicator's position so a future refactor can't move
+        // it out of the <footer> landmark — SR users rely on the "Using
+        // X of Y" being part of the contentinfo region.
+        let ind = super::super::QuotaIndicator {
+            used_display: "2.0 GB".to_string(),
+            quota_display: "10.0 GB".to_string(),
+            percent: 20.0,
+            percent_label: 20,
+            is_warning: false,
+            is_danger: false,
+            unlimited: false,
+        };
+        let body = template_with_quota(ind).render().expect("renders");
+        let footer_open = body.find("<footer").expect("footer present");
+        let footer_close = body[footer_open..]
+            .find("</footer>")
+            .map(|rel| footer_open + rel)
+            .expect("footer close present");
+        let indicator_at = body
+            .find("class=\"quota-indicator\"")
+            .expect("indicator present");
+        assert!(
+            indicator_at > footer_open && indicator_at < footer_close,
+            "quota indicator must sit INSIDE the footer landmark"
+        );
+    }
 
     #[test]
     fn folder_template_renders_empty_inbox_with_helpful_message() {
@@ -2178,6 +2374,7 @@ mod bulk_delete_confirm_template_tests {
             cancel_href: "/classic/folders/Trash".to_string(),
             csrf_token: "test-csrf-token".to_string(),
             csp_nonce: "test-nonce-fixed".to_string(),
+            quota_indicator: None,
         }
     }
 

@@ -255,6 +255,10 @@ pub async fn post_message_move(
 
     let folder_href = urlencoding::encode(&folder).into_owned();
 
+    // Added (TMAIL-384): hydrate the footer quota indicator once at the
+    // top of post_message_move so the error-render branch carries it.
+    let quota_indicator = super::load_quota_indicator(&state, mailbox_id).await;
+
     let imap_service = ImapService::for_user(&state, mailbox_id).await?;
     let (username, password) = imap_service
         .user_creds()
@@ -271,6 +275,7 @@ pub async fn post_message_move(
             &folder_href,
             &session.csrf_token,
             csp_nonce.into_string(),
+            quota_indicator,
         );
     }
 
@@ -306,6 +311,10 @@ pub async fn handle_bulk_move(
 
     let folder_href = urlencoding::encode(&folder).into_owned();
 
+    // Added (TMAIL-384): hydrate the footer quota indicator once at the
+    // top of handle_bulk_move so every error-render branch carries it.
+    let quota_indicator = super::load_quota_indicator(&state, mailbox_id).await;
+
     let target = pairs
         .iter()
         .find(|(k, _)| k == "target")
@@ -320,6 +329,7 @@ pub async fn handle_bulk_move(
             &folder_href,
             &session.csrf_token,
             csp_nonce.into_string(),
+            quota_indicator,
         );
     }
 
@@ -339,6 +349,7 @@ pub async fn handle_bulk_move(
             &folder_href,
             &session.csrf_token,
             csp_nonce.into_string(),
+            quota_indicator,
         );
     }
 
@@ -358,12 +369,17 @@ fn render_move_error(
     folder_href: &str,
     csrf_token: &str,
     csp_nonce: String,
+    // Added (TMAIL-384): caller threads the per-request quota indicator so
+    // the error page renders the same footer line as the rest of the
+    // authenticated surface. `None` on cache + DB outage.
+    quota_indicator: Option<super::QuotaIndicator>,
 ) -> Result<Response, AppError> {
     let template = FlagErrorTemplate {
         message: message.to_string(),
         back_href: format!("/classic/folders/{folder_href}"),
         csrf_token: csrf_token.to_string(),
         csp_nonce,
+        quota_indicator,
     };
     let html = template.render().map_err(|e| {
         AppError::Internal(anyhow::anyhow!(

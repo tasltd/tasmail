@@ -190,6 +190,66 @@
       font-size: 0.875rem;
       border-top: 1px solid var(--tm-border);
     }
+    /* TMAIL-384 — quota indicator in the footer ("Using X of Y · NN%").
+       Lives in base.html so the styling is identical across every
+       authenticated page (inbox, message, compose, settings…). The
+       partial that fills the slot is `_quota_indicator.html`; the
+       `quota_indicator` field on every authenticated template feeds it.
+       Colour tiers map onto the spec: <80% neutral, 80%–94% warning
+       (amber border + status copy), ≥95% danger (red). The native
+       <meter> attributes (low=80 high=95 optimum=0) drive the same
+       three-tier colouring in browsers with our stylesheet disabled
+       (lynx, w3m, Reader Mode), so the indicator stays legible without
+       JavaScript or external CSS. */
+    .quota-indicator {
+      margin: 0 0 0.5rem 0;
+      padding: 0;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.25rem 0.75rem;
+      color: var(--tm-muted);
+    }
+    .quota-indicator-label {
+      font-weight: 600;
+      margin: 0;
+    }
+    .quota-indicator-percent {
+      font-weight: 400;
+      color: var(--tm-muted);
+    }
+    .quota-indicator-meter {
+      /* `appearance` is browser-default so the native paint shows; we
+         constrain the visual footprint only. The meter element falls
+         back to a plain bar in lynx (the text inside the tag renders). */
+      width: 16rem;
+      max-width: 100%;
+      height: 0.75rem;
+      vertical-align: middle;
+    }
+    .quota-indicator-status {
+      font-size: 0.8125rem;
+      font-weight: 600;
+    }
+    /* Warning tier — 80%–94% used. Amber accent on the wrapper border
+       so users notice without it screaming red. */
+    .quota-indicator-warning {
+      color: var(--tm-charcoal-900);
+      border-left: 3px solid #b45309;     /* amber-700 — 5.0:1 on white, AA */
+      padding-left: 0.5rem;
+    }
+    .quota-indicator-warning .quota-indicator-status {
+      color: #b45309;
+    }
+    /* Danger tier — ≥95% used. Switches to the danger palette token. */
+    .quota-indicator-danger {
+      color: var(--tm-danger);
+      border-left: 3px solid var(--tm-danger);
+      padding-left: 0.5rem;
+    }
+    .quota-indicator-danger .quota-indicator-status {
+      color: var(--tm-danger);
+    }
     /* ===== Typography defaults ===== */
     h1, h2, h3, h4 { color: var(--tm-charcoal-900); line-height: 1.25; margin: 1rem 0 0.5rem; }
     h1 { font-size: 1.5rem; }
@@ -276,6 +336,14 @@
         color: #e2e8f0;
       }
       code, pre { background: #0f172a; border-color: #334155; }
+      /* TMAIL-384 — quota indicator dark-mode tuning. The native meter
+         element honours system colours by default; the wrapper text just
+         needs a brighter base contrast against the dark slate footer. */
+      .quota-indicator { color: #cbd5e1; }
+      .quota-indicator-warning { color: #fde68a; border-left-color: #fde68a; }
+      .quota-indicator-warning .quota-indicator-status { color: #fde68a; }
+      .quota-indicator-danger { color: #fca5a5; border-left-color: #fca5a5; }
+      .quota-indicator-danger .quota-indicator-status { color: #fca5a5; }
     }
     /* ===== Print: hide chrome, monochrome body, full width ===== */
     @media print {
@@ -343,6 +411,16 @@
   </main>
 
   <footer class="site-footer" role="contentinfo">
+    {# TMAIL-384 — "Using X of Y" quota indicator. The block is empty by
+       default so unauthenticated pages (login, csrf_error, signup, 404)
+       render no indicator — they don't override the block. Authenticated
+       child templates (folder, message, compose, settings…) override it
+       with `{% include "classic/_quota_indicator.html" %}` and supply a
+       `quota_indicator: Option<QuotaIndicator>` field on their template
+       struct that the partial reads. Render-failure path: when the
+       loader returns `None` (Redis + DB both down), the partial renders
+       nothing — page still loads, just without the indicator. #}
+    {% block quota_indicator %}{% endblock %}
     <small>TASMail Classic · no-JavaScript surface · works in lynx, w3m, and any HTML5 browser.</small>
   </footer>
 </body>

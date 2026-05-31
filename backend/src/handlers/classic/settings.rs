@@ -90,6 +90,9 @@ pub struct PasswordFormTemplate {
     /// input on this form AND the included `_logout_form.html` partial.
     pub csrf_token: String,
     pub csp_nonce: String,
+    /// Added (TMAIL-384): Footer quota indicator. `None` on cache + DB
+    /// outage — the partial renders nothing in that case.
+    pub quota_indicator: Option<super::QuotaIndicator>,
 }
 
 #[derive(Template)]
@@ -101,6 +104,9 @@ pub struct PasswordDoneTemplate {
     /// page's logout button works without a refresh.
     pub csrf_token: String,
     pub csp_nonce: String,
+    /// Added (TMAIL-384): Footer quota indicator. `None` on cache + DB
+    /// outage — the partial renders nothing.
+    pub quota_indicator: Option<super::QuotaIndicator>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -120,14 +126,29 @@ pub struct PasswordForm {
 // ---------- Handlers ----------
 
 /// GET /classic/settings/password — render the empty form.
+///
+/// Changed (TMAIL-384): now takes `State<AppState>` and `Extension<Claims>`
+/// so the handler can hydrate the footer quota indicator via the shared
+/// `load_quota_indicator` helper. The form itself doesn't need either —
+/// the addition is purely for the base.html footer slot.
 pub async fn get_password(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
     Extension(session): Extension<ClassicSession>,
     Extension(csp_nonce): Extension<CspNonce>,
 ) -> Result<Response, AppError> {
+    let mailbox_id: Uuid = claims.sub.parse().map_err(|_| {
+        AppError::Internal(anyhow::anyhow!(
+            "classic settings/password: claims.sub is not a UUID — {}",
+            claims.sub
+        ))
+    })?;
+    let quota_indicator = super::load_quota_indicator(&state, mailbox_id).await;
     let template = PasswordFormTemplate {
         error: None,
         csrf_token: session.csrf_token.clone(),
         csp_nonce: csp_nonce.into_string(),
+        quota_indicator,
     };
     render_html(StatusCode::OK, &template)
 }
@@ -144,6 +165,17 @@ pub async fn post_password(
     let csrf_token = session.csrf_token.clone();
     let csp_nonce_str = csp_nonce.into_string();
 
+    // Added (TMAIL-384): hydrate the footer quota indicator once at the
+    // top of post_password so every render_form_error re-render branch
+    // (and the success template) carries the same indicator.
+    let mailbox_id: Uuid = claims.sub.parse().map_err(|_| {
+        AppError::Internal(anyhow::anyhow!(
+            "classic settings/password: claims.sub is not a UUID — {}",
+            claims.sub
+        ))
+    })?;
+    let quota_indicator = super::load_quota_indicator(&state, mailbox_id).await;
+
     // 1) Cheap form validation up front — same shape (and same error
     //    copy) as the password reset confirm page so the user sees the
     //    same message whichever path they took.
@@ -153,6 +185,7 @@ pub async fn post_password(
             StatusCode::BAD_REQUEST,
             &csrf_token,
             &csp_nonce_str,
+            quota_indicator.clone(),
         );
     }
     if form.new_password != form.confirm_password {
@@ -161,6 +194,7 @@ pub async fn post_password(
             StatusCode::BAD_REQUEST,
             &csrf_token,
             &csp_nonce_str,
+            quota_indicator.clone(),
         );
     }
     if form.new_password == form.current_password {
@@ -174,6 +208,7 @@ pub async fn post_password(
             StatusCode::BAD_REQUEST,
             &csrf_token,
             &csp_nonce_str,
+            quota_indicator.clone(),
         );
     }
 
@@ -211,6 +246,7 @@ pub async fn post_password(
                 StatusCode::BAD_REQUEST,
                 &csrf_token,
                 &csp_nonce_str,
+                quota_indicator.clone(),
             );
         }
         Err(other) => return Err(other), // AccountLocked / Internal — bubble up.
@@ -221,12 +257,9 @@ pub async fn post_password(
     //    points at one user but the username field on the JWT resolves
     //    to a different mailbox — which would indicate either a stale
     //    claims cache or a malicious crafted cookie. Refuse loudly.
-    let mailbox_id: Uuid = claims.sub.parse().map_err(|_| {
-        AppError::Internal(anyhow::anyhow!(
-            "classic settings/password: claims.sub is not a UUID — {}",
-            claims.sub
-        ))
-    })?;
+    // mailbox_id was parsed at the top of the function (TMAIL-384) so it
+    // could be used for `load_quota_indicator` — reuse it here instead of
+    // re-parsing the same `claims.sub`.
     if mailbox.id != mailbox_id {
         tracing::error!(
             claims_sub = %claims.sub,
@@ -308,6 +341,7 @@ pub async fn post_password(
         revoked_spa,
         csrf_token,
         csp_nonce: csp_nonce_str,
+        quota_indicator,
     };
     render_html(StatusCode::OK, &template)
 }
@@ -338,11 +372,15 @@ fn render_form_error(
     status: StatusCode,
     csrf_token: &str,
     csp_nonce: &str,
+    // Added (TMAIL-384): caller threads the per-request quota indicator
+    // so the error re-render carries the same footer line as the GET.
+    quota_indicator: Option<super::QuotaIndicator>,
 ) -> Result<Response, AppError> {
     let template = PasswordFormTemplate {
         error: Some(error.to_string()),
         csrf_token: csrf_token.to_string(),
         csp_nonce: csp_nonce.to_string(),
+        quota_indicator,
     };
     render_html(status, &template)
 }
@@ -377,6 +415,7 @@ mod tests {
             error: None,
             csrf_token: "test-csrf-token".to_string(),
             csp_nonce: "test-nonce".to_string(),
+            quota_indicator: None,
         }
     }
 
@@ -386,6 +425,7 @@ mod tests {
             revoked_spa: 5,
             csrf_token: "test-csrf-token".to_string(),
             csp_nonce: "test-nonce".to_string(),
+            quota_indicator: None,
         }
     }
 

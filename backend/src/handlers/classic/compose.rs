@@ -213,6 +213,10 @@ pub struct ComposeTemplate {
     pub csrf_token: String,
     /// Per-request CSP nonce. Required by base.html (TMAIL-356).
     pub csp_nonce: String,
+    /// Added (TMAIL-384): Footer "Using X of Y · NN%" indicator. Hydrated
+    /// by `super::load_quota_indicator`; `None` when the loader couldn't
+    /// reach the cache + DB so the partial renders nothing in that branch.
+    pub quota_indicator: Option<super::QuotaIndicator>,
 }
 
 impl ComposeTemplate {
@@ -223,10 +227,16 @@ impl ComposeTemplate {
     /// `/classic/*` response CSP header. Callers pull the nonce from
     /// `req.extensions().get::<CspNonce>()` via the `axum::Extension<CspNonce>`
     /// extractor.
+    ///
+    /// Changed (TMAIL-384): accepts an optional `quota_indicator` so the
+    /// blank-state GET (an empty compose form) carries the same footer
+    /// "Using X of Y" indicator every other authenticated page renders.
+    /// Pass `None` from tests / contexts that don't need it.
     pub fn fresh(
         source_folder: impl Into<String>,
         csrf_token: impl Into<String>,
         csp_nonce: impl Into<String>,
+        quota_indicator: Option<super::QuotaIndicator>,
     ) -> Self {
         let folder = source_folder.into();
         let href = urlencoding::encode(&folder).into_owned();
@@ -244,6 +254,7 @@ impl ComposeTemplate {
             error: None,
             csrf_token: csrf_token.into(),
             csp_nonce: csp_nonce.into(),
+            quota_indicator,
         }
     }
 }
@@ -520,8 +531,18 @@ pub async fn get_compose(
         .map_err(|_| AppError::Internal(anyhow::anyhow!("Invalid mailbox ID in classic claims")))?;
 
     let folder = query.folder_or_default();
-    let mut template =
-        ComposeTemplate::fresh(&folder, &session.csrf_token, csp_nonce.as_str());
+    // Added (TMAIL-384): hydrate the footer quota indicator once per
+    // GET so it stays consistent with the rest of the authenticated
+    // surface. The indicator is built BEFORE any IMAP prefill so a slow
+    // prefill doesn't block the page render — both are awaited
+    // sequentially today; future optimisation may join them.
+    let quota_indicator = super::load_quota_indicator(&state, mailbox_id).await;
+    let mut template = ComposeTemplate::fresh(
+        &folder,
+        &session.csrf_token,
+        csp_nonce.as_str(),
+        quota_indicator,
+    );
 
     if let Some((uid, mode)) = query.prefill_target() {
         match fetch_prefill(&state, mailbox_id, &folder, uid, mode).await {
@@ -1031,6 +1052,13 @@ pub async fn post_compose(
         .parse()
         .map_err(|_| AppError::Internal(anyhow::anyhow!("Invalid mailbox ID in classic claims")))?;
 
+    // Added (TMAIL-384): hydrate the footer quota indicator once at the
+    // top of post_compose so every error re-render branch (4 of them)
+    // carries the same indicator the GET path would have shown. Cheap —
+    // cache-hit path is sub-ms; cache miss runs two indexed Postgres
+    // queries. Cloned at each render site rather than re-fetched.
+    let quota_indicator = super::load_quota_indicator(&state, mailbox_id).await;
+
     // Parse multipart. A parse failure short-circuits to AppError → 400.
     let submission = match parse_compose_multipart(multipart).await {
         Ok(s) => s,
@@ -1056,6 +1084,7 @@ pub async fn post_compose(
                 },
                 vec![],
                 csp_nonce.as_str(),
+                quota_indicator.clone(),
             );
         }
     };
@@ -1108,6 +1137,7 @@ pub async fn post_compose(
             },
             prior_filenames,
             csp_nonce.as_str(),
+            quota_indicator.clone(),
         );
     }
 
@@ -1140,6 +1170,7 @@ pub async fn post_compose(
                 },
                 prior_filenames,
                 csp_nonce.as_str(),
+                quota_indicator.clone(),
             );
         }
     };
@@ -1219,6 +1250,7 @@ pub async fn post_compose(
             },
             prior_filenames,
             csp_nonce.as_str(),
+            quota_indicator,
         ),
     }
 }
@@ -1253,6 +1285,10 @@ fn render_error_form(
     // the security_headers middleware already baked into the response CSP
     // header. Threaded from `post_compose`.
     csp_nonce: &str,
+    // Added (TMAIL-384): Optional footer quota indicator. The POST handler
+    // hydrates it before calling render_error_form so the error re-render
+    // keeps the same indicator the GET path would have shown.
+    quota_indicator: Option<super::QuotaIndicator>,
 ) -> Result<Response, AppError> {
     let folder = if submission.source_folder.trim().is_empty() {
         "INBOX".to_string()
@@ -1275,6 +1311,7 @@ fn render_error_form(
         error: Some(error.to_string()),
         csrf_token: csrf_token.to_string(),
         csp_nonce: csp_nonce.to_string(),
+        quota_indicator,
     };
     let html = template
         .render()
@@ -1309,7 +1346,16 @@ mod tests {
         // argument so the template-vs-CSP-header binding is explicit. Tests
         // can pass any fixed value; production code threads the per-request
         // value from request extensions.
-        ComposeTemplate::fresh("INBOX", "test-csrf-token", "test-nonce-fixed-for-tests")
+        // Changed (TMAIL-384): `fresh` now also takes the optional
+        // QuotaIndicator — tests pass `None` so the existing assertions
+        // still match the rendered HTML exactly; dedicated render tests
+        // for the indicator live in `context::tests`.
+        ComposeTemplate::fresh(
+            "INBOX",
+            "test-csrf-token",
+            "test-nonce-fixed-for-tests",
+            None,
+        )
     }
 
     // ----- ComposeQuery -----
@@ -1930,7 +1976,7 @@ mod tests {
 
     #[test]
     fn compose_template_renders_cancel_link_back_to_source_folder() {
-        let t = ComposeTemplate::fresh("Sent", "test-csrf-token", "test-nonce-fixed-for-tests");
+        let t = ComposeTemplate::fresh("Sent", "test-csrf-token", "test-nonce-fixed-for-tests", None);
         let body = t.render().expect("template renders");
         assert!(
             body.contains("href=\"/classic/folders/Sent\""),
