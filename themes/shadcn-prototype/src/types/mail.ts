@@ -17,6 +17,15 @@ export interface MessageEnvelope {
   // null when nothing could be extracted (truncated MIME, attachment-only
   // messages, unparseable bodies); callers must `?? ''` defensively.
   preview: string | null;
+  // Added (TMAIL-350): RFC 5322 §3.6.4 threading headers extracted server-side
+  // from the same 8 KiB partial body fetch the preview comes from. EmailList
+  // groups rows into conversations using groupByThread() in
+  // features/email/threadGrouping.ts. Fields are optional in the JSON shape
+  // — message_id is null on legacy senders that omit Message-ID, in_reply_to
+  // is null on thread roots, references is empty/absent on first messages.
+  message_id?: string | null;
+  in_reply_to?: string | null;
+  references?: string[];
 }
 
 export interface FullMessage {

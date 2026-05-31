@@ -25,6 +25,14 @@ pub struct Folder {
 // `extract_preview` helper below; `None` when the body could not be partially
 // parsed (truncated MIME, empty message, etc.) so the SPA can fall back to an
 // empty preview line without rendering "null".
+//
+// Added (TMAIL-350): threading headers (`message_id`, `in_reply_to`,
+// `references`) so the alt-UI EmailList can group rows into conversations
+// without making a separate per-message fetch. All three are parsed from the
+// same `BODY.PEEK[]<0.8192>` bytes already used for the preview snippet, via
+// `extract_threading_headers` — no extra IMAP round trip. Empty / unparsable
+// header sets are returned as `None` / `vec![]` so the SPA treats the row as
+// a thread-of-one when grouping.
 #[derive(Debug, Clone, Serialize)]
 pub struct MessageEnvelope {
     pub uid: u32,
@@ -34,6 +42,9 @@ pub struct MessageEnvelope {
     pub flags: Vec<String>,
     pub size: Option<u32>,
     pub preview: Option<String>,
+    pub message_id: Option<String>,
+    pub in_reply_to: Option<String>,
+    pub references: Vec<String>,
 }
 
 /// Added (TMAIL-320): raw bytes of a single MIME part inside a message,
@@ -402,6 +413,17 @@ impl ImapService {
             // blank preview line rather than "null".
             let preview = msg.body().and_then(extract_preview);
 
+            // Added (TMAIL-350): parse threading headers (Message-ID,
+            // In-Reply-To, References) from the same partial body bytes the
+            // preview was extracted from. The alt-UI EmailList groups rows
+            // into conversations using these — having them on every envelope
+            // means the threaded view renders without per-row /messages/{uid}
+            // fetches that would defeat the point of the list endpoint.
+            let (message_id, in_reply_to, references) = msg
+                .body()
+                .map(extract_threading_headers)
+                .unwrap_or_else(|| (None, None, Vec::new()));
+
             envelopes.push(MessageEnvelope {
                 uid,
                 subject,
@@ -410,6 +432,9 @@ impl ImapService {
                 flags,
                 size: msg.size,
                 preview,
+                message_id,
+                in_reply_to,
+                references,
             });
         }
 
@@ -489,6 +514,13 @@ impl ImapService {
 
             let preview = msg.body().and_then(extract_preview);
 
+            // Added (TMAIL-350): same threading header extraction as
+            // list_messages — keeps search results threaded too.
+            let (message_id, in_reply_to, references) = msg
+                .body()
+                .map(extract_threading_headers)
+                .unwrap_or_else(|| (None, None, Vec::new()));
+
             envelopes.push(MessageEnvelope {
                 uid,
                 subject,
@@ -497,6 +529,9 @@ impl ImapService {
                 flags,
                 size: msg.size,
                 preview,
+                message_id,
+                in_reply_to,
+                references,
             });
         }
 
@@ -963,6 +998,62 @@ fn extract_parts(
             extract_parts(part, text_body, html_body, attachments, &prefix);
         }
     }
+}
+
+/// Added (TMAIL-350): extract `Message-ID`, `In-Reply-To`, and `References`
+/// from the partial body bytes already fetched for the preview snippet.
+/// Lets the alt-UI EmailList group rows into conversations without a
+/// per-row /messages/{uid} fetch.
+///
+/// Returns a tuple of `(message_id, in_reply_to, references)`:
+///   * `message_id` and `in_reply_to` — first token of the header value with
+///     surrounding whitespace stripped. The IMAP-served header is usually
+///     already in the canonical `<id@host>` form; we preserve the angle
+///     brackets so consumers can string-compare against `references` entries
+///     without re-parsing.
+///   * `references` — whitespace-separated tokens of the `References` header,
+///     in chronological order (root first, parent last) per RFC 5322 §3.6.4.
+///
+/// `mailparse::parse_mail` tolerates truncated bodies as long as headers are
+/// intact, which they are within the first 8 KiB the IMAP partial fetch
+/// returns. On parse failure (binary garbage, empty body) every output is
+/// `None` / empty so the SPA treats the row as a thread-of-one.
+pub(crate) fn extract_threading_headers(
+    body_bytes: &[u8],
+) -> (Option<String>, Option<String>, Vec<String>) {
+    let parsed = match mailparse::parse_mail(body_bytes) {
+        Ok(p) => p,
+        Err(_) => return (None, None, Vec::new()),
+    };
+
+    // RFC 5322 §3.6.4: Message-ID / In-Reply-To MUST contain exactly one
+    // msg-id (`<...@...>`). Some senders technically allow whitespace-separated
+    // ids in In-Reply-To — when that happens we keep only the first token so
+    // downstream consumers can compare it directly against `references` and
+    // `message_id` values across messages.
+    let message_id = extract_header(&parsed, "Message-ID").and_then(first_msg_id_token);
+    let in_reply_to = extract_header(&parsed, "In-Reply-To").and_then(first_msg_id_token);
+
+    let references: Vec<String> = extract_header(&parsed, "References")
+        .map(|raw| {
+            raw.split_whitespace()
+                .filter(|tok| !tok.is_empty())
+                .map(String::from)
+                .collect()
+        })
+        .unwrap_or_default();
+
+    (message_id, in_reply_to, references)
+}
+
+/// Returns the first whitespace-delimited token of a `Message-ID` /
+/// `In-Reply-To` header, or `None` when the value collapses to empty after
+/// trimming. Keeping this as a free helper makes it easy to unit-test the
+/// "many tokens in In-Reply-To" edge case without standing up a parsed mail.
+fn first_msg_id_token(raw: String) -> Option<String> {
+    raw.split_whitespace()
+        .find(|tok| !tok.is_empty())
+        .map(String::from)
 }
 
 /// Added (TMAIL-329): truncated-body → ~200 char preview snippet for the
@@ -1636,12 +1727,20 @@ mod tests {
             // Added (TMAIL-329): preview field — serialises as null when
             // None so the SPA can fall back to an empty preview line.
             preview: Some("Hello there, this is a test preview".to_string()),
+            // Added (TMAIL-350): threading headers on the envelope.
+            message_id: Some("<m100@example.com>".to_string()),
+            in_reply_to: Some("<parent@example.com>".to_string()),
+            references: vec!["<root@example.com>".to_string(), "<parent@example.com>".to_string()],
         };
         let json = serde_json::to_value(&env).unwrap();
         assert_eq!(json["uid"], 100);
         assert_eq!(json["subject"], "Test Subject");
         assert_eq!(json["flags"][0], "\\Seen");
         assert_eq!(json["preview"], "Hello there, this is a test preview");
+        assert_eq!(json["message_id"], "<m100@example.com>");
+        assert_eq!(json["in_reply_to"], "<parent@example.com>");
+        assert_eq!(json["references"][0], "<root@example.com>");
+        assert_eq!(json["references"][1], "<parent@example.com>");
     }
 
     #[test]
@@ -1656,9 +1755,104 @@ mod tests {
             flags: vec![],
             size: None,
             preview: None,
+            // Added (TMAIL-350): empty threading headers should serialise as
+            // null/null/[] so the SPA treats the row as a thread-of-one.
+            message_id: None,
+            in_reply_to: None,
+            references: vec![],
         };
         let json = serde_json::to_value(&env).unwrap();
         assert!(json["preview"].is_null());
+        assert!(json["message_id"].is_null());
+        assert!(json["in_reply_to"].is_null());
+        assert_eq!(json["references"], serde_json::json!([]));
+    }
+
+    // ── TMAIL-350: extract_threading_headers() unit tests ─────────────────
+    // The helper is the data path that backs the alt-UI Threaded view, so
+    // cover the headline shapes: full chain (Message-ID + In-Reply-To +
+    // References), root-of-thread (only Message-ID), absent headers
+    // (thread-of-one fallback), multi-token In-Reply-To (RFC technically
+    // allows whitespace-separated ids — we keep the first), and a
+    // truncated/garbage body so the parse-error branch is exercised.
+
+    #[test]
+    fn test_extract_threading_headers_full_chain() {
+        let raw = simple_email(
+            "From: a@example.com\r\n\
+             Message-ID: <child@example.com>\r\n\
+             In-Reply-To: <parent@example.com>\r\n\
+             References: <root@example.com> <middle@example.com> <parent@example.com>\r\n\
+             Subject: Re: hi",
+            "reply body",
+        );
+        let (msg_id, irt, refs) = extract_threading_headers(raw.as_bytes());
+        assert_eq!(msg_id, Some("<child@example.com>".to_string()));
+        assert_eq!(irt, Some("<parent@example.com>".to_string()));
+        assert_eq!(
+            refs,
+            vec![
+                "<root@example.com>".to_string(),
+                "<middle@example.com>".to_string(),
+                "<parent@example.com>".to_string(),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_extract_threading_headers_root_of_thread() {
+        // Brand new conversation: only Message-ID is set; In-Reply-To +
+        // References absent. SPA should treat this as a new thread.
+        let raw = simple_email(
+            "From: a@example.com\r\nMessage-ID: <root@example.com>\r\nSubject: hi",
+            "first message in the thread",
+        );
+        let (msg_id, irt, refs) = extract_threading_headers(raw.as_bytes());
+        assert_eq!(msg_id, Some("<root@example.com>".to_string()));
+        assert_eq!(irt, None);
+        assert!(refs.is_empty());
+    }
+
+    #[test]
+    fn test_extract_threading_headers_no_headers_at_all() {
+        // Some legacy / spam senders omit Message-ID entirely. We return
+        // None across the board so the SPA falls back to a thread-of-one
+        // bucket keyed by uid.
+        let raw = simple_email("From: a@example.com\r\nSubject: no-headers", "body");
+        let (msg_id, irt, refs) = extract_threading_headers(raw.as_bytes());
+        assert_eq!(msg_id, None);
+        assert_eq!(irt, None);
+        assert!(refs.is_empty());
+    }
+
+    #[test]
+    fn test_extract_threading_headers_multi_token_in_reply_to() {
+        // RFC 5322 §3.6.4 says In-Reply-To "should" hold one msg-id but a
+        // handful of senders pack multiple, whitespace-separated. We keep
+        // only the first so cross-message equality checks against
+        // Message-ID work without re-parsing.
+        let raw = simple_email(
+            "From: a@example.com\r\n\
+             Message-ID: <c@example.com>\r\n\
+             In-Reply-To: <p1@example.com> <p2@example.com>",
+            "weird sender",
+        );
+        let (_msg_id, irt, _refs) = extract_threading_headers(raw.as_bytes());
+        assert_eq!(irt, Some("<p1@example.com>".to_string()));
+    }
+
+    #[test]
+    fn test_extract_threading_headers_unparsable_body_returns_empty() {
+        // mailparse fails hard on binary garbage with no header block. We
+        // must NOT panic — list_messages keeps walking and the affected
+        // envelope just renders as an unthreaded row in the SPA.
+        let (msg_id, irt, refs) = extract_threading_headers(&[0xff, 0xfe, 0x00]);
+        // mailparse is permissive: it may return a parsed mail with zero
+        // headers rather than failing outright. Either way the three
+        // threading fields must all be the "no thread" sentinel.
+        assert_eq!(msg_id, None);
+        assert_eq!(irt, None);
+        assert!(refs.is_empty());
     }
 
     #[test]

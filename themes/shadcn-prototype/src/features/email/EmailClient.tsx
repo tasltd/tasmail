@@ -26,6 +26,8 @@ import {
   FolderInput,
   FolderDown,
   FolderUp,
+  MessagesSquare,
+  List as ListIcon,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -59,6 +61,13 @@ import {
   selectAll,
   toggleSelection,
 } from '@/features/email/bulkSelection';
+// Added (TMAIL-350): per-folder threading preference persistence. EmailList
+// renders threaded vs flat based on the `threaded` prop; this module is the
+// localStorage tier the toolbar toggle reads + writes.
+import {
+  getThreadedForFolder,
+  setThreadedForFolder,
+} from '@/features/email/threadingSettings';
 import type {
   Folder as ServerFolder,
   FullMessage,
@@ -152,6 +161,22 @@ export function EmailClient() {
   const [selectedUid, setSelectedUid] = useState<number | null>(initialUid);
   const [isComposing, setIsComposing] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  // Added (TMAIL-350): per-folder threading preference. Seeded from
+  // localStorage on first read (and re-seeded every folder switch so the
+  // toolbar toggle reflects the saved preference for the new folder). The
+  // toggle button below flips this and persists through threadingSettings.
+  const [threaded, setThreaded] = useState<boolean>(() => getThreadedForFolder(initialFolder));
+  useEffect(() => {
+    setThreaded(getThreadedForFolder(activeFolder));
+  }, [activeFolder]);
+  const handleToggleThreaded = () => {
+    setThreaded((prev) => {
+      const next = !prev;
+      setThreadedForFolder(activeFolder, next);
+      return next;
+    });
+  };
 
   // Added (TMAIL-326): multi-select state for the bulk-action bar. The Set
   // holds raw IMAP uids (numbers); the EmailList works in string ids so the
@@ -685,6 +710,12 @@ export function EmailClient() {
       starred: m.flags?.some((f: string) => f.includes('Flagged')) ?? false,
       folder: activeFolder,
       attachments: undefined,
+      // Added (TMAIL-350): forward the RFC 5322 §3.6.4 threading headers
+      // the backend now puts on every envelope so groupByThread() in
+      // EmailList has the data it needs to bucket conversations.
+      messageId: m.message_id ?? null,
+      inReplyTo: m.in_reply_to ?? null,
+      references: m.references ?? [],
     }));
   }, [messagesQuery.data, activeFolder]);
 
@@ -1009,6 +1040,29 @@ export function EmailClient() {
                 <h2 className="font-semibold capitalize">{activeFolder}</h2>
               </div>
               <div className="flex items-center gap-1">
+                {/* Added (TMAIL-350): per-folder threading toggle. Flips
+                    EmailList between conversation-grouped (Gmail-style)
+                    and flat (one-row-per-message) rendering. Preference
+                    is persisted to localStorage per folder so users can
+                    keep INBOX threaded while leaving Sent flat. The icon
+                    + aria-label flip with state so screen readers and
+                    keyboard users see the next action they'll take. */}
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={handleToggleThreaded}
+                  aria-pressed={threaded}
+                  title={threaded ? `Switch ${activeFolder} to flat view` : `Switch ${activeFolder} to threaded view`}
+                  aria-label={threaded ? `Threading on for ${activeFolder}; click to switch to flat view` : `Threading off for ${activeFolder}; click to switch to threaded view`}
+                  data-testid="modern-threading-toggle"
+                  data-threaded={threaded ? 'true' : 'false'}
+                >
+                  {threaded ? (
+                    <MessagesSquare className="size-4" aria-hidden="true" />
+                  ) : (
+                    <ListIcon className="size-4" aria-hidden="true" />
+                  )}
+                </Button>
                 {/* Added (TMAIL-349): per-folder MBOX export + EML import.
                     Rendered as plain icon buttons with explicit aria-labels
                     rather than a dropdown so screen readers, keyboard users,
@@ -1098,6 +1152,11 @@ export function EmailClient() {
                 // single clicks through toggleSelection().
                 selectedIds={selectedIds}
                 onToggleSelect={handleToggleSelect}
+                // Added (TMAIL-350): per-folder Gmail-style threading.
+                // EmailClient owns the persisted preference; EmailList
+                // routes between grouped + flat renderers based on this
+                // flag.
+                threaded={threaded}
               />
             )}
           </div>
