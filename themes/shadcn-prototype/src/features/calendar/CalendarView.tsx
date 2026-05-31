@@ -3,16 +3,26 @@
 // reads + writes hit the live PostgreSQL `calendar_events` table via the
 // Axum backend. The "color" field is a UI-only convenience, derived
 // deterministically from the event id so colors stay stable per row.
+//
+// TMAIL-351: extended with edit (reuses the create form via EventFormDialog),
+// attendees chip input + free-busy column, RSVP responder when the user is
+// an invitee, RRULE-based recurrence picker, ICS download, and the
+// suggest-slots button. The legacy inline add-form was replaced with the
+// shared dialog so create + edit go through one code path.
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Calendar } from '@/components/ui/calendar';
 import { Button } from '@/components/ui/button';
-import { Plus, Trash2, Clock, CalendarDays, ArrowLeft } from 'lucide-react';
+import { Plus, Trash2, Clock, CalendarDays, ArrowLeft, Pencil } from 'lucide-react';
 import {
-  listEvents, createEvent, cancelEvent,
-  type CalendarEvent, type CreateEventRequest,
+  listEvents,
+  cancelEvent,
+  getEvent,
+  type CalendarEvent,
+  type CalendarEventWithAttendees,
 } from '@/api/calendar';
+import { EventFormDialog } from './EventFormDialog';
 
 const EVENT_COLORS = [
   'bg-blue-500',
@@ -33,11 +43,6 @@ function pad(n: number): string {
   return n < 10 ? `0${n}` : String(n);
 }
 
-function formatLocalISO(d: Date): string {
-  // Backend expects ISO-8601 with timezone; toISOString gives Z (UTC).
-  return d.toISOString();
-}
-
 function timeOf(iso: string): string {
   const d = new Date(iso);
   return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
@@ -46,12 +51,8 @@ function timeOf(iso: string): string {
 export function CalendarView() {
   const qc = useQueryClient();
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(new Date());
-  const [isAdding, setIsAdding] = useState(false);
-  const [newTitle, setNewTitle] = useState('');
-  const [newTime, setNewTime] = useState('09:00');
-  const [newDuration, setNewDuration] = useState(60);
-  const [newDescription, setNewDescription] = useState('');
-  const [newLocation, setNewLocation] = useState('');
+  const [formMode, setFormMode] = useState<'closed' | 'create' | 'edit'>('closed');
+  const [editingEventId, setEditingEventId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [mobilePanel, setMobilePanel] = useState<'calendar' | 'day'>('calendar');
 
@@ -69,19 +70,13 @@ export function CalendarView() {
     queryFn: () => listEvents(monthBounds.start, monthBounds.end),
   });
 
-  const createMut = useMutation({
-    mutationFn: (body: CreateEventRequest) => createEvent(body),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['calendar'] });
-      setIsAdding(false);
-      setNewTitle('');
-      setNewTime('09:00');
-      setNewDuration(60);
-      setNewDescription('');
-      setNewLocation('');
-      setActionError(null);
-    },
-    onError: (err: Error) => setActionError(err.message),
+  // Fetch the full event-with-attendees only when we open the edit dialog.
+  // Listing endpoint returns the bare event (no attendees), but edit needs
+  // the attendee chips so we round-trip via GET /api/calendar/events/{id}.
+  const editingEventQ = useQuery<CalendarEventWithAttendees>({
+    queryKey: ['calendar', 'event', editingEventId],
+    queryFn: () => getEvent(editingEventId as string),
+    enabled: Boolean(editingEventId) && formMode === 'edit',
   });
 
   const deleteMut = useMutation({
@@ -107,21 +102,23 @@ export function CalendarView() {
     [events],
   );
 
-  const handleSave = () => {
-    if (!newTitle.trim() || !selectedDate) return;
-    const [hh, mm] = newTime.split(':').map((s) => parseInt(s, 10));
-    const start = new Date(selectedDate);
-    start.setHours(hh, mm, 0, 0);
-    const end = new Date(start.getTime() + newDuration * 60_000);
-    createMut.mutate({
-      title: newTitle.trim(),
-      description: newDescription.trim() || undefined,
-      location: newLocation.trim() || undefined,
-      start_time: formatLocalISO(start),
-      end_time: formatLocalISO(end),
-      all_day: false,
-    });
-  };
+  function openCreate() {
+    setEditingEventId(null);
+    setFormMode('create');
+    setMobilePanel('day');
+  }
+
+  function openEdit(id: string) {
+    setEditingEventId(id);
+    setFormMode('edit');
+  }
+
+  function handleDialogOpenChange(open: boolean) {
+    if (!open) {
+      setFormMode('closed');
+      setEditingEventId(null);
+    }
+  }
 
   return (
     <div className="flex h-full bg-white dark:bg-zinc-950 overflow-hidden">
@@ -159,8 +156,9 @@ export function CalendarView() {
         <div className="px-4 pb-4 flex gap-2">
           <Button
             className="flex-1"
-            onClick={() => { setIsAdding(true); setMobilePanel('day'); }}
+            onClick={openCreate}
             disabled={!selectedDate}
+            data-testid="new-event-button"
           >
             <Plus className="size-4 mr-2" />
             New Event
@@ -242,64 +240,6 @@ export function CalendarView() {
           </div>
         )}
 
-        {isAdding && (
-          <div className="mx-3 sm:mx-6 mt-3 sm:mt-4 p-3 sm:p-4 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 space-y-3">
-            <h4 className="font-semibold text-sm">Add New Event</h4>
-            <input
-              type="text"
-              placeholder="Event title"
-              value={newTitle}
-              onChange={(e) => setNewTitle(e.target.value)}
-              className="w-full px-3 py-2 text-sm rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 outline-none focus:ring-2 focus:ring-blue-500"
-              autoFocus
-            />
-            <div className="flex gap-3">
-              <div className="flex-1">
-                <label className="text-xs text-zinc-500 mb-1 block">Time</label>
-                <input
-                  type="time"
-                  value={newTime}
-                  onChange={(e) => setNewTime(e.target.value)}
-                  className="w-full px-3 py-2 text-sm rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-              <div className="flex-1">
-                <label className="text-xs text-zinc-500 mb-1 block">Duration (min)</label>
-                <input
-                  type="number"
-                  min={5}
-                  step={5}
-                  value={newDuration}
-                  onChange={(e) => setNewDuration(parseInt(e.target.value || '60', 10))}
-                  className="w-full px-3 py-2 text-sm rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-            </div>
-            <input
-              type="text"
-              placeholder="Location (optional)"
-              value={newLocation}
-              onChange={(e) => setNewLocation(e.target.value)}
-              className="w-full px-3 py-2 text-sm rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 outline-none focus:ring-2 focus:ring-blue-500"
-            />
-            <textarea
-              placeholder="Description (optional)"
-              value={newDescription}
-              onChange={(e) => setNewDescription(e.target.value)}
-              rows={2}
-              className="w-full px-3 py-2 text-sm rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-            />
-            <div className="flex gap-2 justify-end">
-              <Button variant="ghost" size="sm" onClick={() => setIsAdding(false)}>
-                Cancel
-              </Button>
-              <Button size="sm" onClick={handleSave} disabled={!newTitle.trim() || createMut.isPending}>
-                {createMut.isPending ? 'Saving…' : 'Save Event'}
-              </Button>
-            </div>
-          </div>
-        )}
-
         <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-3 sm:py-4 space-y-3">
           {eventsQ.isLoading ? (
             <div className="text-sm text-zinc-500 p-4">Loading events…</div>
@@ -311,7 +251,7 @@ export function CalendarView() {
             <div className="flex flex-col items-center justify-center h-full text-center text-zinc-400 gap-3">
               <CalendarDays className="size-12 opacity-30" />
               <p className="text-sm">No events on this day</p>
-              <Button variant="outline" size="sm" onClick={() => setIsAdding(true)}>
+              <Button variant="outline" size="sm" onClick={openCreate}>
                 <Plus className="size-4 mr-1" /> Add Event
               </Button>
             </div>
@@ -320,43 +260,99 @@ export function CalendarView() {
               .slice()
               .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
               .map((event) => (
-                <div
+                <EventRow
                   key={event.id}
-                  className="flex items-start gap-4 p-4 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 hover:shadow-md transition-shadow group"
-                >
-                  <div className={`w-1.5 self-stretch rounded-full shrink-0 ${colorFor(event.id)}`} />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between">
-                      <h4 className="font-semibold text-sm truncate">{event.title}</h4>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="size-7 opacity-0 group-hover:opacity-100 text-zinc-400 hover:text-red-500 shrink-0"
-                        disabled={deleteMut.isPending}
-                        onClick={() => {
-                          if (window.confirm(`Cancel "${event.title}"?`)) {
-                            deleteMut.mutate(event.id);
-                          }
-                        }}
-                      >
-                        <Trash2 className="size-4" />
-                      </Button>
-                    </div>
-                    <div className="flex items-center gap-1 text-xs text-zinc-400 mt-0.5">
-                      <Clock className="size-3" />
-                      <span>{timeOf(event.start_time)} – {timeOf(event.end_time)}</span>
-                    </div>
-                    {event.location && (
-                      <p className="text-xs text-zinc-500 mt-1">📍 {event.location}</p>
-                    )}
-                    {event.description && (
-                      <p className="text-xs text-zinc-500 mt-1">{event.description}</p>
-                    )}
-                  </div>
-                </div>
+                  event={event}
+                  onEdit={() => openEdit(event.id)}
+                  onDelete={() => {
+                    if (window.confirm(`Cancel "${event.title}"?`)) {
+                      deleteMut.mutate(event.id);
+                    }
+                  }}
+                  deleting={deleteMut.isPending}
+                />
               ))
           )}
         </div>
+      </div>
+
+      {/* Shared create/edit dialog (TMAIL-351) */}
+      <EventFormDialog
+        open={formMode !== 'closed'}
+        onOpenChange={handleDialogOpenChange}
+        event={
+          formMode === 'edit' && editingEventQ.data
+            ? (editingEventQ.data as CalendarEventWithAttendees)
+            : null
+        }
+        defaultDate={selectedDate ?? new Date()}
+      />
+
+    </div>
+  );
+}
+
+// ---- Row component (kept in-file because it's a private presentational
+//     unit and pulling it out would add boilerplate without a reuse story).
+
+interface EventRowProps {
+  event: CalendarEvent;
+  onEdit: () => void;
+  onDelete: () => void;
+  deleting: boolean;
+}
+
+function EventRow({ event, onEdit, onDelete, deleting }: EventRowProps) {
+  return (
+    <div
+      className="flex items-start gap-4 p-4 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 hover:shadow-md transition-shadow group"
+      data-testid="event-row"
+    >
+      <div className={`w-1.5 self-stretch rounded-full shrink-0 ${colorFor(event.id)}`} />
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center justify-between gap-2">
+          <h4 className="font-semibold text-sm truncate">{event.title}</h4>
+          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-7 text-zinc-400 hover:text-blue-500"
+              onClick={onEdit}
+              data-testid="edit-event-button"
+              title="Edit event"
+            >
+              <Pencil className="size-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-7 text-zinc-400 hover:text-red-500"
+              disabled={deleting}
+              onClick={onDelete}
+              title="Cancel event"
+            >
+              <Trash2 className="size-4" />
+            </Button>
+          </div>
+        </div>
+        <div className="flex items-center gap-1 text-xs text-zinc-400 mt-0.5">
+          <Clock className="size-3" />
+          <span>{timeOf(event.start_time)} – {timeOf(event.end_time)}</span>
+          {event.recurrence_rule && (
+            <span
+              className="ml-2 text-[10px] uppercase tracking-wide text-blue-500"
+              title={event.recurrence_rule}
+            >
+              repeats
+            </span>
+          )}
+        </div>
+        {event.location && (
+          <p className="text-xs text-zinc-500 mt-1">📍 {event.location}</p>
+        )}
+        {event.description && (
+          <p className="text-xs text-zinc-500 mt-1">{event.description}</p>
+        )}
       </div>
     </div>
   );
