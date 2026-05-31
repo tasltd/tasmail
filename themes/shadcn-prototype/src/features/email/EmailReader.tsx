@@ -34,6 +34,11 @@ import {
 import type { Email } from '@/types/ui';
 import type { Attachment, FullMessage } from '@/types/mail';
 import type { ReplyKind } from './replyContext';
+// Added (TMAIL-348): per-message internal comments thread rendered below the
+// body + attachments. Mailbox-scoped server-side so the component doesn't
+// need any current-user identity prop — see `CommentsThread.tsx` for the
+// ownership note.
+import { CommentsThread } from './CommentsThread';
 
 interface EmailReaderProps {
   folder: string;
@@ -422,6 +427,13 @@ export function EmailReader({
                 })}
               </div>
             )}
+
+            {/* Added (TMAIL-348): per-message internal comments thread.
+                Visual stack is body → attachments → comments so the message
+                reads naturally before the org-internal notes section. The
+                thread mounts only when we have a real uid (guaranteed inside
+                this branch by the early uid==null return above). */}
+            <CommentsThread folder={folder} uid={uid} />
           </>
         )}
       </div>
