@@ -1,0 +1,205 @@
+{% extends "classic/base.html" %}
+
+{# TMAIL-366 — Compose form for the /classic no-JS surface.
+
+   Surface:
+     * GET  /classic/compose                            → blank form
+     * GET  /classic/compose?reply_to={uid}&folder={f}  → reply prefill
+     * GET  /classic/compose?reply_all={uid}&folder={f} → reply-all prefill
+     * GET  /classic/compose?forward={uid}&folder={f}   → forward prefill
+     * POST /classic/compose                            → send via BYOK SMTP
+
+   Behaviour:
+     * The form POSTs as multipart/form-data so file attachments ride on
+       the same submission as the text fields. Plain-text body only —
+       rich-text composition is N/A on a no-JS surface.
+     * On success the handler 303-redirects to
+       `/classic/folders/{source_folder}?sent=1` (POST-Redirect-Get) so a
+       browser reload of the landing page doesn't re-submit the form.
+     * On failure the handler re-renders THIS template with `error =
+       Some(...)` and every text field echoed back. The browser cannot
+       round-trip the attachment bytes on a no-JS form, so we render the
+       filenames the user had attached and ask them to re-attach.
+
+   Required template context (all set by `handlers::classic::compose`):
+     * `to`, `cc`, `bcc`         — comma-separated address strings (echoed)
+     * `subject`, `body`         — plain text (echoed)
+     * `in_reply_to`, `references` — RFC 5322 threading (hidden inputs)
+     * `source_folder`           — the folder the user came from
+     * `source_folder_href`      — URL-encoded variant for the cancel link
+     * `prior_attachment_names`  — Vec<String>, echoed on failure re-render
+     * `error: Option<String>`   — form-level error banner
+     * `csrf_token`              — session token, threaded into the form +
+                                   the logout partial
+     * `csp_nonce`               — per-request CSP nonce (base.html) #}
+
+{% block title %}Compose{% endblock %}
+
+{% block logout_form %}{% include "classic/_logout_form.html" %}{% endblock %}
+
+{% block content %}
+  <style nonce="{{ csp_nonce }}">
+    /* Compose view-specific tweaks. Inherits base.html palette tokens. */
+    .compose-actions {
+      display: flex;
+      gap: 0.75rem;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-top: 1rem;
+    }
+    .compose-actions .secondary-link {
+      color: var(--tm-link);
+      text-decoration: underline;
+    }
+    .compose-body {
+      width: 100%;
+      max-width: 48rem;
+      min-height: 16rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.9375rem;
+      line-height: 1.5;
+    }
+    .compose-attachments {
+      margin-top: 1rem;
+    }
+    .compose-attachments input[type=file] {
+      display: block;
+      padding: 0.25rem 0;
+      border: 1px dashed var(--tm-border);
+      background: var(--tm-bg-light);
+    }
+    .compose-attachments .prior-list {
+      margin: 0.25rem 0 0;
+      padding-left: 1.25rem;
+      color: var(--tm-muted);
+      font-size: 0.875rem;
+    }
+    .compose-attachments .prior-list li {
+      margin: 0;
+    }
+    .compose-attachments .reattach-note {
+      color: var(--tm-danger);
+      font-size: 0.875rem;
+      margin-top: 0.25rem;
+    }
+    .compose-help {
+      color: var(--tm-muted);
+      font-size: 0.875rem;
+      margin-top: 0.25rem;
+    }
+  </style>
+
+  <h1>New message</h1>
+
+  {% if let Some(msg) = error %}
+    <div class="alert alert-error" role="alert">
+      <strong>{{ msg }}</strong>
+    </div>
+  {% endif %}
+
+  {# enctype=multipart/form-data is load-bearing — without it, the browser
+     posts as application/x-www-form-urlencoded and the file inputs come
+     across as their filename only (no bytes). #}
+  <form method="post"
+        action="/classic/compose"
+        enctype="multipart/form-data"
+        autocomplete="off"
+        novalidate>
+
+    {# Session CSRF token. The canonical classic_csrf_middleware reads this
+       out of the multipart body and constant-time-compares it against the
+       session row's csrf_token. #}
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+
+    {# Source folder — used by the handler to redirect back on success
+       (`/classic/folders/{folder}?sent=1`) and by the Cancel link below. #}
+    <input type="hidden" name="folder" value="{{ source_folder }}">
+
+    {# Threading headers — set on Reply / Reply-All prefill, empty on a
+       fresh compose or Forward. Round-tripped across a failure re-render
+       so the user doesn't lose their thread context on a typo. #}
+    <input type="hidden" name="in_reply_to" value="{{ in_reply_to }}">
+    <input type="hidden" name="references" value="{{ references }}">
+
+    <label for="compose-to">To</label>
+    <input type="text"
+           id="compose-to"
+           name="to"
+           value="{{ to }}"
+           inputmode="email"
+           required
+           aria-required="true"
+           autofocus
+           aria-describedby="compose-to-help">
+    <small id="compose-to-help" class="compose-help">
+      Separate multiple addresses with commas.
+    </small>
+
+    <label for="compose-cc">Cc</label>
+    <input type="text"
+           id="compose-cc"
+           name="cc"
+           value="{{ cc }}"
+           inputmode="email">
+
+    <label for="compose-bcc">Bcc</label>
+    <input type="text"
+           id="compose-bcc"
+           name="bcc"
+           value="{{ bcc }}"
+           inputmode="email">
+
+    <label for="compose-subject">Subject</label>
+    <input type="text"
+           id="compose-subject"
+           name="subject"
+           value="{{ subject }}"
+           maxlength="998">
+
+    <label for="compose-body">Message</label>
+    <textarea id="compose-body"
+              name="body"
+              class="compose-body"
+              rows="16"
+              aria-describedby="compose-body-help">{{ body }}</textarea>
+    <small id="compose-body-help" class="compose-help">
+      Plain text. Lines wrap automatically; press Enter for a new paragraph.
+    </small>
+
+    <div class="compose-attachments">
+      <label for="compose-attachments-input">Attachments</label>
+      <input type="file"
+             id="compose-attachments-input"
+             name="attachments"
+             multiple
+             aria-describedby="compose-attachments-help">
+      <small id="compose-attachments-help" class="compose-help">
+        Total upload (body + attachments) must stay under 25 MB.
+      </small>
+
+      {% if !prior_attachment_names.is_empty() %}
+        <p class="reattach-note" role="status">
+          The send failed before completing. Please re-attach these files
+          and submit again:
+        </p>
+        <ul class="prior-list">
+          {% for name in prior_attachment_names %}
+            <li>{{ name }}</li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+    </div>
+
+    <div class="compose-actions">
+      <button type="submit">Send</button>
+      <a class="secondary-link"
+         href="/classic/folders/{{ source_folder_href|safe }}">Cancel</a>
+    </div>
+  </form>
+
+  <p>
+    <small>
+      No JavaScript needed. This page works in lynx, w3m, and any HTML5 browser.
+    </small>
+  </p>
+{% endblock %}

@@ -105,15 +105,30 @@ fn message_is_read(env: &MessageEnvelope) -> bool {
 /// negative / non-numeric falls back to 0 silently so a malformed bookmark
 /// can't 400 the user out of their inbox. Pages beyond `total / PAGE_SIZE`
 /// still render (with empty rows) so stale links don't break.
+///
+/// Added (TMAIL-366): `sent=1` is appended by the compose POST handler on
+/// a successful send and surfaces as a green "Message sent" banner on
+/// this view. Any other value (or absence) means no banner.
 #[derive(Debug, Deserialize, Default)]
 pub struct FolderQuery {
     #[serde(default)]
     pub page: Option<u32>,
+    #[serde(default)]
+    pub sent: Option<String>,
 }
 
 impl FolderQuery {
     fn page(&self) -> u32 {
         self.page.unwrap_or(0)
+    }
+
+    /// True when `?sent=1` (or any other truthy value the compose handler
+    /// might emit) is present. Used to flip the success banner on.
+    fn sent_banner(&self) -> bool {
+        match self.sent.as_deref() {
+            Some(v) => matches!(v, "1" | "true" | "yes"),
+            None => false,
+        }
     }
 }
 
@@ -192,6 +207,11 @@ pub struct FolderTemplate {
     /// the bulk-action stub form. Both forms POST to handlers that the
     /// canonical CSRF middleware validates.
     pub csrf_token: String,
+    /// Added (TMAIL-366): true when the user landed here via the compose
+    /// POST-Redirect-Get with `?sent=1`. Drives a one-time green banner
+    /// at the top of the message list so the user gets confirmation that
+    /// the message they just composed was actually accepted by SMTP.
+    pub sent_banner: bool,
     /// Per-request CSP nonce. Required by base.html (TMAIL-356).
     pub csp_nonce: String,
 }
@@ -383,6 +403,7 @@ pub async fn get_folder(
         sidebar,
         messages,
         csrf_token: session.csrf_token.clone(),
+        sent_banner: query.sent_banner(),
         csp_nonce: CspNonce::new().into_string(),
     };
 
@@ -442,6 +463,7 @@ mod tests {
             sidebar: vec![],
             messages: vec![],
             csrf_token: "test-csrf-token".to_string(),
+            sent_banner: false,
             csp_nonce: "test-nonce-fixed".to_string(),
         }
     }
@@ -617,7 +639,7 @@ mod tests {
 
     #[test]
     fn folder_query_defaults_to_page_zero() {
-        let q = FolderQuery { page: None };
+        let q = FolderQuery { page: None, sent: None };
         assert_eq!(q.page(), 0);
         let q = FolderQuery::default();
         assert_eq!(q.page(), 0);
@@ -625,8 +647,40 @@ mod tests {
 
     #[test]
     fn folder_query_passes_explicit_page() {
-        let q = FolderQuery { page: Some(3) };
+        let q = FolderQuery { page: Some(3), sent: None };
         assert_eq!(q.page(), 3);
+    }
+
+    // ----- sent_banner (TMAIL-366) -----
+
+    #[test]
+    fn folder_query_sent_banner_off_by_default() {
+        let q = FolderQuery::default();
+        assert!(!q.sent_banner());
+    }
+
+    #[test]
+    fn folder_query_sent_banner_on_for_truthy_values() {
+        for val in &["1", "true", "yes"] {
+            let q = FolderQuery {
+                page: None,
+                sent: Some((*val).to_string()),
+            };
+            assert!(q.sent_banner(), "?sent={val} should turn the banner on");
+        }
+    }
+
+    #[test]
+    fn folder_query_sent_banner_off_for_other_values() {
+        // A malformed bookmark with `?sent=banana` shouldn't flash a green
+        // success banner — only canonical truthy values flip the flag.
+        for val in &["0", "false", "no", "banana", ""] {
+            let q = FolderQuery {
+                page: None,
+                sent: Some((*val).to_string()),
+            };
+            assert!(!q.sent_banner(), "?sent={val} should NOT turn the banner on");
+        }
     }
 
     // ----- Template rendering -----
@@ -639,6 +693,42 @@ mod tests {
         assert!(
             body.contains("No messages in this folder."),
             "empty state copy missing: {body}"
+        );
+    }
+
+    // ----- TMAIL-366: success banner -----
+
+    #[test]
+    fn folder_template_renders_sent_success_banner_when_flag_set() {
+        let mut t = fresh_template();
+        t.sent_banner = true;
+        let body = t.render().expect("template renders");
+        assert!(
+            body.contains("alert-success"),
+            "success alert class missing when sent_banner = true: {body}"
+        );
+        assert!(
+            body.contains("Message sent"),
+            "success banner copy missing: {body}"
+        );
+    }
+
+    #[test]
+    fn folder_template_omits_sent_success_banner_by_default() {
+        // fresh_template() has sent_banner = false. The banner MUST NOT
+        // render on a fresh inbox load — a green "Message sent" on a
+        // regular folder open would be misleading.
+        // NOTE: the base.html stylesheet defines `.alert-success` CSS
+        // rules so the bare class name appears in the rendered CSS even
+        // when no banner is emitted. Assert against the actual element.
+        let body = fresh_template().render().expect("template renders");
+        assert!(
+            !body.contains("class=\"alert alert-success\""),
+            "success alert element must NOT render when sent_banner = false: {body}"
+        );
+        assert!(
+            !body.contains("Message sent"),
+            "success copy must NOT render when sent_banner = false: {body}"
         );
     }
 

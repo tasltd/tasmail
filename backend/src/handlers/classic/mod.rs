@@ -91,6 +91,13 @@ pub mod message;
 // response body. Mounts on the authenticated sub-router below.
 pub mod attachment;
 
+// Added (TMAIL-366): GET + POST /classic/compose. GET renders the blank /
+// reply / forward prefilled compose form; POST accepts multipart/form-data
+// with text fields and `attachments[]`, validates, and sends via the BYOK
+// SMTP path. Mounts on the authenticated sub-router so it inherits both
+// the session and CSRF middleware.
+pub mod compose;
+
 // NAME: Session cookie name shared with the Classic UI auth handler that
 // lands in TMAIL-357 (P0 #3). The scaffold only needs to *detect* presence;
 // the cookie value is opaque here and validated later by the dedicated
@@ -230,6 +237,16 @@ fn authenticated_router(state: AppState) -> Router<AppState> {
         .route(
             "/classic/folders/{folder}/messages/{uid}/parts/{part_id}",
             get(attachment::get_attachment),
+        )
+        // Added (TMAIL-366): compose form. GET renders blank / prefilled
+        // (Reply / Reply-All / Forward via `?reply_to=` / `?reply_all=` /
+        // `?forward=` + `?folder=`). POST accepts multipart/form-data and
+        // sends via the user's BYOK SMTP server. The CSRF middleware
+        // already buffers the multipart body up to 32 MB and validates
+        // `_csrf` out of it, so this route lands no boilerplate.
+        .route(
+            "/classic/compose",
+            get(compose::get_compose).post(compose::post_compose),
         )
         // Inner layer: CSRF check on state-changing methods. Runs AFTER
         // the session middleware on the request side, so the session row

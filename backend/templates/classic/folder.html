@@ -190,6 +190,18 @@
     <section class="folder-main" aria-labelledby="folder-heading">
       <h1 id="folder-heading">{{ current_folder }}</h1>
 
+      {# TMAIL-366 — Success banner after the compose POST-Redirect-Get
+         flow. The compose handler redirects to `?sent=1` on a successful
+         SMTP send; this banner gives the user the visible confirmation
+         that the message actually went out. A browser refresh of THIS
+         page keeps the ?sent=1 in the URL so the banner re-renders, which
+         is acceptable — it's a one-time signal, not a state mutation. #}
+      {% if sent_banner %}
+        <div class="alert alert-success" role="status">
+          <strong>Message sent.</strong>
+        </div>
+      {% endif %}
+
       {# Bulk-action form. Today the buttons are stubs — P1 #29 will add
          real handlers. We render the form NOW so the row checkboxes have
          a place to submit to, and the CSRF token is already threaded
