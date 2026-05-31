@@ -4,13 +4,33 @@
 // SPA uses) before insertion via the React-escape hatch — required because the
 // IMAP source HTML is the actual rendering target.
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import DOMPurify from 'dompurify';
-import { Reply, ReplyAll, Forward, Trash2, Archive, Star, Download } from 'lucide-react';
+import {
+  Reply,
+  ReplyAll,
+  Forward,
+  Trash2,
+  Archive,
+  Star,
+  Download,
+  ShieldAlert,
+  ShieldCheck,
+} from 'lucide-react';
 import { format } from 'date-fns';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { downloadAttachment, fetchMessage } from '@/api/messages';
+// Added (TMAIL-347): phishing scan / report client. Same backend contract the
+// classic SPA's MessageView consumes — see `themes/shadcn-prototype/src/api/phishing.ts`.
+import {
+  getPhishingReport,
+  parseFromHeader,
+  scanMessage,
+  updatePhishingAction,
+  type PhishingAction,
+  type PhishingReport,
+} from '@/api/phishing';
 import type { Email } from '@/types/ui';
 import type { Attachment, FullMessage } from '@/types/mail';
 import type { ReplyKind } from './replyContext';
@@ -65,6 +85,56 @@ export function EmailReader({
     queryKey: ['message', folder, uid],
     queryFn: () => fetchMessage(folder, uid!),
     enabled: uid != null,
+  });
+
+  // Added (TMAIL-347): phishing report query. Returns null when the message
+  // has never been scanned — the UI uses that null to surface the manual
+  // "Scan for phishing" button. staleTime keeps the cache warm for a minute
+  // so flipping between adjacent messages in a thread doesn't refetch.
+  const queryClient = useQueryClient();
+  const phishingQuery = useQuery({
+    queryKey: ['phishing', folder, uid],
+    queryFn: () => getPhishingReport(folder, uid!),
+    enabled: uid != null,
+    staleTime: 60_000,
+  });
+
+  // Added (TMAIL-347): one-shot scan trigger. Driven by the manual "Scan for
+  // phishing" button — we deliberately do NOT auto-scan on open (parity with
+  // classic SPA; avoids surprise writes to the phishing_reports table for
+  // every message the user opens). Successful scan invalidates the query so
+  // the banner renders without a second click.
+  const scanMutation = useMutation({
+    mutationFn: () => {
+      if (uid == null || !messageQuery.data) {
+        return Promise.reject(new Error('Message not yet loaded'));
+      }
+      const m = messageQuery.data;
+      const { display, email } = parseFromHeader(m.from);
+      return scanMessage(folder, uid, {
+        html_body: m.html_body || m.text_body || '',
+        sender_display_name: display,
+        sender_email: email,
+        attachments: (m.attachments ?? []).map((a) => ({
+          filename: a.filename,
+          content_type: a.content_type,
+        })),
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['phishing', folder, uid] });
+    },
+  });
+
+  // Added (TMAIL-347): "Mark safe" (confirmed_safe) / "Report" (reported) /
+  // "Dismiss" (dismissed) actions. All three hide the banner — the action is
+  // persisted server-side so re-opening the message doesn't resurface it.
+  const phishingActionMutation = useMutation({
+    mutationFn: ({ reportId, action }: { reportId: string; action: PhishingAction }) =>
+      updatePhishingAction(reportId, action),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['phishing', folder, uid] });
+    },
   });
 
   // Added (TMAIL-320): per-row download state so the user can see which
@@ -273,6 +343,22 @@ export function EmailReader({
         )}
         {!messageQuery.isLoading && !messageQuery.isError && (
           <>
+            {/* Added (TMAIL-347): phishing detection banner. Shown when the
+                backend has a report with risk_score > 0 AND the user hasn't
+                already acted on it. Action handlers are owned by the reader
+                so EmailClient doesn't need to know about phishing state. */}
+            <PhishingBanner
+              report={phishingQuery.data ?? null}
+              isLoading={phishingQuery.isLoading}
+              isScanning={scanMutation.isPending}
+              scanError={scanMutation.error}
+              canScan={messageQuery.data != null && uid != null}
+              isActing={phishingActionMutation.isPending}
+              onScan={() => scanMutation.mutate()}
+              onAction={(reportId, action) =>
+                phishingActionMutation.mutate({ reportId, action })
+              }
+            />
             {safeHtml ? (
               // eslint-disable-next-line react/no-danger -- DOMPurify-sanitized above
               <div className="prose dark:prose-invert max-w-none" dangerouslySetInnerHTML={{ __html: safeHtml }} />
@@ -341,4 +427,192 @@ export function EmailReader({
       </div>
     </div>
   );
+}
+
+// Added (TMAIL-347) — phishing banner subcomponent.
+//
+// PURPOSE: render the phishing-detection state above the message body:
+//   - report=null + canScan=true → "Scan for phishing" prompt (manual trigger)
+//   - report exists + risk_score > 0 + user_action='none' → severity banner
+//   - report exists + user_action != 'none' → nothing (user already acted)
+//
+// Kept separate from EmailReader so the body of the reader stays small and
+// the banner can be visually-regression-tested in isolation later.
+//
+// Severity tiers match the classic SPA (TMAIL-124, MessageView.tsx:111-121):
+//   risk_score >= 71 → high   (red,   "appears to be a phishing attempt")
+//   risk_score >= 41 → medium (amber, "contains suspicious links")
+//   risk_score >   0 → low    (blue,  "some links may be suspicious")
+interface PhishingBannerProps {
+  report: PhishingReport | null;
+  isLoading: boolean;
+  isScanning: boolean;
+  scanError: Error | null;
+  canScan: boolean;
+  isActing: boolean;
+  onScan: () => void;
+  onAction: (reportId: string, action: PhishingAction) => void;
+}
+
+function PhishingBanner({
+  report,
+  isLoading,
+  isScanning,
+  scanError,
+  canScan,
+  isActing,
+  onScan,
+  onAction,
+}: PhishingBannerProps) {
+  // Wait until the GET resolves so we don't flash the "Scan" button under a
+  // report that's actually already on the server.
+  if (isLoading) return null;
+
+  if (report && report.risk_score > 0 && report.user_action === 'none') {
+    const tier = phishingTier(report.risk_score);
+    return (
+      <div
+        role="alert"
+        data-testid="modern-phishing-banner"
+        data-severity={tier.severity}
+        className={`mb-6 rounded-lg border px-4 py-3 ${tier.classes}`}
+      >
+        <div className="flex items-start gap-3">
+          <ShieldAlert className="size-5 shrink-0 mt-0.5" aria-hidden="true" />
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <strong className="text-sm font-semibold">{tier.title}</strong>
+              <span className="text-xs opacity-80">
+                Risk score: {report.risk_score}/100
+              </span>
+            </div>
+            {report.suspicious_links.length > 0 && (
+              <ul className="mt-2 space-y-1 text-xs">
+                {report.suspicious_links.slice(0, 5).map((link, idx) => (
+                  <li key={idx} className="break-all">
+                    <code className="bg-black/5 dark:bg-white/10 rounded px-1 py-0.5">
+                      {link.url}
+                    </code>
+                    {link.reasons.length > 0 && (
+                      <span className="opacity-80">
+                        {' '}
+                        — {link.reasons.join(', ')}
+                      </span>
+                    )}
+                  </li>
+                ))}
+                {report.suspicious_links.length > 5 && (
+                  <li className="opacity-70">
+                    …and {report.suspicious_links.length - 5} more
+                  </li>
+                )}
+              </ul>
+            )}
+            {(report.dangerous_attachments ?? []).length > 0 && (
+              <ul className="mt-2 space-y-1 text-xs">
+                {(report.dangerous_attachments ?? []).map((att, idx) => (
+                  <li key={idx}>
+                    <strong>{att.filename}</strong>{' '}
+                    <span className="opacity-80">— {att.reason}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={isActing}
+                data-testid="modern-phishing-mark-safe"
+                aria-label="Mark this email as safe"
+                onClick={() => onAction(report.id, 'confirmed_safe')}
+              >
+                <ShieldCheck className="size-4 mr-2" aria-hidden="true" />
+                Mark safe
+              </Button>
+              <Button
+                size="sm"
+                variant="destructive"
+                disabled={isActing}
+                data-testid="modern-phishing-report"
+                aria-label="Report this email as phishing"
+                onClick={() => onAction(report.id, 'reported')}
+              >
+                <ShieldAlert className="size-4 mr-2" aria-hidden="true" />
+                Report phishing
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={isActing}
+                data-testid="modern-phishing-dismiss"
+                aria-label="Dismiss this phishing warning"
+                onClick={() => onAction(report.id, 'dismissed')}
+              >
+                Dismiss
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // No report yet — surface the manual scan trigger.
+  if (!report && canScan) {
+    return (
+      <div className="mb-6 flex items-center gap-3 text-xs text-zinc-500 dark:text-zinc-400">
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={isScanning}
+          data-testid="modern-phishing-scan"
+          aria-label="Scan this email for phishing"
+          onClick={onScan}
+        >
+          <ShieldAlert className="size-4 mr-2" aria-hidden="true" />
+          {isScanning ? 'Scanning…' : 'Scan for phishing'}
+        </Button>
+        {scanError && (
+          <span role="status" className="text-red-600 dark:text-red-400">
+            Scan failed: {scanError.message}
+          </span>
+        )}
+      </div>
+    );
+  }
+
+  return null;
+}
+
+// Pure helper — severity tier metadata for a given risk score. Exported as a
+// module-local function (not via the public API) so the banner stays
+// self-contained but the tiers can still be unit-tested cheaply.
+function phishingTier(riskScore: number): {
+  severity: 'low' | 'medium' | 'high';
+  title: string;
+  classes: string;
+} {
+  if (riskScore >= 71) {
+    return {
+      severity: 'high',
+      title: 'Warning: this email appears to be a phishing attempt',
+      classes:
+        'border-red-300 bg-red-50 text-red-900 dark:border-red-700 dark:bg-red-950/40 dark:text-red-100',
+    };
+  }
+  if (riskScore >= 41) {
+    return {
+      severity: 'medium',
+      title: 'This email contains suspicious links',
+      classes:
+        'border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100',
+    };
+  }
+  return {
+    severity: 'low',
+    title: 'Some links in this email may be suspicious',
+    classes:
+      'border-sky-300 bg-sky-50 text-sky-900 dark:border-sky-700 dark:bg-sky-950/40 dark:text-sky-100',
+  };
 }
