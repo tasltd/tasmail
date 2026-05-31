@@ -95,6 +95,25 @@
       background: var(--tm-danger);
       color: #ffffff;
     }
+    /* TMAIL-379 — cross-links to sibling settings pages. */
+    .signature-crosslinks {
+      margin: 2rem 0 0;
+      padding-top: 1rem;
+      border-top: 1px solid var(--tm-border);
+    }
+    .signature-crosslinks h2 {
+      font-size: 1rem;
+      margin: 0 0 0.5rem;
+      color: var(--tm-muted);
+    }
+    .signature-crosslinks ul {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+    .signature-crosslinks li {
+      margin: 0.25rem 0;
+    }
   </style>
 
   <h1>Signature</h1>
@@ -179,4 +198,16 @@
       <button type="submit" name="action" value="remove">Remove signature</button>
     </form>
   {% endif %}
+
+  {# TMAIL-379 — Cross-links to the other settings pages. base.html's
+     primary nav only carries a single "Settings" link (pointing here),
+     so each settings page surfaces its siblings inline. #}
+  <section class="signature-crosslinks" aria-labelledby="signature-other-settings">
+    <h2 id="signature-other-settings">Other settings</h2>
+    <ul>
+      <li><a href="/classic/settings/vacation">Vacation responder</a></li>
+      <li><a href="/classic/settings/password">Change password</a></li>
+      <li><a href="/classic/settings/sessions">Active sessions</a></li>
+    </ul>
+  </section>
 {% endblock %}

@@ -1,0 +1,221 @@
+{% extends "classic/base.html" %}
+
+{# TMAIL-379 — Vacation responder settings page for the /classic no-JS surface
+   (gap-analysis P1 #25).
+
+   Required template context (all set by
+   `handlers::classic::settings_vacation::get_vacation` / `post_vacation`):
+     * `enabled`        — toggle state.
+     * `subject`        — current subject text (saved or submitted).
+     * `body`           — current body text.
+     * `start_date`     — YYYY-MM-DD or empty string.
+     * `end_date`       — YYYY-MM-DD or empty string.
+     * `external_only`  — checkbox state. Default true on a brand-new render.
+     * `flash`          — Some(("success"|"error", msg)) or None.
+     * `csrf_token`     — session csrf, threaded into the form + logout partial.
+     * `csp_nonce`      — per-request CSP nonce required by base.html. #}
+
+{% block title %}Vacation responder{% endblock %}
+
+{% block logout_form %}{% include "classic/_logout_form.html" %}{% endblock %}
+
+{% block content %}
+  <style nonce="{{ csp_nonce }}">
+    /* TMAIL-379 — vacation responder layout. Mirrors the settings/signature
+       and settings/sessions pages so all settings surfaces feel consistent. */
+    .vacation-help {
+      color: var(--tm-muted);
+      margin: 0 0 1rem;
+    }
+    .vacation-toggle {
+      margin: 1rem 0 1.5rem;
+      padding: 0.75rem 1rem;
+      border: 1px solid var(--tm-border);
+      border-radius: 4px;
+      background: var(--tm-bg-light);
+    }
+    .vacation-toggle label {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .vacation-field {
+      margin: 0 0 1rem;
+    }
+    .vacation-field label {
+      display: block;
+      font-weight: 600;
+      margin: 0 0 0.25rem;
+    }
+    .vacation-subject,
+    .vacation-body {
+      width: 100%;
+      max-width: 48rem;
+    }
+    .vacation-body {
+      min-height: 8rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.9375rem;
+      line-height: 1.5;
+    }
+    .vacation-dates {
+      display: flex;
+      gap: 1rem;
+      flex-wrap: wrap;
+      max-width: 48rem;
+    }
+    .vacation-dates > div {
+      flex: 1 1 12rem;
+    }
+    .vacation-external {
+      margin: 0.5rem 0 1rem;
+    }
+    .vacation-external label {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      cursor: pointer;
+      font-weight: normal;
+    }
+    .vacation-actions {
+      display: flex;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+      align-items: center;
+      margin-top: 1.5rem;
+    }
+    .vacation-crosslinks {
+      margin: 2rem 0 0;
+      padding-top: 1rem;
+      border-top: 1px solid var(--tm-border);
+    }
+    .vacation-crosslinks h2 {
+      font-size: 1rem;
+      margin: 0 0 0.5rem;
+      color: var(--tm-muted);
+    }
+    .vacation-crosslinks ul {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+    .vacation-crosslinks li {
+      margin: 0.25rem 0;
+    }
+  </style>
+
+  <h1>Vacation responder</h1>
+
+  <p class="vacation-help">
+    Automatically reply to incoming messages while you're away. The same
+    sender only gets one reply every 24 hours, even if they send several
+    messages in that window.
+  </p>
+
+  {% if let Some((kind, msg)) = flash %}
+    {% if kind == "success" %}
+      <div class="alert alert-success" role="status">
+        <strong>{{ msg }}</strong>
+      </div>
+    {% else %}
+      <div class="alert alert-error" role="alert">
+        <strong>{{ msg }}</strong>
+      </div>
+    {% endif %}
+  {% endif %}
+
+  <form method="post" action="/classic/settings/vacation" autocomplete="off" novalidate>
+    {# Session-scoped CSRF token — validated by classic_csrf_middleware. #}
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+
+    <div class="vacation-toggle">
+      <label for="vacation-enabled">
+        <input id="vacation-enabled"
+               type="checkbox"
+               name="enabled"
+               value="on"
+               {% if enabled %}checked{% endif %}>
+        Enable vacation responder
+      </label>
+    </div>
+
+    <div class="vacation-field">
+      <label for="vacation-subject">Subject</label>
+      <input id="vacation-subject"
+             type="text"
+             name="subject"
+             class="vacation-subject"
+             value="{{ subject }}"
+             maxlength="256"
+             required
+             aria-describedby="vacation-subject-help">
+      <p id="vacation-subject-help" class="vacation-help">
+        <small>Used as the subject line of every auto-reply. Maximum 256 characters.</small>
+      </p>
+    </div>
+
+    <div class="vacation-field">
+      <label for="vacation-body">Message</label>
+      <textarea id="vacation-body"
+                name="body"
+                class="vacation-body"
+                rows="8"
+                maxlength="8192"
+                required
+                aria-describedby="vacation-body-help"
+                placeholder="I'm currently out of the office and will reply when I return.">{{ body }}</textarea>
+      <p id="vacation-body-help" class="vacation-help">
+        <small>Plain text (line breaks preserved). Maximum 8 KB.</small>
+      </p>
+    </div>
+
+    <div class="vacation-field vacation-dates">
+      <div>
+        <label for="vacation-start">Start date <small>(optional)</small></label>
+        <input id="vacation-start"
+               type="date"
+               name="start_date"
+               value="{{ start_date }}">
+      </div>
+      <div>
+        <label for="vacation-end">End date <small>(optional)</small></label>
+        <input id="vacation-end"
+               type="date"
+               name="end_date"
+               value="{{ end_date }}">
+      </div>
+    </div>
+    <p class="vacation-help">
+      <small>
+        Leave both blank to run indefinitely until the toggle is turned off.
+        Dates are interpreted in UTC and cover the full day.
+      </small>
+    </p>
+
+    <p class="vacation-external">
+      <label>
+        <input type="checkbox"
+               name="external_only"
+               value="on"
+               {% if external_only %}checked{% endif %}>
+        External senders only (skip mailing lists and bulk senders)
+      </label>
+    </p>
+
+    <div class="vacation-actions">
+      <button type="submit">Save vacation responder</button>
+      <a class="secondary-link" href="/classic/folders/INBOX">Cancel</a>
+    </div>
+  </form>
+
+  <section class="vacation-crosslinks" aria-labelledby="vacation-other-settings">
+    <h2 id="vacation-other-settings">Other settings</h2>
+    <ul>
+      <li><a href="/classic/settings/signature">Signature</a></li>
+      <li><a href="/classic/settings/password">Change password</a></li>
+      <li><a href="/classic/settings/sessions">Active sessions</a></li>
+    </ul>
+  </section>
+{% endblock %}

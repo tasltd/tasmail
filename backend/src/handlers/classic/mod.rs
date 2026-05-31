@@ -179,6 +179,17 @@ pub mod sessions;
 // `compose::append_signature`).
 pub mod settings_signature;
 
+// Added (TMAIL-379): /classic/settings/vacation handlers (P1 #25).
+// Vacation responder settings page. GET renders the form prefilled from
+// the user's `auto_reply_rules` row; POST validates + upserts the same
+// row through `models::auto_reply::AutoReplyRule::upsert` (the model
+// that backs the existing /api/auto-reply surface). Fields: enable
+// toggle, subject, body (plain text), start_date, end_date (date-only
+// `<input type="date">`, snapped to UTC midnight + 23:59:59 respectively),
+// "external senders only" checkbox. Mounted on the AUTHENTICATED
+// sub-router so it inherits both the session and CSRF middleware.
+pub mod settings_vacation;
+
 // NAME: Session cookie name shared with the Classic UI auth handler that
 // lands in TMAIL-357 (P0 #3). The scaffold only needs to *detect* presence;
 // the cookie value is opaque here and validated later by the dedicated
@@ -447,6 +458,15 @@ fn authenticated_router(state: AppState) -> Router<AppState> {
         .route(
             "/classic/settings/signature",
             get(settings_signature::get_signature).post(settings_signature::post_signature),
+        )
+        // Added (TMAIL-379): GET + POST /classic/settings/vacation —
+        // vacation responder / auto-reply settings page (P1 #25). POST
+        // validates the form, then upserts the user's auto_reply_rules
+        // row through the same model `/api/auto-reply` writes to. Inherits
+        // session + CSRF middleware from this sub-router.
+        .route(
+            "/classic/settings/vacation",
+            get(settings_vacation::get_vacation).post(settings_vacation::post_vacation),
         )
         // Inner layer: CSRF check on state-changing methods. Runs AFTER
         // the session middleware on the request side, so the session row
