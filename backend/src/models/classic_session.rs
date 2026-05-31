@@ -120,7 +120,6 @@ impl ClassicSession {
 
     /// Used by P1 #23 (sign-out everywhere) and by the password-change handler
     /// when it lands. Returns the count for the audit log.
-    #[allow(dead_code)]
     pub async fn delete_all_for_user(
         pool: &sqlx::PgPool,
         user_id: Uuid,
@@ -130,6 +129,49 @@ impl ClassicSession {
             .execute(pool)
             .await?;
         Ok(result.rows_affected())
+    }
+
+    /// Added (TMAIL-377): list every active (unexpired) classic session row
+    /// for `user_id`, newest-first by `last_seen_at`. Used by the
+    /// `/classic/settings/sessions` page (P1 #23) to render the "active
+    /// sessions" table. Rows are filtered by `expires_at > NOW()` so a
+    /// stale-but-not-yet-swept row never shows up as active.
+    pub async fn list_active_for_user(
+        pool: &sqlx::PgPool,
+        user_id: Uuid,
+    ) -> Result<Vec<ClassicSession>, sqlx::Error> {
+        sqlx::query_as::<_, ClassicSession>(
+            "SELECT * FROM classic_sessions
+              WHERE user_id = $1 AND expires_at > NOW()
+              ORDER BY last_seen_at DESC",
+        )
+        .bind(user_id)
+        .fetch_all(pool)
+        .await
+    }
+
+    /// Added (TMAIL-377): delete a single classic session row scoped to the
+    /// owning user. Used by the per-row "Revoke this session" button on
+    /// `/classic/settings/sessions`. The `user_id` filter makes the query
+    /// safe to call with attacker-supplied ids — a hostile user can't
+    /// revoke another user's session because the WHERE clause silently
+    /// no-ops on a mismatched owner.
+    ///
+    /// Returns true when a row was deleted, false otherwise (already
+    /// expired / wrong owner / never existed).
+    pub async fn delete_for_user(
+        pool: &sqlx::PgPool,
+        user_id: Uuid,
+        session_id: Uuid,
+    ) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query(
+            "DELETE FROM classic_sessions WHERE user_id = $1 AND id = $2",
+        )
+        .bind(user_id)
+        .bind(session_id)
+        .execute(pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
     }
 
     /// Added (TMAIL-376): Delete every classic session row for `user_id`

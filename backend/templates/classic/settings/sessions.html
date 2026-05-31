@@ -1,0 +1,257 @@
+{% extends "classic/base.html" %}
+
+{# TMAIL-377 — Active sessions overview page for the /classic no-JS surface.
+
+   Required template context (set by
+   `handlers::classic::sessions::get_sessions`):
+     * `classic_rows`     — every active classic_sessions row for the user,
+                            sorted by last_seen_at desc. Each row carries an
+                            `is_current` flag so the table can mark the
+                            row driving the current request.
+     * `spa_rows`         — every active SPA refresh-token row for the user.
+     * `flash`            — Some(("kind", "msg")) when arriving from a per-row
+                            revoke (kind in "success"|"error"); None on a
+                            fresh load.
+     * `csrf_token`       — session csrf for the logout form partial AND
+                            every per-row revoke form + the "Sign out
+                            everywhere" CTA.
+     * `csp_nonce`        — base.html requirement. #}
+
+{% block title %}Active sessions{% endblock %}
+
+{% block logout_form %}{% include "classic/_logout_form.html" %}{% endblock %}
+
+{% block content %}
+  <style nonce="{{ csp_nonce }}">
+    /* TMAIL-377 — sessions table layout.
+       Mirrors the .confirm-headers definitions in delete_confirm.html so
+       both pages look like part of the same Classic UI surface. */
+    .sessions-summary {
+      margin: 0 0 1rem;
+      color: var(--tm-charcoal-700);
+    }
+    .sessions-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 0 0 1.5rem;
+      font-size: 0.9375rem;
+    }
+    .sessions-table caption {
+      text-align: left;
+      font-weight: 700;
+      color: var(--tm-charcoal-900);
+      padding: 0.5rem 0;
+    }
+    .sessions-table th,
+    .sessions-table td {
+      padding: 0.5rem 0.5rem;
+      border-bottom: 1px solid var(--tm-border);
+      vertical-align: top;
+      text-align: left;
+    }
+    .sessions-table th {
+      color: var(--tm-muted);
+      font-weight: 600;
+      background: var(--tm-bg-light);
+    }
+    .sessions-table td.session-meta {
+      word-break: break-word;
+      max-width: 24rem;
+    }
+    .sessions-table tr.is-current td {
+      background: rgba(45, 212, 191, 0.08);
+    }
+    .sessions-table .current-badge {
+      display: inline-block;
+      margin-left: 0.5rem;
+      padding: 0.05rem 0.4rem;
+      font-size: 0.75rem;
+      background: var(--tm-teal-400);
+      color: var(--tm-charcoal-900);
+      border-radius: 3px;
+    }
+    .sessions-table form {
+      display: inline;
+      margin: 0;
+    }
+    .sessions-table button.revoke {
+      margin: 0;
+      padding: 0.25rem 0.6rem;
+      font-size: 0.875rem;
+      background: var(--tm-surface);
+      color: var(--tm-danger);
+      border: 1px solid var(--tm-danger);
+    }
+    .sessions-table button.revoke:hover {
+      background: var(--tm-danger);
+      color: #ffffff;
+    }
+    .sessions-empty {
+      padding: 0.75rem 1rem;
+      color: var(--tm-muted);
+      background: var(--tm-bg-light);
+      border: 1px solid var(--tm-border);
+      border-radius: 3px;
+    }
+    .sessions-danger-zone {
+      margin: 2rem 0 0;
+      padding: 1rem;
+      border: 1px solid var(--tm-danger);
+      border-radius: 4px;
+      background: var(--tm-bg-light);
+    }
+    .sessions-danger-zone h2 {
+      color: var(--tm-danger);
+      margin-top: 0;
+    }
+    .sessions-danger-zone button {
+      background: var(--tm-danger);
+      border-color: var(--tm-danger);
+    }
+    @media (max-width: 36em) {
+      .sessions-table,
+      .sessions-table thead,
+      .sessions-table tbody,
+      .sessions-table tr,
+      .sessions-table th,
+      .sessions-table td {
+        display: block;
+      }
+      .sessions-table thead { display: none; }
+      .sessions-table td {
+        border: none;
+        padding: 0.25rem 0;
+      }
+      .sessions-table tr {
+        border-bottom: 1px solid var(--tm-border);
+        padding: 0.5rem 0;
+      }
+    }
+  </style>
+
+  <h1>Active sessions</h1>
+
+  <p class="sessions-summary">
+    These browsers, apps, and devices currently hold a live sign-in for your
+    TASMail account. Revoke a single session, or sign out of every session
+    everywhere (including this browser) if you suspect your account has
+    been used by someone else.
+  </p>
+
+  {% if let Some((kind, msg)) = flash %}
+    {% if kind == "success" %}
+      <div class="alert alert-success" role="status">
+        <strong>{{ msg }}</strong>
+      </div>
+    {% else %}
+      <div class="alert alert-error" role="alert">
+        <strong>{{ msg }}</strong>
+      </div>
+    {% endif %}
+  {% endif %}
+
+  <section aria-labelledby="classic-sessions-heading">
+    <table class="sessions-table">
+      <caption id="classic-sessions-heading">Classic UI browsers ({{ classic_rows.len() }})</caption>
+      <thead>
+        <tr>
+          <th scope="col">First seen</th>
+          <th scope="col">Last seen</th>
+          <th scope="col">IP address</th>
+          <th scope="col">Browser / device</th>
+          <th scope="col"><span class="visually-hidden">Action</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in classic_rows %}
+          <tr {% if row.is_current %}class="is-current"{% endif %}>
+            <td>{{ row.created_at_display }}</td>
+            <td>
+              {{ row.last_seen_display }}
+              {% if row.is_current %}<span class="current-badge" aria-label="This browser">This browser</span>{% endif %}
+            </td>
+            <td>{{ row.ip_display }}</td>
+            <td class="session-meta">{{ row.ua_display }}</td>
+            <td>
+              {% if row.is_current %}
+                <span class="visually-hidden">Use the "Sign out" button in the navigation to end this session.</span>
+              {% else %}
+                <form method="post" action="/classic/settings/sessions/revoke">
+                  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                  <input type="hidden" name="kind" value="classic">
+                  <input type="hidden" name="session_id" value="{{ row.id }}">
+                  <button type="submit" class="revoke"
+                          aria-label="Revoke Classic UI session from {{ row.ua_display }}">
+                    Revoke
+                  </button>
+                </form>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        {% if classic_rows.is_empty() %}
+          <tr>
+            <td colspan="5">
+              <span class="sessions-empty">No active Classic UI sessions.</span>
+            </td>
+          </tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </section>
+
+  <section aria-labelledby="spa-sessions-heading">
+    <table class="sessions-table">
+      <caption id="spa-sessions-heading">SPA / mobile refresh tokens ({{ spa_rows.len() }})</caption>
+      <thead>
+        <tr>
+          <th scope="col">First seen</th>
+          <th scope="col">IP address</th>
+          <th scope="col">Browser / device</th>
+          <th scope="col"><span class="visually-hidden">Action</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in spa_rows %}
+          <tr>
+            <td>{{ row.created_at_display }}</td>
+            <td>{{ row.ip_display }}</td>
+            <td class="session-meta">{{ row.ua_display }}</td>
+            <td>
+              <form method="post" action="/classic/settings/sessions/revoke">
+                <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                <input type="hidden" name="kind" value="spa">
+                <input type="hidden" name="session_id" value="{{ row.id }}">
+                <button type="submit" class="revoke"
+                        aria-label="Revoke SPA / mobile session from {{ row.ua_display }}">
+                  Revoke
+                </button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+        {% if spa_rows.is_empty() %}
+          <tr>
+            <td colspan="4">
+              <span class="sessions-empty">No active SPA or mobile refresh tokens.</span>
+            </td>
+          </tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </section>
+
+  <section class="sessions-danger-zone" aria-labelledby="danger-zone-heading">
+    <h2 id="danger-zone-heading">Sign out everywhere</h2>
+    <p>
+      Revokes every Classic UI session AND every SPA / mobile refresh token,
+      <strong>including this browser</strong>. You will be signed out and
+      redirected to the login page. Use this if you suspect your password
+      has been leaked.
+    </p>
+    <form method="post" action="/classic/settings/sessions/revoke-all">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <button type="submit" class="danger">Sign out everywhere&hellip;</button>
+    </form>
+  </section>
+{% endblock %}

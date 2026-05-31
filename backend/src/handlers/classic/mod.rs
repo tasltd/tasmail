@@ -159,6 +159,15 @@ pub mod password_reset;
 // handlers in the same module.
 pub mod settings;
 
+// Added (TMAIL-377): /classic/settings/sessions/* handlers. Lists every
+// active classic_sessions row + every refresh-token row for the user
+// with per-row "Revoke" buttons, plus a confirm-step "Sign out
+// everywhere" CTA that revokes EVERY session + EVERY refresh token
+// (including the current browser) and 303-redirects to /classic/login.
+// All routes mount on the authenticated sub-router so they inherit the
+// full session + CSRF middleware stack.
+pub mod sessions;
+
 // NAME: Session cookie name shared with the Classic UI auth handler that
 // lands in TMAIL-357 (P0 #3). The scaffold only needs to *detect* presence;
 // the cookie value is opaque here and validated later by the dedicated
@@ -389,6 +398,34 @@ fn authenticated_router(state: AppState) -> Router<AppState> {
         .route(
             "/classic/settings/password",
             get(settings::get_password).post(settings::post_password),
+        )
+        // Added (TMAIL-377): /classic/settings/sessions — active sessions
+        // overview + per-row revoke + "Sign out everywhere" confirm flow
+        // (P1 #23). Four endpoints:
+        //   * GET  sessions               — list page (classic + spa rows)
+        //   * POST sessions/revoke        — single-row revoke
+        //   * POST sessions/revoke-all    — render confirm page
+        //   * POST sessions/revoke-all/confirm — destructive: wipes every
+        //                                       classic + spa row for the
+        //                                       user, clears the session
+        //                                       cookie, 303 → /classic/login.
+        // All four inherit the same classic_session + classic_csrf
+        // middleware layers from this sub-router.
+        .route(
+            "/classic/settings/sessions",
+            get(sessions::get_sessions),
+        )
+        .route(
+            "/classic/settings/sessions/revoke",
+            post(sessions::post_revoke_row),
+        )
+        .route(
+            "/classic/settings/sessions/revoke-all",
+            post(sessions::post_revoke_all),
+        )
+        .route(
+            "/classic/settings/sessions/revoke-all/confirm",
+            post(sessions::post_revoke_all_confirm),
         )
         // Inner layer: CSRF check on state-changing methods. Runs AFTER
         // the session middleware on the request side, so the session row

@@ -69,6 +69,50 @@ impl Session {
         Ok(result.rows_affected())
     }
 
+    /// Added (TMAIL-377): list every active (unexpired) refresh-token row for
+    /// `mailbox_id`, newest-first by `created_at`. Used by the Classic UI
+    /// sessions page (P1 #23) to render "SPA / mobile refresh tokens" rows
+    /// next to the live classic browsers. Filtering by `expires_at > NOW()`
+    /// hides rows the cleanup sweep hasn't reaped yet so the user only sees
+    /// what could currently authenticate as them.
+    pub async fn list_active_for_mailbox(
+        pool: &sqlx::PgPool,
+        mailbox_id: Uuid,
+    ) -> Result<Vec<Session>, sqlx::Error> {
+        sqlx::query_as::<_, Session>(
+            "SELECT * FROM sessions
+              WHERE mailbox_id = $1 AND expires_at > NOW()
+              ORDER BY created_at DESC",
+        )
+        .bind(mailbox_id)
+        .fetch_all(pool)
+        .await
+    }
+
+    /// Added (TMAIL-377): delete a single refresh-token row scoped to the
+    /// owning mailbox. Used by the per-row "Revoke this session" button on
+    /// `/classic/settings/sessions`. The `mailbox_id` filter makes the
+    /// query safe with attacker-supplied ids — a hostile user can't revoke
+    /// another mailbox's row because the WHERE clause silently no-ops on a
+    /// mismatched owner.
+    ///
+    /// Returns true when a row was deleted, false otherwise (already
+    /// expired / wrong owner / never existed).
+    pub async fn delete_for_mailbox(
+        pool: &sqlx::PgPool,
+        mailbox_id: Uuid,
+        session_id: Uuid,
+    ) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query(
+            "DELETE FROM sessions WHERE mailbox_id = $1 AND id = $2",
+        )
+        .bind(mailbox_id)
+        .bind(session_id)
+        .execute(pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
     /// Clean up expired sessions
     pub async fn cleanup_expired(pool: &sqlx::PgPool) -> Result<u64, sqlx::Error> {
         let result = sqlx::query("DELETE FROM sessions WHERE expires_at < NOW()")

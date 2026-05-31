@@ -1,0 +1,78 @@
+{% extends "classic/base.html" %}
+
+{# TMAIL-377 — "Sign out everywhere" confirmation page.
+
+   Rendered by POST /classic/settings/sessions/revoke-all so the user has
+   a single explicit confirm step before every classic_sessions row AND
+   every refresh-token row for the account is destroyed (including the
+   row driving this very request).
+
+   Required template context (set by
+   `handlers::classic::sessions::post_revoke_all`):
+     * `classic_count`    — how many classic sessions will be revoked
+                            (includes the current one).
+     * `spa_count`        — how many SPA / mobile refresh tokens will be
+                            revoked.
+     * `csrf_token`       — session csrf threaded into the confirm form
+                            AND the logout-form partial.
+     * `csp_nonce`        — base.html requirement. #}
+
+{% block title %}Sign out everywhere?{% endblock %}
+
+{% block logout_form %}{% include "classic/_logout_form.html" %}{% endblock %}
+
+{% block content %}
+  <style nonce="{{ csp_nonce }}">
+    .confirm-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      align-items: center;
+      margin: 1.5rem 0 0;
+      padding-top: 1rem;
+      border-top: 1px solid var(--tm-border);
+    }
+    .confirm-actions form { display: inline; margin: 0; }
+    .confirm-actions button.danger {
+      background: var(--tm-danger);
+      border-color: var(--tm-danger);
+      color: #ffffff;
+    }
+    .confirm-actions a.cancel-link {
+      display: inline-block;
+      padding: 0.4rem 0.85rem;
+      font-size: 0.9375rem;
+      border-radius: 3px;
+      text-decoration: none;
+      background: var(--tm-surface);
+      color: var(--tm-link);
+      border: 1px solid var(--tm-border);
+    }
+    .confirm-actions a.cancel-link:hover {
+      background: var(--tm-bg-light);
+      text-decoration: underline;
+    }
+  </style>
+
+  <h1>Sign out everywhere?</h1>
+
+  <div class="alert alert-error" role="alert">
+    <strong>This will sign you out of every browser, app, and device — including this one.</strong>
+    You will land on the login page and need to sign in again with your password.
+  </div>
+
+  <p>The following sessions will be revoked:</p>
+  <ul>
+    <li>Classic UI browsers: {{ classic_count }} (including this one)</li>
+    <li>SPA / mobile refresh tokens: {{ spa_count }}</li>
+  </ul>
+
+  <div class="confirm-actions" role="group" aria-label="Confirm sign-out everywhere">
+    <form method="post" action="/classic/settings/sessions/revoke-all/confirm">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <button type="submit" class="danger">Yes, sign out everywhere</button>
+    </form>
+
+    <a class="cancel-link" href="/classic/settings/sessions">Cancel</a>
+  </div>
+{% endblock %}
