@@ -190,6 +190,18 @@ pub mod settings_signature;
 // sub-router so it inherits both the session and CSRF middleware.
 pub mod settings_vacation;
 
+// Added (TMAIL-380): /classic/settings/byok handlers (P1 #26). BYOK
+// IMAP/SMTP edit form with a separate test-connection endpoint:
+//   * GET  /classic/settings/byok           — render form prefilled
+//   * POST /classic/settings/byok           — save (gated on tested_ok
+//                                             OR action=save_no_test)
+//   * POST /classic/settings/byok/test      — verify IMAP+SMTP probes,
+//                                             re-render with banners
+// Passwords use type=password and are never echoed back; a blank field
+// on an edit keeps the saved encrypted row as-is. Inherits session +
+// CSRF middleware from the AUTHENTICATED sub-router.
+pub mod settings_byok;
+
 // NAME: Session cookie name shared with the Classic UI auth handler that
 // lands in TMAIL-357 (P0 #3). The scaffold only needs to *detect* presence;
 // the cookie value is opaque here and validated later by the dedicated
@@ -467,6 +479,22 @@ fn authenticated_router(state: AppState) -> Router<AppState> {
         .route(
             "/classic/settings/vacation",
             get(settings_vacation::get_vacation).post(settings_vacation::post_vacation),
+        )
+        // Added (TMAIL-380): BYOK IMAP/SMTP edit form (P1 #26). Two
+        // routes — `/classic/settings/byok` for GET (render) + POST
+        // (save / save_no_test), and the dedicated
+        // `/classic/settings/byok/test` for the "Test connection"
+        // button's POST. Splitting the test handler off keeps its
+        // probe latency + future rate-limit policy independently
+        // expressible from the save path. Inherits session + CSRF
+        // middleware from this sub-router.
+        .route(
+            "/classic/settings/byok",
+            get(settings_byok::get_byok).post(settings_byok::post_byok),
+        )
+        .route(
+            "/classic/settings/byok/test",
+            post(settings_byok::post_byok_test),
         )
         // Inner layer: CSRF check on state-changing methods. Runs AFTER
         // the session middleware on the request side, so the session row

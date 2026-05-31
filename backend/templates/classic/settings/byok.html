@@ -1,0 +1,403 @@
+{% extends "classic/base.html" %}
+
+{# TMAIL-380 — BYOK IMAP / SMTP edit form for the /classic no-JS surface
+   (gap-analysis P1 #26).
+
+   Required template context (all set by
+   `handlers::classic::settings_byok::{get_byok, post_byok, post_byok_test}`):
+     * `imap_existing` / `smtp_existing` — whether the user already has a
+                          saved row. Drives the copy ("Update your
+                          servers" vs "Connect your servers") and
+                          whether a blank password is interpreted as
+                          "keep existing" (true) vs "missing field"
+                          (false).
+     * `imap_host`, `imap_port`, `imap_username`, `imap_encryption` —
+                          current field values, always echoed so the
+                          form survives a re-render. NOTE: the
+                          `imap_password` field is NEVER echoed back —
+                          the input renders blank.
+     * `smtp_host`, `smtp_port`, `smtp_username`, `smtp_encryption`,
+       `smtp_from_address` — same idea for SMTP.
+     * `presets`          — Vec<PresetView> for the provider auto-fill
+                            picker.
+     * `picked_name`      — name of the currently-picked preset (or
+                            empty); drives "active" styling.
+     * `picked_hint`      — friendly hint for the picked provider.
+     * `imap_test`        — Some(true/false, message) after a probe;
+                            None on a fresh GET or save round-trip.
+     * `smtp_test`        — same for SMTP.
+     * `error`            — top-of-form non-field error or None.
+     * `success`          — top-of-form success flash or None.
+     * `tested_ok`        — "1" when both probes passed; threaded back
+                            into the form so action=save can verify.
+     * `csrf_token`       — session csrf for the form + logout partial.
+     * `csp_nonce`        — per-request CSP nonce required by base.html. #}
+
+{% block title %}Mail servers (BYOK){% endblock %}
+
+{% block logout_form %}{% include "classic/_logout_form.html" %}{% endblock %}
+
+{% block content %}
+  <style nonce="{{ csp_nonce }}">
+    /* TMAIL-380 — BYOK settings layout. Mirrors signup_servers and the
+       other settings pages so the surfaces look consistent. */
+    .byok-help {
+      color: var(--tm-muted);
+      margin: 0 0 1rem;
+    }
+    .byok-presets ul {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.25rem 0.5rem;
+      padding: 0;
+      list-style: none;
+      margin: 0.5rem 0;
+    }
+    .byok-presets a[aria-current="true"] {
+      font-weight: 700;
+    }
+    .byok-fields {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 0.75rem;
+      max-width: 36rem;
+    }
+    .byok-section {
+      margin: 1rem 0 2rem;
+      padding: 1rem;
+      border: 1px solid var(--tm-border);
+      border-radius: 4px;
+      background: var(--tm-bg-light);
+    }
+    .byok-section legend {
+      font-weight: 600;
+      padding: 0 0.5rem;
+    }
+    .byok-actions {
+      display: flex;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+      align-items: center;
+      margin-top: 1.5rem;
+    }
+    .byok-actions button {
+      margin: 0;
+    }
+    .byok-save-no-test {
+      margin-left: auto;
+    }
+    .byok-save-no-test button {
+      background: transparent;
+      color: var(--tm-charcoal-700);
+      border: 1px solid var(--tm-border);
+      text-decoration: underline;
+    }
+    .byok-crosslinks {
+      margin: 2rem 0 0;
+      padding-top: 1rem;
+      border-top: 1px solid var(--tm-border);
+    }
+    .byok-crosslinks h2 {
+      font-size: 1rem;
+      margin: 0 0 0.5rem;
+      color: var(--tm-muted);
+    }
+    .byok-crosslinks ul {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+    .byok-crosslinks li {
+      margin: 0.25rem 0;
+    }
+    .byok-password-note {
+      color: var(--tm-muted);
+      font-style: italic;
+    }
+  </style>
+
+  <h1>Mail servers</h1>
+
+  <p class="byok-help">
+    TASMail is a webmail UI for any IMAP/SMTP server. Edit your incoming
+    (IMAP) and outgoing (SMTP) server settings below. Use the
+    <strong>Test connection</strong> button to verify your credentials
+    before saving.
+  </p>
+
+  {% if let Some(msg) = success %}
+    <div class="alert alert-success" role="status">
+      <strong>{{ msg }}</strong>
+    </div>
+  {% endif %}
+
+  {% if let Some(msg) = error %}
+    <div class="alert alert-error" role="alert">
+      <strong>{{ msg }}</strong>
+    </div>
+  {% endif %}
+
+  <fieldset class="byok-presets">
+    <legend>Pick a provider <small>(optional auto-fill)</small></legend>
+    <ul>
+      {% for preset in presets %}
+        <li>
+          <a href="/classic/settings/byok?preset={{ preset.name }}"
+             {% if picked_name == preset.name %}aria-current="true"{% endif %}>
+            {{ preset.name }}
+          </a>
+        </li>
+      {% endfor %}
+      <li>
+        <a href="/classic/settings/byok"
+           {% if picked_name == "" %}aria-current="true"{% endif %}>
+          Custom / None of these
+        </a>
+      </li>
+    </ul>
+    {% if picked_hint != "" %}
+      <p><small>&#128161; {{ picked_hint }}</small></p>
+    {% endif %}
+  </fieldset>
+
+  {# Form 1 — Test connection. Posts to the dedicated /test endpoint
+     per the gap-analysis spec ("The 'Test' button submits the form to
+     a verify endpoint POST /classic/settings/byok/test"). Re-renders
+     the page with pass/fail banners and the user's input preserved. #}
+  <form method="post" action="/classic/settings/byok/test" autocomplete="off" novalidate>
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <input type="hidden" name="picked_name" value="{{ picked_name }}">
+
+    <fieldset class="byok-section" aria-labelledby="byok-imap-legend">
+      <legend id="byok-imap-legend">IMAP (incoming mail)</legend>
+
+      {% if let Some((ok, msg)) = imap_test %}
+        {% if ok %}
+          <div class="alert alert-success" role="status">
+            <strong>IMAP test passed:</strong> {{ msg }}
+          </div>
+        {% else %}
+          <div class="alert alert-error" role="alert">
+            <strong>IMAP test failed:</strong> {{ msg }}
+          </div>
+        {% endif %}
+      {% endif %}
+
+      <div class="byok-fields">
+        <div>
+          <label for="byok-imap-host">Server host</label>
+          <input type="text"
+                 id="byok-imap-host"
+                 name="imap_host"
+                 value="{{ imap_host }}"
+                 placeholder="imap.example.com"
+                 maxlength="512"
+                 required
+                 aria-required="true">
+        </div>
+
+        <div>
+          <label for="byok-imap-port">Port</label>
+          <input type="number"
+                 id="byok-imap-port"
+                 name="imap_port"
+                 value="{{ imap_port }}"
+                 min="1"
+                 max="65535"
+                 required
+                 aria-required="true">
+        </div>
+
+        <div>
+          <label for="byok-imap-encryption">Encryption</label>
+          <select id="byok-imap-encryption" name="imap_encryption" required aria-required="true">
+            <option value="ssl"{% if imap_encryption == "ssl" %} selected{% endif %}>SSL/TLS</option>
+            <option value="starttls"{% if imap_encryption == "starttls" %} selected{% endif %}>STARTTLS</option>
+            <option value="none"{% if imap_encryption == "none" %} selected{% endif %}>None (insecure)</option>
+          </select>
+        </div>
+
+        <div>
+          <label for="byok-imap-username">Username</label>
+          <input type="text"
+                 id="byok-imap-username"
+                 name="imap_username"
+                 value="{{ imap_username }}"
+                 placeholder="usually your full email address"
+                 maxlength="512"
+                 required
+                 aria-required="true">
+        </div>
+
+        <div>
+          <label for="byok-imap-password">Password / App Password</label>
+          {# PURPOSE: type=password per the gap-analysis spec. The input
+             NEVER carries a value= attribute — even after a failed
+             save / test we make the user retype rather than echo the
+             plaintext back into the rendered HTML. #}
+          <input type="password"
+                 id="byok-imap-password"
+                 name="imap_password"
+                 autocomplete="current-password"
+                 maxlength="1024"
+                 aria-describedby="byok-imap-password-help">
+          {% if imap_existing %}
+            <p id="byok-imap-password-help" class="byok-password-note">
+              <small>Leave blank to keep your saved password.</small>
+            </p>
+          {% else %}
+            <p id="byok-imap-password-help" class="byok-help">
+              <small>Required — type the password / app password your provider gave you.</small>
+            </p>
+          {% endif %}
+        </div>
+      </div>
+    </fieldset>
+
+    <fieldset class="byok-section" aria-labelledby="byok-smtp-legend">
+      <legend id="byok-smtp-legend">SMTP (outgoing mail)</legend>
+
+      {% if let Some((ok, msg)) = smtp_test %}
+        {% if ok %}
+          <div class="alert alert-success" role="status">
+            <strong>SMTP test passed:</strong> {{ msg }}
+          </div>
+        {% else %}
+          <div class="alert alert-error" role="alert">
+            <strong>SMTP test failed:</strong> {{ msg }}
+          </div>
+        {% endif %}
+      {% endif %}
+
+      <div class="byok-fields">
+        <div>
+          <label for="byok-smtp-host">Server host</label>
+          <input type="text"
+                 id="byok-smtp-host"
+                 name="smtp_host"
+                 value="{{ smtp_host }}"
+                 placeholder="smtp.example.com"
+                 maxlength="512"
+                 required
+                 aria-required="true">
+        </div>
+
+        <div>
+          <label for="byok-smtp-port">Port</label>
+          <input type="number"
+                 id="byok-smtp-port"
+                 name="smtp_port"
+                 value="{{ smtp_port }}"
+                 min="1"
+                 max="65535"
+                 required
+                 aria-required="true">
+        </div>
+
+        <div>
+          <label for="byok-smtp-encryption">Encryption</label>
+          <select id="byok-smtp-encryption" name="smtp_encryption" required aria-required="true">
+            <option value="ssl"{% if smtp_encryption == "ssl" %} selected{% endif %}>SSL/TLS</option>
+            <option value="starttls"{% if smtp_encryption == "starttls" %} selected{% endif %}>STARTTLS</option>
+            <option value="none"{% if smtp_encryption == "none" %} selected{% endif %}>None (insecure)</option>
+          </select>
+        </div>
+
+        <div>
+          <label for="byok-smtp-username">Username</label>
+          <input type="text"
+                 id="byok-smtp-username"
+                 name="smtp_username"
+                 value="{{ smtp_username }}"
+                 placeholder="usually your full email address"
+                 maxlength="512"
+                 required
+                 aria-required="true">
+        </div>
+
+        <div>
+          <label for="byok-smtp-password">Password / App Password</label>
+          <input type="password"
+                 id="byok-smtp-password"
+                 name="smtp_password"
+                 autocomplete="current-password"
+                 maxlength="1024"
+                 aria-describedby="byok-smtp-password-help">
+          {% if smtp_existing %}
+            <p id="byok-smtp-password-help" class="byok-password-note">
+              <small>Leave blank to keep your saved password.</small>
+            </p>
+          {% else %}
+            <p id="byok-smtp-password-help" class="byok-help">
+              <small>Required — type the password / app password your provider gave you.</small>
+            </p>
+          {% endif %}
+        </div>
+
+        <div>
+          <label for="byok-smtp-from">From address <small>(optional)</small></label>
+          <input type="email"
+                 id="byok-smtp-from"
+                 name="smtp_from_address"
+                 value="{{ smtp_from_address }}"
+                 maxlength="512"
+                 placeholder="defaults to SMTP username">
+        </div>
+      </div>
+    </fieldset>
+
+    <div class="byok-actions">
+      <button type="submit" name="action" value="test">Test connection</button>
+    </div>
+  </form>
+
+  {# Form 2 — Save. Posts to the canonical /classic/settings/byok
+     endpoint. The Save button is "gated" by the server: action=save is
+     rejected unless `tested_ok=1` (which the test endpoint flips on a
+     successful probe). The save-without-testing button uses
+     action=save_no_test which bypasses the gate. #}
+  <form method="post" action="/classic/settings/byok" autocomplete="off" novalidate>
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <input type="hidden" name="picked_name" value="{{ picked_name }}">
+    <input type="hidden" name="tested_ok" value="{{ tested_ok }}">
+    {# Mirror the fields into the save form so the values reach the
+       save handler on submit. Hidden so they don't clutter the layout
+       (the editable copies live in the test form above). #}
+    <input type="hidden" name="imap_host" value="{{ imap_host }}">
+    <input type="hidden" name="imap_port" value="{{ imap_port }}">
+    <input type="hidden" name="imap_username" value="{{ imap_username }}">
+    <input type="hidden" name="imap_encryption" value="{{ imap_encryption }}">
+    <input type="hidden" name="smtp_host" value="{{ smtp_host }}">
+    <input type="hidden" name="smtp_port" value="{{ smtp_port }}">
+    <input type="hidden" name="smtp_username" value="{{ smtp_username }}">
+    <input type="hidden" name="smtp_encryption" value="{{ smtp_encryption }}">
+    <input type="hidden" name="smtp_from_address" value="{{ smtp_from_address }}">
+    {# Passwords MUST be retyped if the user wants to change them. The
+       password fields live ONLY in the test form above. To save a
+       password change without testing, the user types into the test
+       form's password input THEN clicks "Save without testing" — but
+       because Form 1 and Form 2 are independent, this design instead
+       channels the "change my password" flow through the test+save
+       happy path, which is the safer default for credentialed rows. #}
+
+    <div class="byok-actions">
+      <button type="submit" name="action" value="save">Save settings</button>
+      <span class="byok-save-no-test">
+        <button type="submit" name="action" value="save_no_test"
+                aria-label="Save settings without running a connection test">
+          Save without testing
+        </button>
+      </span>
+    </div>
+  </form>
+
+  <section class="byok-crosslinks" aria-labelledby="byok-other-settings">
+    <h2 id="byok-other-settings">Other settings</h2>
+    <ul>
+      <li><a href="/classic/settings/signature">Signature</a></li>
+      <li><a href="/classic/settings/vacation">Vacation responder</a></li>
+      <li><a href="/classic/settings/password">Change password</a></li>
+      <li><a href="/classic/settings/sessions">Active sessions</a></li>
+    </ul>
+  </section>
+{% endblock %}

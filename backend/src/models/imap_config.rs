@@ -141,6 +141,43 @@ impl ImapConfiguration {
         .await
     }
 
+    /// Added (TMAIL-380): Partial update of an existing IMAP config row.
+    /// Every `Option` argument is COALESCE'd against the existing column so
+    /// the BYOK settings form can leave the password field blank and keep
+    /// the encrypted_password as-is. Returns the freshly-loaded row on
+    /// success, or `None` when no row matches `(id, user_id)` — same shape
+    /// as `SmtpConfiguration::update`.
+    pub async fn update(
+        pool: &PgPool,
+        id: Uuid,
+        user_id: Uuid,
+        host: Option<&str>,
+        port: Option<i32>,
+        username: Option<&str>,
+        encrypted_password: Option<&str>,
+        encryption: Option<&str>,
+    ) -> Result<Option<Self>, sqlx::Error> {
+        sqlx::query_as::<_, ImapConfiguration>(
+            "UPDATE imap_configurations SET \
+                host = COALESCE($3, host), \
+                port = COALESCE($4, port), \
+                username = COALESCE($5, username), \
+                encrypted_password = COALESCE($6, encrypted_password), \
+                encryption = COALESCE($7, encryption), \
+                updated_at = NOW() \
+             WHERE id = $1 AND user_id = $2 RETURNING *",
+        )
+        .bind(id)
+        .bind(user_id)
+        .bind(host)
+        .bind(port)
+        .bind(username)
+        .bind(encrypted_password)
+        .bind(encryption)
+        .fetch_optional(pool)
+        .await
+    }
+
     pub async fn delete(pool: &PgPool, user_id: Uuid, id: Uuid) -> Result<bool, sqlx::Error> {
         let result = sqlx::query("DELETE FROM imap_configurations WHERE id = $1 AND user_id = $2")
             .bind(id)
