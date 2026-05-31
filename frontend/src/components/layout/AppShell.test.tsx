@@ -53,27 +53,12 @@ vi.mock('../mail/Composer', () => ({
 vi.mock('../mail/SearchResults', () => ({
   SearchResults: () => <div data-testid="search-results">SearchResults</div>,
 }));
-vi.mock('../settings/SignatureManager', () => ({
-  SignatureManager: () => <div data-testid="signature-manager">SignatureManager</div>,
-}));
 vi.mock('../settings/ContactManager', () => ({
   ContactManager: () => <div data-testid="contact-manager">ContactManager</div>,
 }));
-vi.mock('../settings/TwoFactorManager', () => ({
-  TwoFactorManager: () => <div data-testid="two-factor-manager">TwoFactorManager</div>,
-}));
-vi.mock('../settings/VacationResponder', () => ({
-  VacationResponder: () => <div data-testid="vacation-responder">VacationResponder</div>,
-}));
-vi.mock('../settings/GroupManager', () => ({
-  GroupManager: () => <div data-testid="group-manager">GroupManager</div>,
-}));
-vi.mock('../settings/MigrationManager', () => ({
-  MigrationManager: () => <div data-testid="migration-manager">MigrationManager</div>,
-}));
-vi.mock('../settings/LowBandwidthSettings', () => ({
-  LowBandwidthSettings: () => <div data-testid="low-bandwidth">LowBandwidthSettings</div>,
-}));
+// TMAIL-399: TwoFactor, Signatures, Vacation, Groups, Migration, LowBandwidth
+// no longer mount via AppShell's viewMode ladder — they live in SettingsHub
+// under /app/settings/* and are tested in SettingsHub.test.tsx.
 
 function wrapper({ children }: { children: React.ReactNode }) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -142,19 +127,17 @@ describe('AppShell', () => {
     expect(screen.getByTestId('sidebar')).toBeInTheDocument();
   });
 
-  // Added: View mode routing tests
+  // Added: View mode routing tests.
+  // TMAIL-399: managers that moved to SettingsHub (Two-Factor, Push Devices,
+  // Signatures, Vacation, Filters, Spam, SMTP, POP3, DAV, Migration, Shared
+  // Files, Groups, AI Config, Ollama, Low Bandwidth) are NOT in this list —
+  // they're covered by SettingsHub.test.tsx now.
   const viewModeTests = [
     { viewMode: 'list', testId: 'message-list' },
     { viewMode: 'reader', testId: 'message-view' },
     { viewMode: 'compose', testId: 'composer' },
     { viewMode: 'search', testId: 'search-results' },
-    { viewMode: 'signatures', testId: 'signature-manager' },
     { viewMode: 'contacts', testId: 'contact-manager' },
-    { viewMode: 'security', testId: 'two-factor-manager' },
-    { viewMode: 'vacation', testId: 'vacation-responder' },
-    { viewMode: 'groups', testId: 'group-manager' },
-    { viewMode: 'migration', testId: 'migration-manager' },
-    { viewMode: 'bandwidth', testId: 'low-bandwidth' },
   ];
 
   // Changed (TMAIL-259): every non-list/reader view is now React.lazy() so
@@ -177,5 +160,21 @@ describe('AppShell', () => {
     expect(screen.queryByTestId('message-view')).not.toBeInTheDocument();
     expect(screen.queryByTestId('composer')).not.toBeInTheDocument();
     expect(screen.queryByTestId('search-results')).not.toBeInTheDocument();
+  });
+
+  // TMAIL-399: the content prop overrides the viewMode ladder. /app/settings/*
+  // uses this to mount SettingsHub inside the same chrome.
+  it('renders content prop instead of viewMode content when provided', () => {
+    mockViewMode.mockReturnValue('list');
+    render(
+      <AppShell
+        onLogout={mockLogout}
+        content={<div data-testid="route-override">Override</div>}
+      />,
+      { wrapper },
+    );
+    expect(screen.getByTestId('route-override')).toBeInTheDocument();
+    // The viewMode-driven MessageList must NOT render when content is provided.
+    expect(screen.queryByTestId('message-list')).not.toBeInTheDocument();
   });
 });

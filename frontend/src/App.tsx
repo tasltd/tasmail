@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect } from 'react';
+import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from './hooks/useAuth';
@@ -30,6 +31,11 @@ const UsersManager = lazy(() => import('./components/admin/UsersManager').then((
 const WarmupManager = lazy(() => import('./components/admin/WarmupManager').then((m) => ({ default: m.WarmupManager })));
 const UsageBillingPage = lazy(() => import('./components/billing/UsageBillingPage').then((m) => ({ default: m.UsageBillingPage })));
 const BookingPage = lazy(() => import('./components/booking/BookingPage').then((m) => ({ default: m.BookingPage })));
+// Added (TMAIL-399): SettingsHub mounts under /app/settings/* and replaces the
+// scattered viewMode-driven managers (TwoFactor, Signatures, Filters, etc.).
+// Lazy-loaded so the initial mailbox bundle stays slim — the hub itself then
+// lazy-loads each section component out of settings-hub-registry.ts.
+const SettingsHub = lazy(() => import('./components/settings/SettingsHub').then((m) => ({ default: m.SettingsHub })));
 
 // Added (TMAIL-259): shared Suspense fallback for the route-level lazy splits.
 function RouteLoading() {
@@ -70,7 +76,10 @@ function LoginRoute() {
 }
 
 // Added: The authenticated mailbox app. Logout returns the user to the public landing page.
-function AppRoute() {
+// Changed (TMAIL-399): accept an optional `content` override so /app/settings/*
+// can reuse AppShell's chrome (Sidebar + TopBar + offline banner) while
+// rendering SettingsHub in the main area instead of the viewMode ladder.
+function AppRoute({ content }: { content?: ReactNode } = {}) {
   const { logout } = useAuth();
   const navigate = useNavigate();
   return (
@@ -79,6 +88,7 @@ function AppRoute() {
         await logout();
         navigate('/', { replace: true });
       }}
+      content={content}
     />
   );
 }
@@ -116,6 +126,17 @@ function AppContent() {
           element={
             <RequireAuth>
               <OnboardingWizard />
+            </RequireAuth>
+          }
+        />
+        {/* TMAIL-399: Gmail-style Settings hub. More specific than /app/*, so
+            React Router ranks it ahead. AppShell keeps the chrome; SettingsHub
+            takes over the main content area. */}
+        <Route
+          path="/app/settings/*"
+          element={
+            <RequireAuth>
+              <AppRoute content={<SettingsHub />} />
             </RequireAuth>
           }
         />
