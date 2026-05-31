@@ -191,6 +191,50 @@
       font-size: 0.875rem;
       border-top: 1px solid var(--tm-border);
     }
+    /* TMAIL-387 — Footer language picker. Sits to the right of the
+       quota indicator on wide viewports, wraps below on narrow. The
+       <select> + button are sized to match nav text — the picker is a
+       housekeeping control, not a primary CTA. No JS — the form POSTs
+       to /classic/locale which sets the tasmail_classic_locale cookie
+       and 303s back. */
+    .lang-picker {
+      display: inline-flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.25rem 0.5rem;
+      margin: 0 0 0.5rem 0;
+      color: var(--tm-muted);
+      font-size: 0.8125rem;
+    }
+    .lang-picker label {
+      display: inline;
+      margin: 0;
+      font-weight: 600;
+    }
+    .lang-picker select {
+      display: inline-block;
+      width: auto;
+      max-width: 12rem;
+      margin: 0;
+      padding: 0.2rem 0.4rem;
+      border: 1px solid var(--tm-border);
+      border-radius: 3px;
+      background: var(--tm-surface);
+      font-size: 0.8125rem;
+    }
+    .lang-picker button {
+      margin: 0;
+      padding: 0.2rem 0.6rem;
+      font-size: 0.8125rem;
+    }
+    @media (prefers-color-scheme: dark) {
+      .lang-picker { color: #cbd5e1; }
+      .lang-picker select {
+        background: #0f172a;
+        border-color: #475569;
+        color: #e2e8f0;
+      }
+    }
     /* TMAIL-384 — quota indicator in the footer ("Using X of Y · NN%").
        Lives in base.html so the styling is identical across every
        authenticated page (inbox, message, compose, settings…). The
@@ -427,6 +471,15 @@
        loader returns `None` (Redis + DB both down), the partial renders
        nothing — page still loads, just without the indicator. #}
     {% block quota_indicator %}{% endblock %}
+    {# TMAIL-387 — Footer language picker. Pulled in from a partial
+       (`_language_picker.html`) so the option list lives in ONE place
+       and every page rendering base.html — authenticated or anonymous
+       — gets the same picker. No per-template field plumbing required;
+       no JavaScript. The form POSTs to /classic/locale which writes
+       the `tasmail_classic_locale` cookie and 303s back. Option labels
+       use NATIVE-script names (Twi, Eʋegbe, Gã, Hausa) so a speaker
+       recognises their own. #}
+    {% include "classic/_language_picker.html" %}
     <small>TASMail Classic · no-JavaScript surface · works in lynx, w3m, and any HTML5 browser.</small>
   </footer>
 </body>

@@ -1,0 +1,38 @@
+{# TMAIL-387 — Footer language picker partial.
+
+   Self-contained: the `<option>` list is hard-coded so this partial
+   renders identically on every page (authenticated or not) without
+   needing a template field for the locale list. The currently-selected
+   language is pulled from the (optional) `locale: Locale` field on the
+   outer template — when it's absent (anonymous pages that don't yet
+   thread locale through their template struct) the dropdown shows
+   English as the default-selected option, which matches the resolver's
+   fallback. No JavaScript: the form submits via POST and the server
+   sets the `tasmail_classic_locale` cookie + 303-redirects back.
+
+   `return_to` is filled by every authenticated handler with the path
+   the user was on so the redirect lands them on the same page they
+   triggered the change from. Anonymous pages (login / signup / CSRF
+   error) leave the field empty, and the handler falls back to
+   /classic/folders/INBOX (which the index redirect bounces back to
+   /classic/login for anonymous users — so the user lands on the
+   sign-in page in their newly-picked language).
+
+   Accessibility:
+     * `<label for="…">` ties the visible label to the `<select>`.
+     * The whole form sits inside the footer landmark so a screen
+       reader announces "language picker" before the options.
+     * Each `<option>` carries the language name in its NATIVE script
+       so a Twi-speaking user sees "Twi" not "Akan". #}
+
+<form class="lang-picker" method="post" action="/classic/locale">
+  <label for="classic-lang-picker">Language</label>
+  <select id="classic-lang-picker" name="locale">
+    <option value="en">English</option>
+    <option value="tw">Twi</option>
+    <option value="ee">Eʋegbe</option>
+    <option value="ga">Gã</option>
+    <option value="ha">Hausa</option>
+  </select>
+  <button type="submit">Set language</button>
+</form>

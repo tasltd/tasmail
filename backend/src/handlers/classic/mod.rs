@@ -46,6 +46,19 @@ pub use nonce::CspNonce;
 pub mod context;
 pub use context::{load_quota_indicator, QuotaIndicator};
 
+// Added (TMAIL-387): i18n module — Locale enum, JSON-dictionary loading,
+// Accept-Language + cookie resolution, and the `t("key")` Askama filter.
+// Five locales supported (English + Twi, Ewe, Ga, Hausa — same set the
+// mobile app ships in mobile/lib/l10n/). The companion `locale` module
+// below owns the POST /classic/locale handler that writes the cookie.
+pub mod i18n;
+pub use i18n::{resolve_locale, translate, Locale};
+
+// Added (TMAIL-387): POST /classic/locale handler for the footer language
+// picker. Lives on the PUBLIC sub-router so anonymous pages (login,
+// signup, CSRF rejection, 404) can switch languages too.
+pub mod locale;
+
 // Added (TMAIL-357): Skeleton auth helpers — generate_csrf_token,
 // create_session_and_cookie, destroy_session_and_cookie. The actual route
 // handlers for /classic/login + /classic/logout land in TMAIL-359 / TMAIL-360
@@ -325,6 +338,16 @@ pub fn router(state: AppState) -> Router<AppState> {
             "/classic/password-reset/confirm",
             get(password_reset::get_confirm).post(password_reset::post_confirm),
         )
+        // Added (TMAIL-387): POST /classic/locale — writes the locale
+        // cookie + 303s back. Lives on the PUBLIC sub-router so the
+        // language picker in the footer works on every page (login,
+        // signup, CSRF rejection, 404). The handler validates the
+        // posted locale code + sanitises the optional return_to to
+        // prevent the picker from being weaponised as an open redirect.
+        // No CSRF token required — locale change has no security
+        // impact and the cookie's `SameSite=Lax` blocks cross-origin
+        // POSTs anyway.
+        .route("/classic/locale", post(locale::post_locale))
         // Added (TMAIL-360): authenticated sub-router for state-changing
         // POST endpoints that need a verified session AND CSRF protection.
         // Logout is the first inhabitant; inbox/compose/settings join in
@@ -921,6 +944,82 @@ mod tests {
             body.contains(".site-nav-end button"),
             "base layout must declare the .site-nav-end button styling so \
              the logout form blends with surrounding nav links: {body}"
+        );
+    }
+
+    // ----- TMAIL-387: footer language picker -----
+    //
+    // The picker is hard-coded directly into base.html (no per-template
+    // field plumbing required) so EVERY page that extends base.html —
+    // authenticated AND anonymous — renders it. These tests pin the
+    // structure down so a future refactor of base.html doesn't quietly
+    // drop the picker on, say, the login page.
+
+    #[test]
+    fn base_layout_renders_footer_language_picker() {
+        let body = render_404("/classic/x");
+        // Form must POST to /classic/locale and live inside the footer.
+        let footer_at = body.find("<footer").expect("footer landmark present");
+        let footer_end = body[footer_at..]
+            .find("</footer>")
+            .map(|rel| footer_at + rel)
+            .expect("footer closing tag present");
+        let footer_html = &body[footer_at..footer_end];
+        assert!(
+            footer_html.contains("action=\"/classic/locale\""),
+            "footer must contain language-picker form action: {footer_html}"
+        );
+        assert!(
+            footer_html.contains("method=\"post\""),
+            "language picker must POST (not GET): {footer_html}"
+        );
+        assert!(
+            footer_html.contains("name=\"locale\""),
+            "language picker select must use name=locale: {footer_html}"
+        );
+    }
+
+    #[test]
+    fn base_layout_language_picker_has_every_supported_locale() {
+        // Lock the option list down to the 5 locales i18n.rs supports —
+        // a missing locale here means the picker silently dropped a
+        // language even though the dictionary exists.
+        let body = render_404("/classic/x");
+        for (code, native) in [
+            ("en", "English"),
+            ("tw", "Twi"),
+            ("ee", "Eʋegbe"),
+            ("ga", "Gã"),
+            ("ha", "Hausa"),
+        ] {
+            assert!(
+                body.contains(&format!("value=\"{code}\"")),
+                "language picker must include option value={code}: not found"
+            );
+            assert!(
+                body.contains(native),
+                "language picker must show native name '{native}' for {code}"
+            );
+        }
+    }
+
+    #[test]
+    fn base_layout_language_picker_is_keyboard_accessible() {
+        // <label for=...> tied to the <select id=...> — the only way a
+        // screen-reader user knows what the dropdown does. Pin both
+        // sides of the binding.
+        let body = render_404("/classic/x");
+        assert!(
+            body.contains("for=\"classic-lang-picker\""),
+            "language picker must have a <label for> binding"
+        );
+        assert!(
+            body.contains("id=\"classic-lang-picker\""),
+            "language picker <select> must carry the matching id"
+        );
+        assert!(
+            body.contains("type=\"submit\""),
+            "language picker must expose a submit button (no JS auto-submit)"
         );
     }
 
