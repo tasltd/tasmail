@@ -1,12 +1,14 @@
 // Added (TMAIL-327): Native Modern UI signup screen at /#/signup.
 // Calls POST /api/auth/signup, which returns a JWT pair and creates the
-// account. After successful signup we bounce the user to the classic
-// /onboarding wizard — the BYOK IMAP/SMTP onboarding flow has not been
-// ported to the Modern UI yet, so the classic flow is still the correct
-// place to attach a mail server.
+// account.
+//
+// TMAIL-346: After successful signup we bounce the user to the native
+// Modern UI BYOK onboarding wizard at /#/onboarding (was: full-page nav
+// to the classic /onboarding). The Modern UI now ships its own wizard so
+// signup → mailbox-attach stays inside /modern/index.html.
 import { useState } from 'react';
 import type * as React from 'react';
-import { Link } from 'react-router';
+import { Link, useNavigate } from 'react-router';
 import { Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -17,6 +19,7 @@ import { ApiError } from '@/api/client';
 import { AuthLayout } from './AuthLayout';
 
 export function SignupPage() {
+  const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [password, setPassword] = useState('');
@@ -48,9 +51,9 @@ export function SignupPage() {
         password,
         display_name: displayName.trim() || undefined,
       });
-      // BYOK onboarding (attach IMAP/SMTP server) only lives in the classic
-      // SPA today — full-page navigation drops the new user there.
-      window.location.href = '/onboarding';
+      // TMAIL-346: BYOK onboarding now lives natively in the Modern UI at
+      // /#/onboarding — stay inside /modern/index.html.
+      navigate('/onboarding', { replace: true });
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
         setError('An account with that email already exists.');

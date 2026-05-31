@@ -16,6 +16,7 @@ import { DEFAULT_SETTINGS_TAB } from '@/features/settings/tabs';
 import { LoginPage } from '@/features/auth/LoginPage';
 import { SignupPage } from '@/features/auth/SignupPage';
 import { ForgotPasswordPage } from '@/features/auth/ForgotPasswordPage';
+import { OnboardingWizard } from '@/features/onboarding/OnboardingWizard';
 
 // Added (TMAIL-327): the set of routes that do NOT require a valid JWT.
 // AuthGate consults this list to decide whether to render the children
@@ -27,6 +28,10 @@ export const router = createHashRouter([
   { path: "/login", Component: LoginPage },
   { path: "/signup", Component: SignupPage },
   { path: "/forgot-password", Component: ForgotPasswordPage },
+  // TMAIL-346: BYOK onboarding lives outside the Root shell (no sidebar /
+  // navbar — full-screen wizard) but stays behind AuthGate so it only runs
+  // when the user has just signed in.
+  { path: "/onboarding", Component: OnboardingWizard },
   {
     path: "/",
     Component: Root,

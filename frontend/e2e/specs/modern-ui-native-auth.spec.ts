@@ -13,7 +13,8 @@
  *   2. The native login form posts to /api/auth/login and lands the user on
  *      /#/ (Inbox) — the JWT is reused for subsequent API calls.
  *   3. The native signup form posts to /api/auth/signup and bounces to
- *      /onboarding (BYOK wizard still lives in the classic SPA).
+ *      /#/onboarding — the BYOK wizard now lives natively in the Modern UI
+ *      (TMAIL-346), so signup → mailbox-attach stays inside /modern/.
  *   4. Forgot-password is reachable from the login screen.
  *   5. The explicit "Use classic login" link is the only way to fall back
  *      to the classic SPA.
@@ -205,8 +206,10 @@ test.describe('TMAIL-327 native Modern UI auth', () => {
     await takeScreenshot(page, 'modern-ui-native-auth/06-signup-filled');
     await page.click('button[type="submit"]:has-text("Create account")');
 
-    // BYOK onboarding lives in the classic SPA, so signup ends with a
-    // full-page nav to /onboarding.
+    // TMAIL-346: signup now stays inside /modern/index.html and routes via
+    // HashRouter to #/onboarding (native wizard). The regex matches both the
+    // legacy /onboarding URL and the new #/onboarding hash route so this
+    // assertion is robust to either backend.
     await page.waitForURL(/\/onboarding/i, { timeout: 30_000 });
     await takeScreenshot(page, 'modern-ui-native-auth/07-after-signup');
 
