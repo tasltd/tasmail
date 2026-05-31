@@ -79,3 +79,7 @@ pub mod ldap_service;
 // admin endpoint should call audit::audit_admin_action so the audit_log table
 // accumulates a complete compliance trail.
 pub mod audit;
+// Added (TMAIL-363): Strict-allowlist HTML sanitiser shared by the Classic UI
+// message read view and any future server-side render path. TMAIL-364 will
+// extend it with remote-image gating + CID rewriting on top of the same module.
+pub mod html_sanitizer;

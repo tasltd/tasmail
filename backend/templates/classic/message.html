@@ -1,0 +1,316 @@
+{% extends "classic/base.html" %}
+
+{# TMAIL-363 — Message read view for the /classic no-JS surface.
+
+   Layout (top → bottom):
+     * Back-to-folder link.
+     * Semantic <dl> header block: From / To / Cc / Subject / Date.
+       Cc row is omitted entirely when the envelope's Cc list is empty.
+     * Body:
+         - text/html → already sanitised by services::html_sanitizer,
+           dropped in with `{{ body.html()|safe }}`.
+         - text/plain → wrapped in `<pre>` so newlines + monospace layout
+           survive.
+         - neither → empty-state notice.
+     * Attachment list (only when there ARE attachments).
+     * Action button row — Reply / Reply-All / Forward as <a> links into
+       compose, Delete as its OWN POST <form> with CSRF, and disabled
+       placeholders for Move-to-folder / Star / Mark-unread (P1 follow-ups).
+
+   Required template context (set by `handlers::classic::message::get_message`):
+     * `current_folder`       — display name (e.g. INBOX)
+     * `current_folder_href`  — URL-encoded segment for links / form actions
+     * `uid`                  — message UID
+     * `subject`              — pre-cleaned, "(no subject)" substituted
+     * `from`, `to`, `cc`     — pre-joined display strings (cc="" = omit row)
+     * `date`                 — display-formatted Date header ("" = omit row)
+     * `body: BodyRendering`  — Html(String) | Text(String) | Empty
+     * `attachments: Vec<AttachmentRow>` — empty vec = omit section
+     * `reply_href` / `reply_all_href` / `forward_href` — compose links
+     * `delete_action`        — POST endpoint for the Delete form
+     * `csrf_token`           — threaded into Delete form + logout partial
+     * `csp_nonce`            — required by base.html #}
+
+{% block title %}{{ subject }} · {{ current_folder }}{% endblock %}
+
+{% block logout_form %}{% include "classic/_logout_form.html" %}{% endblock %}
+
+{% block content %}
+  <style nonce="{{ csp_nonce }}">
+    /* Read-view layout. Inherits base.html palette tokens. */
+    .msg-back {
+      display: inline-block;
+      margin: 0 0 0.75rem;
+      font-size: 0.875rem;
+    }
+    .msg-headers {
+      margin: 0 0 1rem;
+      padding: 0.75rem 1rem;
+      background: var(--tm-bg-light);
+      border: 1px solid var(--tm-border);
+      border-radius: 4px;
+    }
+    .msg-headers dt {
+      float: left;
+      clear: left;
+      width: 5rem;
+      font-weight: 700;
+      color: var(--tm-muted);
+      padding: 0.125rem 0;
+    }
+    .msg-headers dd {
+      margin: 0 0 0 5rem;
+      padding: 0.125rem 0;
+      color: var(--tm-charcoal-900);
+      word-break: break-word;
+    }
+    .msg-headers dl::after {
+      content: "";
+      display: block;
+      clear: both;
+    }
+    .msg-subject {
+      margin: 0 0 0.75rem;
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: var(--tm-charcoal-900);
+      word-break: break-word;
+    }
+    /* Body block. Constrain width so 1000-char-per-line HTML emails
+       wrap readably; keep tables full-width inside their own scroll. */
+    .msg-body {
+      margin: 0 0 1.5rem;
+      padding: 0.75rem 0;
+      line-height: 1.5;
+      word-wrap: break-word;
+    }
+    .msg-body img {
+      max-width: 100%;
+      height: auto;
+    }
+    .msg-body table {
+      max-width: 100%;
+    }
+    .msg-text {
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      background: transparent;
+      border: 0;
+      padding: 0;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.9375rem;
+    }
+    .msg-empty {
+      padding: 1rem;
+      text-align: center;
+      color: var(--tm-muted);
+      background: var(--tm-bg-light);
+      border: 1px dashed var(--tm-border);
+      border-radius: 4px;
+    }
+    /* Attachment list. <ul> with one <li> per attachment — each is a
+       download <a> with content-type + size as muted secondary text. */
+    .attachments {
+      margin: 0 0 1.5rem;
+      padding: 0.75rem 1rem;
+      background: var(--tm-bg-light);
+      border: 1px solid var(--tm-border);
+      border-radius: 4px;
+    }
+    .attachments h2 {
+      margin: 0 0 0.5rem;
+      font-size: 0.875rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--tm-muted);
+    }
+    .attachments ul {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+    }
+    .attachment-row {
+      padding: 0.25rem 0;
+      border-bottom: 1px solid var(--tm-border);
+    }
+    .attachment-row:last-child { border-bottom: 0; }
+    .attachment-row a {
+      font-weight: 600;
+      text-decoration: underline;
+    }
+    .attachment-meta {
+      color: var(--tm-muted);
+      font-size: 0.875rem;
+      margin-left: 0.5rem;
+    }
+    /* Action button row — each button is its OWN <form>, laid out
+       horizontally with flex. Disabled placeholders for the P1 actions
+       render at the same visual weight as the live actions so the layout
+       doesn't shift when they get hydrated. */
+    .msg-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      align-items: center;
+      margin: 1.5rem 0 0;
+      padding-top: 1rem;
+      border-top: 1px solid var(--tm-border);
+    }
+    .msg-actions form {
+      display: inline;
+      margin: 0;
+    }
+    .msg-actions a.action-button,
+    .msg-actions button {
+      display: inline-block;
+      padding: 0.4rem 0.85rem;
+      margin: 0;
+      font-size: 0.9375rem;
+      border-radius: 3px;
+      text-decoration: none;
+      cursor: pointer;
+    }
+    .msg-actions a.action-button {
+      background: var(--tm-surface);
+      color: var(--tm-link);
+      border: 1px solid var(--tm-border);
+    }
+    .msg-actions a.action-button:hover {
+      background: var(--tm-bg-light);
+      text-decoration: underline;
+    }
+    .msg-actions button.danger {
+      background: var(--tm-danger);
+      color: #ffffff;
+      border: 1px solid var(--tm-danger);
+    }
+    .msg-actions button.secondary {
+      background: var(--tm-surface);
+      color: var(--tm-link);
+      border: 1px solid var(--tm-border);
+    }
+    .msg-actions button:disabled,
+    .msg-actions select:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .msg-actions select {
+      padding: 0.4rem 0.5rem;
+      font-size: 0.9375rem;
+      max-width: 12rem;
+      width: auto;
+      margin: 0;
+    }
+    .msg-actions .stub-note {
+      color: var(--tm-muted);
+      font-size: 0.75rem;
+      margin-left: auto;
+    }
+    @media (max-width: 36em) {
+      .msg-headers dt { float: none; width: auto; }
+      .msg-headers dd { margin-left: 0; }
+    }
+  </style>
+
+  <p class="msg-back">
+    <a href="/classic/folders/{{ current_folder_href|safe }}">&larr; Back to {{ current_folder }}</a>
+  </p>
+
+  <h1 class="msg-subject">{{ subject }}</h1>
+
+  {# ───────── Semantic header block ───────── #}
+  <section class="msg-headers" aria-label="Message headers">
+    <dl>
+      <dt>From</dt>
+      <dd>{{ from }}</dd>
+
+      <dt>To</dt>
+      <dd>{{ to }}</dd>
+
+      {% if !cc.is_empty() %}
+        <dt>Cc</dt>
+        <dd>{{ cc }}</dd>
+      {% endif %}
+
+      <dt>Subject</dt>
+      <dd>{{ subject }}</dd>
+
+      {% if !date.is_empty() %}
+        <dt>Date</dt>
+        <dd>{{ date }}</dd>
+      {% endif %}
+    </dl>
+  </section>
+
+  {# ───────── Body ───────── #}
+  <section class="msg-body" aria-label="Message body">
+    {% if body.is_html() %}
+      {# Pre-sanitised by services::html_sanitizer::sanitize_email_html —
+         strict allowlist already stripped <script>, inline events,
+         javascript:/vbscript:/non-image data: URLs, <iframe>, <form>,
+         <base>, <style>, etc. Safe to render with |safe. #}
+      {{ body.html()|safe }}
+    {% else if body.is_text() %}
+      <pre class="msg-text">{{ body.text() }}</pre>
+    {% else %}
+      <p class="msg-empty">(This message has no readable body. It may consist only of attachments.)</p>
+    {% endif %}
+  </section>
+
+  {# ───────── Attachments (only when present) ───────── #}
+  {% if !attachments.is_empty() %}
+    <section class="attachments" aria-labelledby="attachments-heading">
+      <h2 id="attachments-heading">Attachments</h2>
+      <ul>
+        {% for att in attachments %}
+          <li class="attachment-row">
+            <a href="{{ att.download_href }}" download>{{ att.filename }}</a>
+            <span class="attachment-meta">{{ att.content_type }} &middot; {{ att.size_display }}</span>
+          </li>
+        {% endfor %}
+      </ul>
+    </section>
+  {% endif %}
+
+  {# ───────── Action button row ─────────
+     Each action is its own <form> so the CSRF check on each is
+     independent — see handler module comment for the rationale.
+     Reply / Reply-All / Forward are <a> links into the compose
+     endpoint (idempotent navigation, no state change). Delete is a
+     POST. Star / Mark-unread / Move-to-folder are disabled
+     placeholders for P1 follow-ups (TMAIL-377 / TMAIL-376 / TMAIL-380). #}
+  <div class="msg-actions" role="group" aria-label="Message actions">
+    <a class="action-button" href="{{ reply_href }}">Reply</a>
+    <a class="action-button" href="{{ reply_all_href }}">Reply all</a>
+    <a class="action-button" href="{{ forward_href }}">Forward</a>
+
+    <form method="post" action="{{ delete_action }}">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <button type="submit" class="danger">Delete</button>
+    </form>
+
+    {# P1 #17 — Star toggle. Placeholder until TMAIL-377. #}
+    <form method="post" action="">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <button type="submit" class="secondary" disabled>Star</button>
+    </form>
+
+    {# P1 #16 — Mark unread. Placeholder until TMAIL-376. #}
+    <form method="post" action="">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <button type="submit" class="secondary" disabled>Mark unread</button>
+    </form>
+
+    {# P1 #18 — Move-to-folder dropdown. Placeholder until TMAIL-380
+       hydrates the option list from list_folders. #}
+    <form method="post" action="">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <label class="visually-hidden" for="move-target">Move to folder</label>
+      <select id="move-target" name="target_folder" disabled>
+        <option value="">Move to&hellip;</option>
+      </select>
+    </form>
+
+    <span class="stub-note">Star / Mark-unread / Move arrive in a follow-up release.</span>
+  </div>
+{% endblock %}

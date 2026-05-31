@@ -77,6 +77,14 @@ pub mod totp_challenge;
 // POST a follow-up task will add to this same path).
 pub mod folder;
 
+// Added (TMAIL-363): GET /classic/folders/{folder}/messages/{uid} — the
+// message read view. Mounts on the authenticated sub-router so it inherits
+// classic_session_middleware + classic_csrf_middleware (no-op on GET; the
+// Delete/Star/Mark-unread/Move-to action forms will POST to siblings of
+// this route in P0 #13 + P1 #16/#17/#18 and the CSRF layer is already
+// wired in for those follow-ups).
+pub mod message;
+
 // NAME: Session cookie name shared with the Classic UI auth handler that
 // lands in TMAIL-357 (P0 #3). The scaffold only needs to *detect* presence;
 // the cookie value is opaque here and validated later by the dedicated
@@ -198,6 +206,16 @@ fn authenticated_router(state: AppState) -> Router<AppState> {
         // is already layered below, so adding POST later is a one-line
         // change with no boilerplate to update.
         .route("/classic/folders/{folder}", get(folder::get_folder))
+        // Added (TMAIL-363): message read view. GET-only; the action
+        // buttons rendered by the read view (Delete, Star, Mark-unread,
+        // Move-to-folder) will POST to sibling routes that follow-up
+        // P0 #13 + P1 tasks add to this same sub-router — the CSRF
+        // middleware is already in scope so those land as one-line
+        // route additions with no boilerplate to update.
+        .route(
+            "/classic/folders/{folder}/messages/{uid}",
+            get(message::get_message),
+        )
         // Inner layer: CSRF check on state-changing methods. Runs AFTER
         // the session middleware on the request side, so the session row
         // (carrying the expected token) is in extensions when it executes.

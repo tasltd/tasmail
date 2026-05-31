@@ -91,6 +91,15 @@ ldap3 = { version = "0.12", default-features = false, features = ["tls-rustls", 
 # `docs/research/askama-axum-integration.md`.
 askama = "0.13"
 
+# Added (TMAIL-363): Strict-allowlist HTML sanitiser for Classic UI email
+# rendering. Used by `services::html_sanitizer::sanitize_email_html`. Picked
+# over `scraper` / `kuchikiki` because ammonia ships a pre-baked
+# "safe-for-email" config (no <script>, no inline event handlers,
+# javascript:/data: URLs blocked) and is the same crate the gap analysis
+# (`docs/gap-analysis/classic-ui.md` #10) called out. TMAIL-364 will expand
+# the wrapper with remote-image gating; the dep itself doesn't need to change.
+ammonia = "4"
+
 # Added: DLP milter daemon for the optional self-host Postfix deployment (TMAIL-108)
 [[bin]]
 name = "dlp_milter"
