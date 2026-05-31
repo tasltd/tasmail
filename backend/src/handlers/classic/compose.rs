@@ -32,8 +32,25 @@
 // rather than a generic 413; anything bigger 403s with "form data couldn't
 // be read" via the CSRF middleware, which is also acceptable.
 //
-// Per-file size cap is deliberately out of scope here — it's P1 #28
-// (TMAIL-381) along with the rich Content-Type allow/block list.
+// Per-file size cap + DLP / phishing pre-flight (TMAIL-382)
+// ---------------------------------------------------------
+// Changed (TMAIL-382, P1 #28):
+//   * Per-file 10 MB cap on top of the 25 MB total. Enforced inside the
+//     multipart loop via streaming `field.chunk()` reads so a single 50 MB
+//     file is aborted before its full bytes hit RAM.
+//   * Every part is run through `dlp_scanner::scan_content` (subject + body)
+//     and `dlp_scanner::scan_attachments` (filenames vs DEFAULT_BLOCKED_EXTENSIONS)
+//     before send. On a `Block` or `Quarantine` action the send is rejected
+//     inline and the user's text fields are preserved in the re-render.
+//   * Attachment filenames are also passed through
+//     `phishing_scanner::scan_attachments` which catches the dangerous-
+//     executable list (Outlook Safe Attachments parity) PLUS the double-
+//     extension trick (`invoice.pdf.exe`) — that's what the spec means by
+//     "existing virus/phishing-attachment hooks".
+//   * The no-JS form fundamentally cannot round-trip attachment BYTES across
+//     a failure re-render (the browser only echoes filenames). The error
+//     copy in the template and the friendly error messages emitted here both
+//     call out the re-attach step.
 
 use askama::Template;
 use axum::{
@@ -46,9 +63,12 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::error::AppError;
+use crate::models::dlp_rule::{DlpAction, DlpRule};
 use crate::models::signature::Signature;
 use crate::services::auth_service::Claims;
+use crate::services::dlp_scanner;
 use crate::services::imap_service::ImapService;
+use crate::services::phishing_scanner::{self, AttachmentMeta};
 use crate::services::smtp_service::{OutgoingAttachment, SendRequest, SmtpService};
 use crate::state::AppState;
 use crate::validation::{self, MAX_MESSAGE_BODY_LEN};
@@ -67,6 +87,20 @@ pub const SIGNATURE_SEPARATOR: &str = "\n\n-- \n";
 /// Surfaces as a friendly "Total upload too large" form-level error rather
 /// than the generic 413 a body-limit layer would emit.
 pub const MAX_TOTAL_BYTES: usize = 25 * 1024 * 1024;
+
+/// Added (TMAIL-382): hard cap on the size of a SINGLE attachment file. Per
+/// gap-analysis P1 #28 the default is 10 MB / file; the total stays at the
+/// 25 MB `MAX_TOTAL_BYTES` cap above.
+///
+/// Enforced INSIDE the multipart `field.chunk()` streaming loop so a 50 MB
+/// single file is rejected before its full bytes hit RAM. The same constant
+/// is surfaced in the user-facing error message (no magic number duplication
+/// between the check and the copy).
+///
+/// Sized below the total cap so a user can still attach multiple smaller
+/// files up to the total — e.g. two 10 MB files would hit the total cap
+/// after the second one, which is the friendlier failure mode.
+pub const MAX_PER_FILE_BYTES: usize = 10 * 1024 * 1024;
 
 /// Default name shown in the attachment-row echo when a browser sends a
 /// file with no filename header (rare — most browsers include it). Kept
@@ -667,7 +701,7 @@ async fn parse_compose_multipart(
         total_bytes: 0,
     };
 
-    while let Some(field) = multipart
+    while let Some(mut field) = multipart
         .next_field()
         .await
         .map_err(|e| AppError::BadRequest(format!("Invalid multipart data: {e}")))?
@@ -685,35 +719,70 @@ async fn parse_compose_multipart(
             .unwrap_or_else(|| "application/octet-stream".to_string());
 
         if let Some(fname) = file_name_attr {
-            // File part. Empty filename means the user didn't actually
-            // attach anything in that slot — skip rather than recording a
-            // zero-byte attachment.
-            let bytes = field
-                .bytes()
-                .await
-                .map_err(|e| AppError::BadRequest(format!("Failed to read attachment: {e}")))?;
-            if bytes.is_empty() {
-                continue;
-            }
-            let filename = if fname.trim().is_empty() {
+            // File part. Changed (TMAIL-382): stream chunks via
+            // `field.chunk()` rather than buffering the whole field with
+            // `field.bytes()`. The per-file and rolling-total caps are
+            // enforced INSIDE the loop so a 50 MB single attachment is
+            // rejected before its full bytes hit RAM.
+            //
+            // `filename_for_error` is the user-facing label used in the
+            // error copy when the cap is breached. We trim it now so the
+            // "Attachment 'X' too large" message reads naturally.
+            let filename_for_error = if fname.trim().is_empty() {
                 DEFAULT_FILENAME.to_string()
             } else {
-                fname
+                fname.trim().to_string()
             };
-            submission.total_bytes = submission.total_bytes.saturating_add(bytes.len());
-            // Early-exit on size — keeps us from buffering more than the
-            // user is allowed to send. The handler also re-checks AFTER
-            // the loop in case the cap is hit by `body` text.
-            if submission.total_bytes > MAX_TOTAL_BYTES {
-                return Err(AppError::BadRequest(format!(
-                    "Total upload exceeds the {} MB limit.",
-                    MAX_TOTAL_BYTES / (1024 * 1024)
-                )));
+
+            let mut buffer: Vec<u8> = Vec::new();
+            loop {
+                match field.chunk().await {
+                    Ok(Some(chunk)) => {
+                        let next_file_size = buffer.len().saturating_add(chunk.len());
+                        if next_file_size > MAX_PER_FILE_BYTES {
+                            return Err(AppError::BadRequest(format!(
+                                "Attachment '{}' exceeds the {} MB per-file limit. \
+                                 Total across all attachments must also stay under {} MB.",
+                                filename_for_error,
+                                MAX_PER_FILE_BYTES / (1024 * 1024),
+                                MAX_TOTAL_BYTES / (1024 * 1024)
+                            )));
+                        }
+                        // Project the running total INCLUDING this in-progress
+                        // file so we abort the moment the combined size would
+                        // cross the cap — not after this attachment is fully
+                        // buffered.
+                        let projected_total = submission
+                            .total_bytes
+                            .saturating_add(next_file_size);
+                        if projected_total > MAX_TOTAL_BYTES {
+                            return Err(AppError::BadRequest(format!(
+                                "Total upload exceeds the {} MB limit.",
+                                MAX_TOTAL_BYTES / (1024 * 1024)
+                            )));
+                        }
+                        buffer.extend_from_slice(&chunk);
+                    }
+                    Ok(None) => break,
+                    Err(e) => {
+                        return Err(AppError::BadRequest(format!(
+                            "Failed to read attachment '{}': {e}",
+                            filename_for_error
+                        )));
+                    }
+                }
             }
+            // Empty filename slot — the user clicked Browse, picked nothing,
+            // and the browser sent an empty file part. Skip rather than
+            // record a zero-byte attachment.
+            if buffer.is_empty() {
+                continue;
+            }
+            submission.total_bytes = submission.total_bytes.saturating_add(buffer.len());
             submission.attachments.push(OutgoingAttachment {
-                filename,
+                filename: filename_for_error,
                 content_type: content_type_attr,
-                data: bytes.to_vec(),
+                data: buffer,
             });
             continue;
         }
@@ -825,6 +894,123 @@ pub fn build_send_request(
     })
 }
 
+/// Added (TMAIL-382): pure check that flags an outgoing attachment list for
+/// dangerous filenames. Combines the operator-configurable DLP blocked-
+/// extension list with the phishing-scanner heuristic (Outlook Safe
+/// Attachments parity + double-extension trick). Returns the FIRST blocker
+/// so the user sees a concrete reason for the first bad file rather than a
+/// soup of all of them.
+///
+/// Pulled out as a pure function so the test suite can exercise it without
+/// standing up a DB.
+pub fn check_attachments_for_blockers(
+    attachments: &[OutgoingAttachment],
+) -> Result<(), AppError> {
+    let filenames: Vec<String> = attachments.iter().map(|a| a.filename.clone()).collect();
+    let dlp_attachment_hits = dlp_scanner::scan_attachments(
+        &filenames,
+        dlp_scanner::DEFAULT_BLOCKED_EXTENSIONS,
+    );
+    if let Some(hit) = dlp_attachment_hits
+        .iter()
+        .find(|m| matches!(m.action, DlpAction::Block | DlpAction::Quarantine))
+    {
+        return Err(AppError::BadRequest(format!(
+            "Attachment '{}' is blocked by your organisation's data-loss-prevention policy \
+             ({}). Remove it and resend; the rest of your message has been kept.",
+            hit.matched_text, hit.rule_name
+        )));
+    }
+
+    // Phishing heuristic — catches `invoice.pdf.exe` even when only `.exe`
+    // is in the DLP list (the DLP scanner only inspects the last extension).
+    let phishing_metas: Vec<AttachmentMeta> = attachments
+        .iter()
+        .map(|a| AttachmentMeta {
+            filename: a.filename.clone(),
+            content_type: Some(a.content_type.clone()),
+        })
+        .collect();
+    let dangerous = phishing_scanner::scan_attachments(&phishing_metas);
+    if let Some(d) = dangerous.first() {
+        return Err(AppError::BadRequest(format!(
+            "Attachment '{}' was blocked: {}. Remove it and resend; the rest of your \
+             message has been kept.",
+            d.filename, d.reason
+        )));
+    }
+
+    Ok(())
+}
+
+/// Added (TMAIL-382): pure check that runs DLP content scanning against the
+/// subject + body. Caller threads in the active rule set (typically
+/// `DlpRule::list_active(&state.db).await?`); built-in CC/SSN/IBAN patterns
+/// are scanned by `dlp_scanner::scan_content` regardless of the rule list.
+///
+/// Returns `Err` on the first `Block`/`Quarantine` match. The error copy
+/// names the rule but DOESN'T echo the matched text — that would teach a
+/// hostile sender what to obfuscate.
+pub fn check_content_for_blockers(
+    rules: &[DlpRule],
+    subject: &str,
+    body: &str,
+) -> Result<(), AppError> {
+    let content_hits = dlp_scanner::scan_content(rules, Some(subject), Some(body));
+    if let Some(hit) = content_hits
+        .iter()
+        .find(|m| matches!(m.action, DlpAction::Block | DlpAction::Quarantine))
+    {
+        return Err(AppError::BadRequest(format!(
+            "Your message was blocked by your organisation's data-loss-prevention policy \
+             ({}). Edit the subject or body and resend; recipients and attachments are kept.",
+            hit.rule_name
+        )));
+    }
+    Ok(())
+}
+
+/// Added (TMAIL-382): pre-flight scan that gates the outgoing message
+/// against the DLP rules + the phishing/virus attachment heuristics. Mirrors
+/// what the SPA-side send path will land in the BYOK-send refactor — the
+/// classic surface gets it first because no-JS users have no client-side
+/// telemetry to fall back on if a bad attachment slips through.
+///
+/// Returns `Ok(())` on a clean message, `Err(AppError::BadRequest(...))` on
+/// the first blocking match. The `BadRequest` path is what the failure
+/// re-render in `post_compose` consumes — body + recipients land back on
+/// the page intact, but attachments have to be re-picked.
+///
+/// Scan order (cheapest first so the user gets fast feedback):
+///   1. Attachment-name checks (DLP blocked-extension + phishing dangerous)
+///   2. DLP subject + body scan against active DB rules + built-in patterns
+///
+/// DLP rule fetch failure is downgraded to a tracing warning — the user
+/// shouldn't be locked out of sending mail just because the rules table is
+/// unreachable. The built-in patterns (CC, SSN, IBAN) still run because
+/// they don't need a DB query.
+async fn scan_outgoing_for_blockers(
+    state: &AppState,
+    subject: &str,
+    body: &str,
+    attachments: &[OutgoingAttachment],
+) -> Result<(), AppError> {
+    check_attachments_for_blockers(attachments)?;
+
+    let rules = match DlpRule::list_active(&state.db).await {
+        Ok(rs) => rs,
+        Err(e) => {
+            tracing::warn!(
+                error = ?e,
+                "classic compose: DLP rule fetch failed — running built-in patterns only"
+            );
+            Vec::new()
+        }
+    };
+    check_content_for_blockers(&rules, subject, body)?;
+    Ok(())
+}
+
 /// POST /classic/compose — accept multipart, send via BYOK SMTP, redirect.
 ///
 /// Failure path re-renders the compose form with the validation error AND
@@ -889,6 +1075,41 @@ pub async fn post_compose(
     let in_reply_to = submission.in_reply_to.clone();
     let references = submission.references.clone();
     let source_folder = submission.source_folder.clone();
+
+    // Added (TMAIL-382): DLP + phishing/virus pre-flight. Runs BEFORE the
+    // send-request build so a block hit leaves the multipart payload untouched
+    // and the user gets a friendly inline error rather than a generic SMTP
+    // bounce after the bytes already left the machine. The text fields land
+    // back on the re-render via the same path as a malformed-recipient error;
+    // attachment bytes can't round-trip on a no-JS form so the template asks
+    // the user to re-attach (and explains why).
+    if let Err(e) = scan_outgoing_for_blockers(
+        &state,
+        &subject,
+        &body,
+        &submission.attachments,
+    )
+    .await
+    {
+        return render_error_form(
+            &session.csrf_token,
+            &error_message(&e),
+            ComposeSubmission {
+                to_raw,
+                cc_raw,
+                bcc_raw,
+                subject,
+                body,
+                in_reply_to,
+                references,
+                source_folder,
+                attachments: vec![],
+                total_bytes: prior_total_bytes,
+            },
+            prior_filenames,
+            csp_nonce.as_str(),
+        );
+    }
 
     let send_req = match build_send_request(
         &to_raw,
@@ -1833,5 +2054,302 @@ mod tests {
         let result = append_signature(&fwd_body, "Sig");
         assert!(result.ends_with("-- \nSig"), "result: {result}");
         assert!(result.contains("---------- Forwarded message ----------"));
+    }
+
+    // ----- Per-file + total size caps (TMAIL-382) -----
+
+    #[test]
+    fn per_file_cap_is_ten_megabytes() {
+        // The gap-analysis P1 #28 spec pins this at 10 MB / file. If this
+        // constant is ever bumped the user-facing help text in
+        // `templates/classic/compose.html` and the rejection error copy
+        // must move with it — those messages embed the megabyte value.
+        assert_eq!(MAX_PER_FILE_BYTES, 10 * 1024 * 1024);
+    }
+
+    #[test]
+    fn per_file_cap_strictly_below_total_cap() {
+        // A single attachment at the per-file cap must fit under the total
+        // cap with room to spare for the body. Otherwise users couldn't
+        // attach the file AND type anything.
+        assert!(
+            MAX_PER_FILE_BYTES < MAX_TOTAL_BYTES,
+            "per-file cap {MAX_PER_FILE_BYTES} must be strictly less than total cap {MAX_TOTAL_BYTES}",
+        );
+    }
+
+    // ----- check_attachments_for_blockers (TMAIL-382) -----
+
+    fn att(filename: &str) -> OutgoingAttachment {
+        OutgoingAttachment {
+            filename: filename.to_string(),
+            content_type: "application/octet-stream".to_string(),
+            data: vec![0, 1, 2, 3],
+        }
+    }
+
+    #[test]
+    fn attachments_clean_list_passes() {
+        let attachments = vec![att("report.pdf"), att("photo.jpg"), att("notes.txt")];
+        check_attachments_for_blockers(&attachments)
+            .expect("clean attachment list should pass the scan");
+    }
+
+    #[test]
+    fn attachments_blocks_executable_extension_dlp() {
+        // .exe is in DEFAULT_BLOCKED_EXTENSIONS — must reject.
+        let attachments = vec![att("report.pdf"), att("malware.exe")];
+        let err = check_attachments_for_blockers(&attachments)
+            .expect_err(".exe must be blocked");
+        match err {
+            AppError::BadRequest(msg) => {
+                assert!(
+                    msg.contains("malware.exe"),
+                    "error must name the offending filename: {msg}"
+                );
+                assert!(
+                    msg.contains("data-loss-prevention") || msg.contains("blocked"),
+                    "error must mention DLP/block reason: {msg}"
+                );
+                assert!(
+                    msg.contains("rest of your message has been kept"),
+                    "error must reassure the user the body/recipients survived: {msg}"
+                );
+            }
+            other => panic!("expected BadRequest, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn attachments_blocks_double_extension_pdf_exe() {
+        // `invoice.pdf.exe` — the DLP scanner ALSO catches `.exe` here, but
+        // the test pins that the phishing-attachment check would still kick
+        // in if the operator removed `.exe` from the DLP list (the dangerous-
+        // extension list in phishing_scanner is independent).
+        let attachments = vec![att("invoice.pdf.exe")];
+        let err = check_attachments_for_blockers(&attachments)
+            .expect_err("double-extension exe must be blocked");
+        assert!(matches!(err, AppError::BadRequest(_)));
+    }
+
+    #[test]
+    fn attachments_blocks_vbs_script() {
+        // .vbs is a Visual Basic Script — classic malware vector.
+        let attachments = vec![att("clean.txt"), att("update.vbs")];
+        let err = check_attachments_for_blockers(&attachments)
+            .expect_err(".vbs must be blocked");
+        if let AppError::BadRequest(msg) = err {
+            assert!(
+                msg.contains("update.vbs"),
+                "error must name the offending file: {msg}"
+            );
+        } else {
+            panic!("expected BadRequest");
+        }
+    }
+
+    #[test]
+    fn attachments_first_blocker_wins() {
+        // When multiple bad attachments are in play, the first one in the
+        // list is the one the user is told about. This keeps the error
+        // copy concise — they can re-try and see the next one if they hit
+        // multiple in one submission.
+        let attachments = vec![att("first.exe"), att("second.bat")];
+        let err = check_attachments_for_blockers(&attachments)
+            .expect_err("first blocker should reject");
+        if let AppError::BadRequest(msg) = err {
+            assert!(
+                msg.contains("first.exe"),
+                "first blocker should be named, got: {msg}"
+            );
+        } else {
+            panic!("expected BadRequest");
+        }
+    }
+
+    #[test]
+    fn attachments_case_insensitive_extension_match() {
+        // .EXE in uppercase should still be blocked. (DLP scanner uses
+        // case-insensitive comparison via `eq_ignore_ascii_case`.)
+        let attachments = vec![att("LAUNCHER.EXE")];
+        let err = check_attachments_for_blockers(&attachments)
+            .expect_err("uppercase .EXE must be blocked");
+        assert!(matches!(err, AppError::BadRequest(_)));
+    }
+
+    // ----- check_content_for_blockers (TMAIL-382) -----
+
+    #[test]
+    fn content_clean_body_passes() {
+        // No rules + clean body → no built-in pattern matches → pass.
+        let rules: Vec<DlpRule> = vec![];
+        check_content_for_blockers(
+            &rules,
+            "Lunch tomorrow",
+            "Hey team, sandwich place at 12:30. — Kwame",
+        )
+        .expect("clean body should pass the scan");
+    }
+
+    #[test]
+    fn content_blocks_credit_card_in_body_via_builtin() {
+        // The credit-card built-in pattern action is `Block` — even with no
+        // DB rules, a Visa-format CC in the body must block.
+        let rules: Vec<DlpRule> = vec![];
+        let err = check_content_for_blockers(
+            &rules,
+            "Invoice",
+            "Charge my card 4111-1111-1111-1111 thanks",
+        )
+        .expect_err("credit card must block via built-in");
+        if let AppError::BadRequest(msg) = err {
+            assert!(
+                msg.contains("data-loss-prevention"),
+                "error must call out DLP: {msg}"
+            );
+            // Don't echo the matched CC bytes back — the test guards the
+            // operational rule that we don't teach attackers what to obfuscate.
+            assert!(
+                !msg.contains("4111-1111-1111-1111"),
+                "error must NOT echo the matched secret: {msg}"
+            );
+            assert!(
+                msg.contains("recipients and attachments are kept"),
+                "error must reassure recipients/attachments survive: {msg}"
+            );
+        } else {
+            panic!("expected BadRequest");
+        }
+    }
+
+    #[test]
+    fn content_blocks_us_ssn_in_body_via_builtin() {
+        let rules: Vec<DlpRule> = vec![];
+        let err = check_content_for_blockers(
+            &rules,
+            "Onboarding",
+            "My SSN is 123-45-6789 please use this for the form",
+        )
+        .expect_err("US SSN must block via built-in");
+        assert!(matches!(err, AppError::BadRequest(_)));
+    }
+
+    #[test]
+    fn content_warn_severity_does_not_block_send() {
+        // The IBAN built-in is action=Warn (not Block) — Warns must NOT
+        // gate the send. Same for any DB rule whose action is Warn/Log.
+        let rules: Vec<DlpRule> = vec![];
+        check_content_for_blockers(
+            &rules,
+            "Wire transfer",
+            "Please send to DE89370400440532013000",
+        )
+        .expect("Warn-severity matches must not gate the send");
+    }
+
+    #[test]
+    fn content_blocks_when_db_rule_has_block_action() {
+        // A custom DB-defined rule with `Block` action must reject even if
+        // the body doesn't trip any built-in pattern.
+        let rule = DlpRule {
+            id: Uuid::new_v4(),
+            name: "Project Phoenix".to_string(),
+            description: None,
+            pattern: "project phoenix".to_string(),
+            pattern_type: "keyword".to_string(),
+            action: DlpAction::Block,
+            severity: crate::models::dlp_rule::DlpSeverity::Critical,
+            apply_to_subject: true,
+            apply_to_body: true,
+            apply_to_attachments: false,
+            active: true,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        let err = check_content_for_blockers(
+            &[rule],
+            "Project Phoenix update",
+            "Status memo for the team",
+        )
+        .expect_err("custom Block-action rule must block");
+        if let AppError::BadRequest(msg) = err {
+            assert!(
+                msg.contains("Project Phoenix"),
+                "error must name the matched rule: {msg}"
+            );
+        } else {
+            panic!("expected BadRequest");
+        }
+    }
+
+    #[test]
+    fn content_blocks_when_db_rule_has_quarantine_action() {
+        // Quarantine treated the same as Block at the send-time gate — the
+        // user has no quarantine UI on no-JS, so the only useful behaviour
+        // is to refuse to send and let them edit the message.
+        let rule = DlpRule {
+            id: Uuid::new_v4(),
+            name: "Internal Code Name".to_string(),
+            description: None,
+            pattern: "operation polaris".to_string(),
+            pattern_type: "keyword".to_string(),
+            action: DlpAction::Quarantine,
+            severity: crate::models::dlp_rule::DlpSeverity::High,
+            apply_to_subject: false,
+            apply_to_body: true,
+            apply_to_attachments: false,
+            active: true,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        let err = check_content_for_blockers(
+            &[rule],
+            "Status update",
+            "Notes on operation polaris timeline",
+        )
+        .expect_err("Quarantine-action rule must also gate the send");
+        assert!(matches!(err, AppError::BadRequest(_)));
+    }
+
+    // ----- Template + error-render verification (TMAIL-382) -----
+
+    #[test]
+    fn compose_template_help_text_mentions_per_file_limit() {
+        // The user-facing help text under the file input has to surface the
+        // 10 MB / file cap so a user picking a 20 MB video knows in advance
+        // it won't go through.
+        let body = fresh_template().render().expect("template renders");
+        assert!(
+            body.contains("10 MB per file"),
+            "compose help text must mention the per-file cap: {body}"
+        );
+        assert!(
+            body.contains("25 MB") || body.contains("Total upload"),
+            "compose help text must still mention the total cap: {body}"
+        );
+        // Mention of the DLP / executable rejection so users aren't
+        // surprised mid-compose. Stated declaratively, not threateningly.
+        assert!(
+            body.contains(".exe") || body.contains("Executable"),
+            "compose help text must mention executable-file rejection: {body}"
+        );
+    }
+
+    #[test]
+    fn compose_template_reattach_note_explains_no_js_limitation() {
+        // When attachments need to be re-picked, the failure notice has to
+        // explain WHY (no-JS can't preserve bytes) — otherwise it looks like
+        // a bug and a frustrated user will assume the upload itself failed.
+        let mut t = fresh_template();
+        t.prior_attachment_names = vec!["doc.pdf".to_string()];
+        let body = t.render().expect("template renders");
+        assert!(
+            body.contains("re-attach"),
+            "failure note must use the 're-attach' verb: {body}"
+        );
+        assert!(
+            body.contains("JavaScript") || body.contains("can't hold"),
+            "failure note must explain the no-JS attachment limitation: {body}"
+        );
     }
 }

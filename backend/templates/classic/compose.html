@@ -174,13 +174,16 @@
              multiple
              aria-describedby="compose-attachments-help">
       <small id="compose-attachments-help" class="compose-help">
-        Total upload (body + attachments) must stay under 25 MB.
+        Up to 10 MB per file. Total upload (body + attachments) must stay
+        under 25 MB. Executable files (.exe, .bat, .scr, …) and files
+        flagged by your organisation's data-loss policy are rejected.
       </small>
 
       {% if !prior_attachment_names.is_empty() %}
         <p class="reattach-note" role="status">
-          The send failed before completing. Please re-attach these files
-          and submit again:
+          The send failed before completing. Without JavaScript we can't
+          hold the attachment data across this re-render — please re-attach
+          these files and submit again:
         </p>
         <ul class="prior-list">
           {% for name in prior_attachment_names %}
