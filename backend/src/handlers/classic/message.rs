@@ -226,6 +226,11 @@ pub struct MessageTemplate {
     /// TMAIL-367; today a POST returns the catch-all 404, which is the
     /// expected during-build behaviour.
     pub delete_action: String,
+    /// Added (TMAIL-370): POST action for the Mark unread button. Same
+    /// endpoint as the future Mark read (P1 #16 is single-toggle from the
+    /// read view), but the read view always renders "Mark unread" since
+    /// opening the message already marks it `\Seen` as a side-effect.
+    pub flag_action: String,
     /// Session CSRF token threaded into every action form (Delete today,
     /// Star / Mark-unread / Move when those flip from placeholder to
     /// real). Also into the logout form partial.
@@ -298,6 +303,12 @@ pub async fn get_message(
     let reply_all_href = format!("/classic/compose?reply_all={}&folder={}", full.uid, folder_href);
     let forward_href = format!("/classic/compose?forward={}&folder={}", full.uid, folder_href);
     let delete_action = format!("{}/delete", base);
+    // Added (TMAIL-370): flag toggle endpoint. The read view renders a
+    // single "Mark unread" button — opening the message marks it `\Seen`
+    // server-side, so toggling to "read" from here would always be a
+    // no-op. The folder view's bulk-action bar covers the "mark read"
+    // direction.
+    let flag_action = format!("{}/flag", base);
 
     let template = MessageTemplate {
         current_folder: folder,
@@ -314,6 +325,7 @@ pub async fn get_message(
         reply_all_href,
         forward_href,
         delete_action,
+        flag_action,
         csrf_token: session.csrf_token.clone(),
         csp_nonce: csp_nonce.into_string(),
     };
@@ -361,6 +373,7 @@ mod tests {
             reply_all_href: "/classic/compose?reply_all=42&folder=INBOX".to_string(),
             forward_href: "/classic/compose?forward=42&folder=INBOX".to_string(),
             delete_action: "/classic/folders/INBOX/messages/42/delete".to_string(),
+            flag_action: "/classic/folders/INBOX/messages/42/flag".to_string(),
             csrf_token: "test-csrf-token".to_string(),
             csp_nonce: "test-nonce-fixed".to_string(),
         }
@@ -692,28 +705,64 @@ mod tests {
 
     #[test]
     fn message_template_renders_disabled_placeholders_for_deferred_actions() {
-        // P1 placeholders — Move-to-folder dropdown, Star, Mark unread.
-        // They render as disabled controls so the layout is right NOW;
-        // the follow-up tasks just flip the `disabled` attribute and
-        // wire the handler.
+        // P1 placeholders — Move-to-folder dropdown + Star (TMAIL-377).
+        // Mark unread (TMAIL-370) was flipped from placeholder to LIVE,
+        // so it now renders without the `disabled` attribute. Each
+        // remaining placeholder still renders so the layout doesn't shift
+        // when their handlers land.
         let body = fresh_template().render().expect("template renders");
         assert!(
             body.contains(">Star<"),
             "Star button placeholder missing: {body}"
         );
         assert!(
-            body.contains(">Mark unread<"),
-            "Mark-unread button placeholder missing: {body}"
-        );
-        assert!(
             body.contains("<select"),
             "Move-to-folder <select> missing: {body}"
         );
-        // Disabled — TMAIL-380 / TMAIL-377 / TMAIL-376 will hydrate them.
+        // At least Star + Move-to-folder remain disabled.
         let disabled_count = body.matches("disabled").count();
         assert!(
-            disabled_count >= 3,
-            "expected at least 3 disabled controls (Star, Mark unread, Move): {body}"
+            disabled_count >= 2,
+            "expected at least 2 disabled controls (Star, Move): {body}"
+        );
+    }
+
+    // ----- TMAIL-370: Mark unread is now live -----
+
+    #[test]
+    fn message_template_renders_live_mark_unread_form() {
+        // The Mark unread button has flipped from placeholder to live —
+        // it POSTs to the flag endpoint with `mark=unread` so the handler
+        // strips `\Seen` from the message. The form must carry the
+        // session CSRF token, must NOT be disabled, and must point at
+        // the flag_action URL the handler builds.
+        let body = fresh_template().render().expect("template renders");
+        assert!(
+            body.contains("action=\"/classic/folders/INBOX/messages/42/flag\""),
+            "Mark unread form action must point at the flag endpoint: {body}"
+        );
+        // Locate the Mark unread button text and verify the form around
+        // it is fully wired (csrf + mark=unread hidden + not disabled).
+        let mark_at = body
+            .find(">Mark unread<")
+            .expect("Mark unread button must render");
+        // Walk backwards to the opening <form so we can scan the whole
+        // form block for hidden fields + disabled attr.
+        let form_start = body[..mark_at]
+            .rfind("<form")
+            .expect("Mark unread button must sit inside a <form>");
+        let form_segment = &body[form_start..mark_at + 50];
+        assert!(
+            form_segment.contains("name=\"_csrf\" value=\"test-csrf-token\""),
+            "Mark unread form must carry the session csrf_token: {form_segment}"
+        );
+        assert!(
+            form_segment.contains("name=\"mark\" value=\"unread\""),
+            "Mark unread form must include the mark=unread hidden field: {form_segment}"
+        );
+        assert!(
+            !form_segment.contains("disabled"),
+            "Mark unread button must NOT be disabled: {form_segment}"
         );
     }
 

@@ -106,6 +106,18 @@ pub mod compose;
 // middleware.
 pub mod delete;
 
+// Added (TMAIL-370): mark-read / mark-unread endpoints for the no-JS
+// Classic UI. Two routes:
+//   * POST /classic/folders/{folder}/messages/{uid}/flag — single
+//     message, fed by the message read view's "Mark unread" button.
+//   * POST /classic/folders/{folder}/bulk — multi-message bulk action
+//     fed by the folder view's bulk-action bar checkboxes.
+// Both mount on the authenticated sub-router so they inherit session
+// + CSRF middleware. The bulk endpoint dispatches on the `action` form
+// field today (mark_read / mark_unread only); P1 #18 (Move) and the
+// rest of P1 #29 (Bulk delete) will add more action branches.
+pub mod flag;
+
 // NAME: Session cookie name shared with the Classic UI auth handler that
 // lands in TMAIL-357 (P0 #3). The scaffold only needs to *detect* presence;
 // the cookie value is opaque here and validated later by the dedicated
@@ -265,6 +277,21 @@ fn authenticated_router(state: AppState) -> Router<AppState> {
         .route(
             "/classic/folders/{folder}/messages/{uid}/delete",
             post(delete::post_delete),
+        )
+        // Added (TMAIL-370): POST-only mark-read / mark-unread endpoints.
+        // The message-scoped path serves the single "Mark unread" button
+        // from the message read view; the folder-scoped /bulk path serves
+        // the bulk-action bar's "Mark read" / "Mark unread" buttons on the
+        // folder view (dispatch is on the `action` form field). The CSRF
+        // middleware below already buffers + validates `_csrf` for both,
+        // so neither handler does its own CSRF work.
+        .route(
+            "/classic/folders/{folder}/messages/{uid}/flag",
+            post(flag::post_message_flag),
+        )
+        .route(
+            "/classic/folders/{folder}/bulk",
+            post(flag::post_bulk),
         )
         // Inner layer: CSRF check on state-changing methods. Runs AFTER
         // the session middleware on the request side, so the session row

@@ -214,24 +214,45 @@
         </div>
       {% endif %}
 
-      {# Bulk-action form. Today the buttons are stubs — P1 #29 will add
-         real handlers. We render the form NOW so the row checkboxes have
-         a place to submit to, and the CSRF token is already threaded
-         through. The action="" attribute makes a stray submission a
-         no-op refresh of the current page. #}
-      {# TMAIL-369: id="classic-bulk-actions" lets the per-row checkboxes
+      {# TMAIL-370 — Success banner after the flag POST-Redirect-Get
+         flow. Both the single-message and bulk endpoints redirect here
+         with `?marked=read|unread&count=N`. The count is rendered into
+         the banner copy so the user gets explicit confirmation of how
+         many rows changed state — important for the bulk case where
+         the action may have hit more rows than the user expected. #}
+      {% if let Some(banner) = marked_banner %}
+        <div class="alert alert-success" role="status">
+          {% if banner.is_read() %}
+            <strong>Marked {{ banner.count }} message{% if banner.count != 1 %}s{% endif %} as read.</strong>
+          {% else %}
+            <strong>Marked {{ banner.count }} message{% if banner.count != 1 %}s{% endif %} as unread.</strong>
+          {% endif %}
+        </div>
+      {% endif %}
+
+      {# Bulk-action form.
+         TMAIL-370: Mark read / Mark unread are now LIVE. They POST to
+         /classic/folders/{folder}/bulk with `action=mark_read|mark_unread`
+         + every checked `uid` value. The handler dispatches on the
+         `action` field and 303-redirects back here with `?marked=…`
+         driving the confirmation banner above the table.
+         Move… (P1 #18 / TMAIL-380) and Delete (P1 #29 follow-up) remain
+         disabled placeholders for the same one-handler-multiple-actions
+         pattern.
+
+         TMAIL-369: id="classic-bulk-actions" lets the per-row checkboxes
          below reference this form via the `form=` attribute even though
          they sit in the <table> sibling. The previous markup used `form=""`
          on the checkboxes, which is invalid HTML (axe flags it: an empty
          form reference is ambiguous). Future bulk-action hookup
-         (TMAIL-376/377/380) will keep this binding in place. #}
-      <form id="classic-bulk-actions" class="bulk-actions" method="post" action="">
+         (TMAIL-377/380) will keep this binding in place. #}
+      <form id="classic-bulk-actions" class="bulk-actions" method="post" action="/classic/folders/{{ current_folder_href|safe }}/bulk">
         <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-        <button type="submit" name="action" value="mark_read" disabled>Mark read</button>
-        <button type="submit" name="action" value="mark_unread" disabled>Mark unread</button>
+        <button type="submit" name="action" value="mark_read">Mark read</button>
+        <button type="submit" name="action" value="mark_unread">Mark unread</button>
         <button type="submit" name="action" value="move" disabled>Move…</button>
         <button type="submit" name="action" value="delete" disabled>Delete</button>
-        <span class="stub-note">Bulk actions arrive in a follow-up release.</span>
+        <span class="stub-note">Move and bulk-delete arrive in a follow-up release.</span>
       </form>
 
       <table class="msg-table" aria-describedby="folder-heading">

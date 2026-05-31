@@ -1,0 +1,36 @@
+{% extends "classic/base.html" %}
+
+{# TMAIL-370 — Friendly 400 page rendered by `handlers::classic::flag::post_bulk`
+   when the submission is missing an `action` field, names an action that isn't
+   wired up yet (Move / Delete — both pending follow-ups), or has zero `uid`
+   checkboxes ticked. The handler renders this instead of bubbling the error
+   out through the global JSON error envelope so the user lands somewhere
+   navigable with the same nav + sign-out chrome they had on the folder.
+
+   Template context (set by `handlers::classic::flag::render_flag_error`):
+     * `message: String`   — human-readable explanation of what went wrong.
+     * `back_href: String` — URL to go back to the folder view the user
+                             came from.
+     * `csrf_token: String` — threaded through the logout form partial.
+     * `csp_nonce: String`  — required by base.html (TMAIL-356). #}
+
+{% block title %}Bulk action couldn't run{% endblock %}
+
+{% block logout_form %}{% include "classic/_logout_form.html" %}{% endblock %}
+
+{% block content %}
+  <h1>We couldn't run that bulk action</h1>
+
+  <div class="alert alert-error" role="alert">
+    <strong>{{ message }}</strong>
+  </div>
+
+  <p>
+    No messages were changed. Go back to the folder, tick the checkboxes on
+    the rows you want to act on, and try a different button.
+  </p>
+
+  <p>
+    <a href="{{ back_href }}">&larr; Back to your folder</a>
+  </p>
+{% endblock %}

@@ -295,10 +295,17 @@
       <button type="submit" class="secondary" disabled>Star</button>
     </form>
 
-    {# P1 #16 — Mark unread. Placeholder until TMAIL-376. #}
-    <form method="post" action="">
+    {# TMAIL-370 — Mark unread (P1 #16). Live action.
+       Opening this message just marked it `\Seen` server-side as part of
+       the read-view fetch (handler comment in `message.rs`), so the only
+       useful direction from here is "unread" — the user is flagging the
+       message for follow-up. POSTs to /flag with `mark=unread`; the
+       handler 303-redirects to the source folder where the row now
+       renders bold so the user gets visual confirmation. #}
+    <form method="post" action="{{ flag_action }}">
       <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-      <button type="submit" class="secondary" disabled>Mark unread</button>
+      <input type="hidden" name="mark" value="unread">
+      <button type="submit" class="secondary">Mark unread</button>
     </form>
 
     {# P1 #18 — Move-to-folder dropdown. Placeholder until TMAIL-380
@@ -311,6 +318,6 @@
       </select>
     </form>
 
-    <span class="stub-note">Star / Mark-unread / Move arrive in a follow-up release.</span>
+    <span class="stub-note">Star / Move arrive in a follow-up release.</span>
   </div>
 {% endblock %}

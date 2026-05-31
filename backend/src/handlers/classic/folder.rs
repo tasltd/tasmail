@@ -122,6 +122,16 @@ pub struct FolderQuery {
     pub sent: Option<String>,
     #[serde(default)]
     pub deleted: Option<String>,
+    /// Added (TMAIL-370): `?marked=read` or `?marked=unread` set by the
+    /// flag handler after a successful mark action (single OR bulk). Drives
+    /// the one-time confirmation banner above the message table.
+    #[serde(default)]
+    pub marked: Option<String>,
+    /// Added (TMAIL-370): row count flashed in the marked banner ("Marked
+    /// N messages as read"). Optional — defaults to 0 / "messages" wording
+    /// if missing or unparsable so a malformed bookmark still renders.
+    #[serde(default)]
+    pub count: Option<u32>,
 }
 
 impl FolderQuery {
@@ -146,6 +156,54 @@ impl FolderQuery {
             Some(v) => matches!(v, "1" | "true" | "yes"),
             None => false,
         }
+    }
+
+    /// Added (TMAIL-370): Resolve the `?marked=…` value to a (key, count)
+    /// pair the template can render directly. Returns `None` for an absent
+    /// or unrecognised value so the banner stays hidden on stale bookmarks
+    /// that say `?marked=oops`.
+    ///
+    /// `count` is clamped to a sensible upper bound (`MAX_BULK_UIDS`) so a
+    /// forged URL like `?marked=read&count=999999` can't produce a
+    /// misleading "Marked 999999 messages" banner.
+    fn marked_banner(&self) -> Option<MarkedBanner> {
+        let key = self.marked.as_deref()?;
+        let action = match key {
+            "read" => MarkedDirection::Read,
+            "unread" => MarkedDirection::Unread,
+            _ => return None,
+        };
+        let count = self
+            .count
+            .unwrap_or(0)
+            .min(super::flag::MAX_BULK_UIDS as u32);
+        Some(MarkedBanner { action, count })
+    }
+}
+
+/// Added (TMAIL-370): Resolved marked-banner direction. Mirrors the
+/// `MarkAction` enum in the flag module but lives separately because the
+/// banner is a UI concern (whereas `MarkAction` is a control-flow concern).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MarkedDirection {
+    Read,
+    Unread,
+}
+
+/// Added (TMAIL-370): Banner view-model. Distinct from the boolean
+/// `sent_banner` / `deleted_banner` because the marked banner needs to
+/// distinguish the direction AND surface a count.
+pub struct MarkedBanner {
+    pub action: MarkedDirection,
+    pub count: u32,
+}
+
+impl MarkedBanner {
+    /// True when this banner is for "Mark read". Used by the template's
+    /// `{% if %}` branching since Askama doesn't `match` on enum variants
+    /// directly without the `match_pattern` feature.
+    pub fn is_read(&self) -> bool {
+        matches!(self.action, MarkedDirection::Read)
     }
 }
 
@@ -235,6 +293,11 @@ pub struct FolderTemplate {
     /// that their delete action actually completed (either moved to Trash
     /// or permanently expunged when already in Trash).
     pub deleted_banner: bool,
+    /// Added (TMAIL-370): present when the user landed here via the flag
+    /// POST-Redirect-Get with `?marked=read|unread&count=N`. Drives the
+    /// one-time confirmation banner above the message table. `None` means
+    /// no banner — the standard case on a fresh folder open.
+    pub marked_banner: Option<MarkedBanner>,
     /// Per-request CSP nonce. Required by base.html (TMAIL-356).
     pub csp_nonce: String,
 }
@@ -432,6 +495,7 @@ pub async fn get_folder(
         csrf_token: session.csrf_token.clone(),
         sent_banner: query.sent_banner(),
         deleted_banner: query.deleted_banner(),
+        marked_banner: query.marked_banner(),
         csp_nonce: csp_nonce.into_string(),
     };
 
@@ -493,6 +557,7 @@ mod tests {
             csrf_token: "test-csrf-token".to_string(),
             sent_banner: false,
             deleted_banner: false,
+            marked_banner: None,
             csp_nonce: "test-nonce-fixed".to_string(),
         }
     }
@@ -666,9 +731,22 @@ mod tests {
 
     // ----- FolderQuery -----
 
+    /// Build a fresh `FolderQuery` with all option fields populated to
+    /// `None`. New optional fields landing on the struct only require an
+    /// edit here, not 12 separate test sites.
+    fn empty_query() -> FolderQuery {
+        FolderQuery {
+            page: None,
+            sent: None,
+            deleted: None,
+            marked: None,
+            count: None,
+        }
+    }
+
     #[test]
     fn folder_query_defaults_to_page_zero() {
-        let q = FolderQuery { page: None, sent: None, deleted: None };
+        let q = empty_query();
         assert_eq!(q.page(), 0);
         let q = FolderQuery::default();
         assert_eq!(q.page(), 0);
@@ -676,7 +754,10 @@ mod tests {
 
     #[test]
     fn folder_query_passes_explicit_page() {
-        let q = FolderQuery { page: Some(3), sent: None, deleted: None };
+        let q = FolderQuery {
+            page: Some(3),
+            ..empty_query()
+        };
         assert_eq!(q.page(), 3);
     }
 
@@ -692,9 +773,8 @@ mod tests {
     fn folder_query_sent_banner_on_for_truthy_values() {
         for val in &["1", "true", "yes"] {
             let q = FolderQuery {
-                page: None,
                 sent: Some((*val).to_string()),
-                deleted: None,
+                ..empty_query()
             };
             assert!(q.sent_banner(), "?sent={val} should turn the banner on");
         }
@@ -706,9 +786,8 @@ mod tests {
         // success banner — only canonical truthy values flip the flag.
         for val in &["0", "false", "no", "banana", ""] {
             let q = FolderQuery {
-                page: None,
                 sent: Some((*val).to_string()),
-                deleted: None,
+                ..empty_query()
             };
             assert!(!q.sent_banner(), "?sent={val} should NOT turn the banner on");
         }
@@ -726,9 +805,8 @@ mod tests {
     fn folder_query_deleted_banner_on_for_truthy_values() {
         for val in &["1", "true", "yes"] {
             let q = FolderQuery {
-                page: None,
-                sent: None,
                 deleted: Some((*val).to_string()),
+                ..empty_query()
             };
             assert!(q.deleted_banner(), "?deleted={val} should turn the banner on");
         }
@@ -740,12 +818,93 @@ mod tests {
         // green success banner — only canonical truthy values flip it.
         for val in &["0", "false", "no", "oops", ""] {
             let q = FolderQuery {
-                page: None,
-                sent: None,
                 deleted: Some((*val).to_string()),
+                ..empty_query()
             };
             assert!(!q.deleted_banner(), "?deleted={val} should NOT turn the banner on");
         }
+    }
+
+    // ----- marked_banner (TMAIL-370) -----
+
+    #[test]
+    fn folder_query_marked_banner_off_by_default() {
+        let q = FolderQuery::default();
+        assert!(q.marked_banner().is_none());
+    }
+
+    #[test]
+    fn folder_query_marked_banner_resolves_read_direction() {
+        let q = FolderQuery {
+            marked: Some("read".to_string()),
+            count: Some(3),
+            ..empty_query()
+        };
+        let banner = q.marked_banner().expect("read banner present");
+        assert!(banner.is_read(), "direction should be read");
+        assert_eq!(banner.count, 3);
+    }
+
+    #[test]
+    fn folder_query_marked_banner_resolves_unread_direction() {
+        let q = FolderQuery {
+            marked: Some("unread".to_string()),
+            count: Some(1),
+            ..empty_query()
+        };
+        let banner = q.marked_banner().expect("unread banner present");
+        assert!(!banner.is_read(), "direction should be unread");
+        assert_eq!(banner.count, 1);
+    }
+
+    #[test]
+    fn folder_query_marked_banner_off_for_unknown_values() {
+        // A malformed bookmark like `?marked=oops` shouldn't flash any
+        // banner — only canonical "read" / "unread" values flip it.
+        for val in &["", "READ", "Read", "oops", "1", "yes", "true"] {
+            let q = FolderQuery {
+                marked: Some((*val).to_string()),
+                count: Some(5),
+                ..empty_query()
+            };
+            assert!(
+                q.marked_banner().is_none(),
+                "?marked={val} should NOT resolve a banner"
+            );
+        }
+    }
+
+    #[test]
+    fn folder_query_marked_banner_clamps_inflated_count() {
+        // A forged URL `?marked=read&count=999999` shouldn't render
+        // "Marked 999999 messages" — clamp to the same upper bound the
+        // bulk handler enforces.
+        let q = FolderQuery {
+            marked: Some("read".to_string()),
+            count: Some(999_999),
+            ..empty_query()
+        };
+        let banner = q.marked_banner().expect("banner present");
+        assert!(
+            banner.count <= super::super::flag::MAX_BULK_UIDS as u32,
+            "count should be clamped to MAX_BULK_UIDS, got {}",
+            banner.count
+        );
+    }
+
+    #[test]
+    fn folder_query_marked_banner_defaults_count_to_zero_when_missing() {
+        // If `?marked=read` lands without a `count`, the banner still
+        // renders — the user sees "Marked 0 messages as read" which is
+        // a clear "your request was processed but my UI doesn't know how
+        // many" signal rather than a silent failure.
+        let q = FolderQuery {
+            marked: Some("read".to_string()),
+            count: None,
+            ..empty_query()
+        };
+        let banner = q.marked_banner().expect("banner present");
+        assert_eq!(banner.count, 0);
     }
 
     // ----- Template rendering -----
@@ -822,6 +981,129 @@ mod tests {
         assert!(
             !body.contains("Message deleted"),
             "deleted copy must NOT render when deleted_banner = false: {body}"
+        );
+    }
+
+    // ----- TMAIL-370: marked banner -----
+
+    #[test]
+    fn folder_template_renders_marked_read_banner_when_set() {
+        let mut t = fresh_template();
+        t.marked_banner = Some(MarkedBanner {
+            action: MarkedDirection::Read,
+            count: 3,
+        });
+        let body = t.render().expect("template renders");
+        assert!(
+            body.contains("alert-success"),
+            "marked banner must use the success alert class: {body}"
+        );
+        assert!(
+            body.contains("Marked 3 messages as read"),
+            "marked-read banner copy missing: {body}"
+        );
+    }
+
+    #[test]
+    fn folder_template_renders_marked_unread_banner_when_set() {
+        let mut t = fresh_template();
+        t.marked_banner = Some(MarkedBanner {
+            action: MarkedDirection::Unread,
+            count: 7,
+        });
+        let body = t.render().expect("template renders");
+        assert!(
+            body.contains("Marked 7 messages as unread"),
+            "marked-unread banner copy missing: {body}"
+        );
+    }
+
+    #[test]
+    fn folder_template_singularises_marked_banner_for_one_message() {
+        // "Marked 1 messages" reads weirdly — the template's `{% if count !=
+        // 1 %}s{% endif %}` should drop the trailing s when only one row
+        // changed state.
+        let mut t = fresh_template();
+        t.marked_banner = Some(MarkedBanner {
+            action: MarkedDirection::Read,
+            count: 1,
+        });
+        let body = t.render().expect("template renders");
+        assert!(
+            body.contains("Marked 1 message as read"),
+            "marked banner must use singular wording for count = 1: {body}"
+        );
+        assert!(
+            !body.contains("Marked 1 messages as read"),
+            "marked banner must NOT pluralise for count = 1: {body}"
+        );
+    }
+
+    #[test]
+    fn folder_template_omits_marked_banner_when_none() {
+        // fresh_template() has marked_banner = None. The banner must NOT
+        // render — a stray "Marked 0 messages as read" on a clean folder
+        // open would be misleading.
+        let body = fresh_template().render().expect("template renders");
+        assert!(
+            !body.contains("Marked "),
+            "marked banner must NOT render when marked_banner is None: {body}"
+        );
+    }
+
+    /// Slice a single `<button …>` opening tag out of the rendered body —
+    /// i.e. from `<button` up to the closing `>`. Used by the live-bulk
+    /// assertion below so a window that overshoots into the NEXT button
+    /// (which carries `disabled`) doesn't trigger a false positive.
+    fn extract_button_tag<'a>(body: &'a str, value: &str) -> &'a str {
+        let needle = format!("value=\"{value}\"");
+        let value_at = body
+            .find(&needle)
+            .unwrap_or_else(|| panic!("button with {value:?} must render — body:\n{body}"));
+        // Walk backwards to the `<button` opening.
+        let tag_start = body[..value_at]
+            .rfind("<button")
+            .expect("button value must sit inside a <button> tag");
+        // Walk forwards to the first `>` AFTER tag_start (still inside the
+        // opening tag — `>` doesn't appear in HTML attribute values).
+        let after_tag = &body[tag_start..];
+        let tag_end_rel = after_tag
+            .find('>')
+            .expect("button opening tag must close with >");
+        &body[tag_start..tag_start + tag_end_rel + 1]
+    }
+
+    #[test]
+    fn folder_template_renders_live_bulk_action_form() {
+        // TMAIL-370 wired Mark read / Mark unread on the bulk-action bar.
+        // The form must POST to the dedicated /bulk endpoint and the
+        // mark_read / mark_unread buttons must NO LONGER be disabled.
+        let body = fresh_template().render().expect("template renders");
+        assert!(
+            body.contains("action=\"/classic/folders/INBOX/bulk\""),
+            "bulk-action form must POST to /classic/folders/{{folder}}/bulk: {body}"
+        );
+        // Find each button's opening tag and assert the disabled state.
+        let mr_tag = extract_button_tag(&body, "mark_read");
+        assert!(
+            !mr_tag.contains("disabled"),
+            "Mark read button must NOT be disabled: {mr_tag}"
+        );
+        let mu_tag = extract_button_tag(&body, "mark_unread");
+        assert!(
+            !mu_tag.contains("disabled"),
+            "Mark unread button must NOT be disabled: {mu_tag}"
+        );
+        // Move + Delete remain placeholders, must STILL be disabled.
+        let move_tag = extract_button_tag(&body, "move");
+        assert!(
+            move_tag.contains("disabled"),
+            "Move button must remain disabled until P1 #18 lands: {move_tag}"
+        );
+        let delete_tag = extract_button_tag(&body, "delete");
+        assert!(
+            delete_tag.contains("disabled"),
+            "Bulk Delete button must remain disabled until P1 #29 lands: {delete_tag}"
         );
     }
 

@@ -683,6 +683,65 @@ impl ImapService {
         Ok(())
     }
 
+    /// Added (TMAIL-370): Toggle a flag on a batch of UIDs in one IMAP session.
+    ///
+    /// Sends a single `UID STORE u1,u2,u3 ±FLAGS (\Flag)` command which is
+    /// what the IMAP RFC explicitly allows for set operations — Gmail,
+    /// Dovecot, Stalwart, FastMail and Outlook all parse comma-separated UID
+    /// sets identically. One session + one round-trip beats opening N
+    /// connections for the bulk-action bar's typical N=1..25 cardinality.
+    ///
+    /// `uids` may be empty — the method short-circuits to `Ok(())` without
+    /// touching IMAP. The caller still gets a clean redirect, so a stray
+    /// "Mark read" click with no checkboxes selected is a no-op rather than
+    /// an error.
+    pub async fn set_flag_batch(
+        &self,
+        username: &str,
+        password: &str,
+        folder: &str,
+        uids: &[u32],
+        flag: &str,
+        add: bool,
+    ) -> Result<(), AppError> {
+        if uids.is_empty() {
+            return Ok(());
+        }
+
+        let mut session = self.connect(username, password).await?;
+
+        session
+            .select(folder)
+            .await
+            .map_err(|e| AppError::Imap(format!("SELECT failed: {}", e)))?;
+
+        // RFC 3501 §9 message-set: comma-separated list of UIDs (or ranges).
+        // Joining the raw u32 values keeps the wire form unambiguous — no
+        // whitespace, no quoting required.
+        let uid_set = uids
+            .iter()
+            .map(u32::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+
+        let store_cmd = if add {
+            format!("+FLAGS ({})", flag)
+        } else {
+            format!("-FLAGS ({})", flag)
+        };
+
+        let _: Vec<_> = session
+            .uid_store(&uid_set, &store_cmd)
+            .await
+            .map_err(|e| AppError::Imap(format!("Batch store failed: {}", e)))?
+            .try_collect()
+            .await
+            .unwrap_or_default();
+
+        let _ = session.logout().await;
+        Ok(())
+    }
+
     /// Save a draft message to the Drafts folder via IMAP APPEND
     pub async fn save_draft(
         &self,
