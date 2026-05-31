@@ -40,17 +40,22 @@
 
 use askama::Template;
 use axum::{
-    extract::State,
+    extract::{Query, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Redirect, Response},
 };
 
 use crate::error::AppError;
 use crate::middleware::classic_csrf::validate_csrf_token;
+use crate::models::pending_2fa_token::PendingTwoFactorToken;
 use crate::services::auth_service::evaluate_password_login;
 use crate::state::AppState;
 
 use super::auth::{create_session_and_cookie, generate_csrf_token, INBOX_PATH, LOGIN_PATH};
+use super::totp_challenge::{
+    build_set_pending_cookie_header, CHALLENGE_PATH, EXPIRED_OR_INVALID_ERROR,
+    TOO_MANY_CODES_ERROR,
+};
 use super::CspNonce;
 
 /// Pre-session cookie name. Distinct from `tasmail_classic_sid` so the two
@@ -204,6 +209,30 @@ fn render_login_response(
     Ok(resp)
 }
 
+/// Query string for GET /classic/login. The `?error=…` slot lets the 2FA
+/// challenge bounce surface a flash on the login page without a session
+/// to store it in. Only whitelisted values are honoured (see `LoginQuery::
+/// flash_message`) — anything else is silently dropped to keep the form
+/// from being weaponised as a reflected-XSS-by-error-string vector.
+#[derive(serde::Deserialize, Debug, Default)]
+pub struct LoginQuery {
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+impl LoginQuery {
+    /// Translate the (untrusted) `?error=` value into a fixed, server-defined
+    /// string. Anything we don't recognise yields `None` so the form
+    /// re-renders without a flash.
+    fn flash_message(&self) -> Option<String> {
+        match self.error.as_deref() {
+            Some("2fa_expired") => Some(EXPIRED_OR_INVALID_ERROR.to_string()),
+            Some("2fa_too_many") => Some(TOO_MANY_CODES_ERROR.to_string()),
+            _ => None,
+        }
+    }
+}
+
 /// GET /classic/login — render the form with a fresh pre-session CSRF
 /// token.
 ///
@@ -213,7 +242,15 @@ fn render_login_response(
 /// to avoid showing a login form to a logged-in user; if the cookie is
 /// stale they'll bounce to the inbox, the middleware will reject, and
 /// they'll land back here anyway.
-pub async fn get_login(headers: HeaderMap) -> Result<Response, AppError> {
+///
+/// Added (TMAIL-361): also accepts an optional `?error=2fa_expired|2fa_too_many`
+/// query param so the 2FA challenge bounce can flash a message without a
+/// session to store it in. The mapping is whitelisted to fixed server
+/// strings — see `LoginQuery::flash_message`.
+pub async fn get_login(
+    headers: HeaderMap,
+    Query(query): Query<LoginQuery>,
+) -> Result<Response, AppError> {
     // Already-signed-in shortcut. Cheap presence check matches what
     // `handlers::classic::index_redirect` does for the /classic/ root.
     if headers
@@ -230,7 +267,7 @@ pub async fn get_login(headers: HeaderMap) -> Result<Response, AppError> {
     }
 
     let token = generate_csrf_token();
-    let template = LoginTemplate::new(String::new(), None, &token);
+    let template = LoginTemplate::new(String::new(), query.flash_message(), &token);
     render_login_response(
         StatusCode::OK,
         template,
@@ -318,22 +355,52 @@ pub async fn post_login(
         Err(other) => return Err(other),
     };
 
-    // 4) 2FA short-circuit. Per the gap analysis P0 #5 the actual TOTP
-    //    challenge ships in P0 #7 (TMAIL-361). For now we redirect to the
-    //    placeholder path so the wiring exists and the follow-up task only
-    //    has to ship the challenge UI. The session is NOT yet established
-    //    at this point — the password evaluator returned the mailbox but
-    //    we hold off on creating the classic_sessions row until TOTP
-    //    succeeds (otherwise the 2FA gate is meaningless).
-    if mailbox.totp_enabled {
-        // Render the same form with a clear message until P0 #7 lands.
-        // Use 503 so the absence of the challenge UI is visible in logs.
-        return render_failure(
-            &form.email,
-            "Two-factor authentication is required for this account but isn't yet available on the Classic surface. Use the modern UI for now.",
-            StatusCode::SERVICE_UNAVAILABLE,
-            true,
+    // 4) 2FA short-circuit (TMAIL-361). If the resolved mailbox has TOTP
+    //    enrolled we MUST NOT create the full `classic_sessions` row yet —
+    //    that would defeat the 2FA gate. Instead:
+    //      a) Clear any stale pending-2FA rows for this user (e.g. an
+    //         abandoned previous attempt) so we don't accumulate them.
+    //      b) Insert a fresh `pending_2fa_tokens` row (5 min fixed TTL).
+    //      c) Set the `tasmail_classic_pending_2fa` cookie carrying the
+    //         row's id + an HMAC signature.
+    //      d) Also clear the pre-session login CSRF cookie (it's been
+    //         consumed by this POST and the next stage doesn't need it).
+    //      e) 303 → /classic/login/2fa.
+    if mailbox.totp_enabled && mailbox.totp_secret.is_some() {
+        // Best-effort clear of previous gates for this user. Failures here
+        // are not fatal — the new row will still resolve via its cookie.
+        let _ = PendingTwoFactorToken::delete_for_user(&state.db, mailbox.id).await;
+
+        let challenge_csrf = generate_csrf_token();
+        let pending = PendingTwoFactorToken::create(
+            &state.db,
+            mailbox.id,
+            &challenge_csrf,
+            ip.as_deref(),
+            ua.as_deref(),
+        )
+        .await
+        .map_err(|e| {
+            AppError::Internal(anyhow::anyhow!(
+                "pending_2fa_tokens insert failed: {e}"
+            ))
+        })?;
+
+        let mut resp = Redirect::to(CHALLENGE_PATH).into_response();
+        if let Ok(hv) =
+            HeaderValue::from_str(&build_set_pending_cookie_header(&state.config.jwt.secret, pending.id))
+        {
+            resp.headers_mut().append(header::SET_COOKIE, hv);
+        }
+        if let Ok(hv) = HeaderValue::from_str(&build_clear_login_csrf_cookie()) {
+            resp.headers_mut().append(header::SET_COOKIE, hv);
+        }
+        tracing::info!(
+            user_id = ?mailbox.id,
+            pending_id = ?pending.id,
+            "classic login passed password — gating on TOTP challenge"
         );
+        return Ok(resp);
     }
 
     // 5) Establish a real classic_sessions row + signed cookie.

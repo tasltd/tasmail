@@ -102,3 +102,6 @@ pub mod payment_provider_config;
 pub mod feature_flag;
 // Added (TMAIL-357): Server-side session rows for the /classic no-JS surface.
 pub mod classic_session;
+// Added (TMAIL-361): One-shot 2FA-challenge rows gating /classic logins for
+// users with TOTP enrolled. See `migrations/081_pending_2fa_tokens.sql`.
+pub mod pending_2fa_token;

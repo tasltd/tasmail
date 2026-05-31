@@ -64,6 +64,12 @@ pub mod login;
 // in a hostile email or pre-fetched link.
 pub mod logout;
 
+// Added (TMAIL-361): GET + POST handlers for /classic/login/2fa — the TOTP
+// challenge that gates Classic UI logins when the resolved mailbox has TOTP
+// enrolled. Lives on the PUBLIC sub-router (the user has no real session
+// yet); cookie-based gate state rides on `pending_2fa_tokens` (5 min TTL).
+pub mod totp_challenge;
+
 // NAME: Session cookie name shared with the Classic UI auth handler that
 // lands in TMAIL-357 (P0 #3). The scaffold only needs to *detect* presence;
 // the cookie value is opaque here and validated later by the dedicated
@@ -121,6 +127,17 @@ pub fn router(state: AppState) -> Router<AppState> {
         // a ClassicSession); the POST handler does its own double-submit-
         // cookie CSRF check.
         .route("/classic/login", get(login::get_login).post(login::post_login))
+        // Added (TMAIL-361): public 2FA challenge route. Lives next to
+        // /classic/login (not inside `authenticated_router`) because the
+        // user does NOT yet have a real classic_sessions row — the gate
+        // resolves via the short-lived `tasmail_classic_pending_2fa`
+        // cookie alongside a `pending_2fa_tokens` row (5-min one-shot TTL).
+        // The handler does its own cookie+sig verification inline so it
+        // doesn't need a half-session class to ride through middleware.
+        .route(
+            "/classic/login/2fa",
+            get(totp_challenge::get_challenge).post(totp_challenge::post_challenge),
+        )
         // Added (TMAIL-360): authenticated sub-router for state-changing
         // POST endpoints that need a verified session AND CSRF protection.
         // Logout is the first inhabitant; inbox/compose/settings join in
@@ -151,6 +168,15 @@ pub fn router(state: AppState) -> Router<AppState> {
 /// (outer/runs first). That guarantees the session is in extensions before
 /// the CSRF middleware needs to read it — the same pattern `auth_middleware`
 /// → `rls_context_middleware` uses on the `/api` side.
+///
+/// IMPORTANT: both layers are attached via `route_layer` (NOT `layer`).
+/// `route_layer` applies the middleware to MATCHED routes only and leaves
+/// the fallback / merge fall-through path untouched. Without that
+/// distinction, a `GET /api/nonexistent` would hit the merged router's
+/// fallback chain — which passes through every `.layer()` on every merged
+/// sub-router — and the session middleware would 303-bounce it to
+/// `/classic/login`. `route_layer` keeps the bounce scoped to actual
+/// `/classic/...` requests.
 fn authenticated_router(state: AppState) -> Router<AppState> {
     Router::new()
         // Added (TMAIL-360): logout is intentionally POST-only — see the
@@ -162,13 +188,13 @@ fn authenticated_router(state: AppState) -> Router<AppState> {
         // Inner layer: CSRF check on state-changing methods. Runs AFTER
         // the session middleware on the request side, so the session row
         // (carrying the expected token) is in extensions when it executes.
-        .layer(axum_middleware::from_fn(
+        .route_layer(axum_middleware::from_fn(
             crate::middleware::classic_csrf::classic_csrf_middleware,
         ))
         // Outer layer: cookie → session resolution. Bounces to login on
         // any failure so downstream layers + handlers never have to
         // worry about an unauthenticated request.
-        .layer(axum_middleware::from_fn_with_state(
+        .route_layer(axum_middleware::from_fn_with_state(
             state,
             crate::middleware::classic_session::classic_session_middleware,
         ))
