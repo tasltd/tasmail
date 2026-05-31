@@ -92,6 +92,10 @@ async fn try_build_state() -> Option<(AppState, PgPool)> {
         cache: CacheService::disabled(),
         encryption: EncryptionService::from_jwt_secret(TEST_JWT_SECRET),
         inner_router: inner_router_holder,
+        // Added (TMAIL-356): AppState gained `queue_heartbeat` in TMAIL-310
+        // but this older test file didn't get updated — fill it in so the
+        // build passes for everything else.
+        queue_heartbeat: tasmail::services::queue_heartbeat::QueueHeartbeat::new(),
     };
     Some((state, pool))
 }
@@ -127,6 +131,10 @@ fn test_config(db_url: String) -> Config {
         },
         storage: StorageConfig::default(),
         metrics_token: None,
+        // Added (TMAIL-356): Config gained `metrics_allowed_ips` in TMAIL-314
+        // but this older test file didn't get updated — `None` falls back to
+        // loopback-only, which is what the integration tests expect.
+        metrics_allowed_ips: None,
         rspamd_url: None,
         rspamd_password: None,
         billing: None,

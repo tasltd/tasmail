@@ -142,6 +142,8 @@ fn test_config(db_url: String) -> Config {
         },
         storage: StorageConfig::default(),
         metrics_token: None,
+        // Added (TMAIL-356): Config gained `metrics_allowed_ips` in TMAIL-314.
+        metrics_allowed_ips: None,
         rspamd_url: None,
         rspamd_password: None,
         billing: None,
