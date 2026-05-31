@@ -246,6 +246,9 @@ pub async fn get_message(
     State(state): State<AppState>,
     Extension(claims): Extension<Claims>,
     Extension(session): Extension<crate::models::classic_session::ClassicSession>,
+    // Added (TMAIL-368): per-request CSP nonce so the inline `<style nonce="…">`
+    // on base.html matches the strict /classic/* CSP response header.
+    Extension(csp_nonce): Extension<CspNonce>,
     Path((folder, uid)): Path<(String, u32)>,
 ) -> Result<Response, AppError> {
     let mailbox_id: Uuid = claims
@@ -312,7 +315,7 @@ pub async fn get_message(
         forward_href,
         delete_action,
         csrf_token: session.csrf_token.clone(),
-        csp_nonce: CspNonce::new().into_string(),
+        csp_nonce: csp_nonce.into_string(),
     };
 
     let html = template.render().map_err(|e| {

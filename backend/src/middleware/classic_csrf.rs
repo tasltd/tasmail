@@ -60,7 +60,7 @@ use axum::{
 };
 
 use crate::error::AppError;
-use crate::handlers::classic::{render_csrf_error_response, CSRF_FIELD_NAME};
+use crate::handlers::classic::{render_csrf_error_response, CspNonce, CSRF_FIELD_NAME};
 use crate::models::classic_session::ClassicSession;
 
 /// Maximum body size this middleware will buffer to find the `_csrf` field.
@@ -290,6 +290,17 @@ pub async fn classic_csrf_middleware(
 
     let retry_path = req.uri().path().to_string();
 
+    // Added (TMAIL-368): pull the per-request CSP nonce out of extensions so
+    // every render_csrf_error_response() call below stamps the matching value
+    // into the inline <style nonce="…"> on the 403 page. The middleware
+    // upstream (security_headers_middleware) inserts one nonce per /classic/*
+    // request. Fallback to a fresh nonce only on the never-in-production path
+    // where the middleware is missing — keeps unit tests of this middleware
+    // standalone-runnable.
+    let nonce = CspNonce::from_extensions_or_new(req.extensions())
+        .as_str()
+        .to_string();
+
     // The session MUST be in extensions — i.e. classic_session_middleware
     // ran upstream. If not, the request didn't go through the auth stack
     // (programming error OR a stale cookie whose middleware-bounce was
@@ -314,6 +325,7 @@ pub async fn classic_csrf_middleware(
         return Ok(render_csrf_error_response(
             "Your session has expired. Sign in again, then resubmit the form.",
             retry_path,
+            &nonce,
         ));
     };
 
@@ -335,6 +347,7 @@ pub async fn classic_csrf_middleware(
             return Ok(render_csrf_error_response(
                 "We couldn't read the form data. Reload the page and try again.",
                 retry_path,
+                &nonce,
             ));
         }
     };
@@ -348,6 +361,7 @@ pub async fn classic_csrf_middleware(
                 return Ok(render_csrf_error_response(
                     "Form submission was malformed (missing multipart boundary).",
                     retry_path,
+                    &nonce,
                 ));
             }
         }
@@ -357,6 +371,7 @@ pub async fn classic_csrf_middleware(
         return Ok(render_csrf_error_response(
             "This page only accepts standard form submissions.",
             retry_path,
+            &nonce,
         ));
     };
 
@@ -364,6 +379,7 @@ pub async fn classic_csrf_middleware(
         return Ok(render_csrf_error_response(
             "Form submission was missing its security token. Reload the page and try again.",
             retry_path,
+            &nonce,
         ));
     };
 
@@ -379,6 +395,7 @@ pub async fn classic_csrf_middleware(
         return Ok(render_csrf_error_response(
             "The security token didn't match. Reload the page and try again.",
             retry_path,
+            &nonce,
         ));
     }
 

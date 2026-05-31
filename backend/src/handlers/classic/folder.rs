@@ -351,6 +351,10 @@ pub async fn get_folder(
     State(state): State<AppState>,
     Extension(claims): Extension<Claims>,
     Extension(session): Extension<crate::models::classic_session::ClassicSession>,
+    // Added (TMAIL-368): pull the per-request CSP nonce from extensions so
+    // the template renders the matching `<style nonce="…">` for the strict
+    // /classic/* CSP header.
+    Extension(csp_nonce): Extension<CspNonce>,
     Path(folder): Path<String>,
     Query(query): Query<FolderQuery>,
 ) -> Result<Response, AppError> {
@@ -428,7 +432,7 @@ pub async fn get_folder(
         csrf_token: session.csrf_token.clone(),
         sent_banner: query.sent_banner(),
         deleted_banner: query.deleted_banner(),
-        csp_nonce: CspNonce::new().into_string(),
+        csp_nonce: csp_nonce.into_string(),
     };
 
     let body = template.render().map_err(|e| {

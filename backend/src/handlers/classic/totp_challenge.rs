@@ -51,6 +51,7 @@ use axum::{
     extract::State,
     http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Redirect, Response},
+    Extension,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD as B64URL, Engine as _};
 use hmac::{Hmac, Mac};
@@ -181,11 +182,19 @@ pub struct TotpChallengeTemplate {
 }
 
 impl TotpChallengeTemplate {
-    fn new(error: Option<String>, csrf_token: impl Into<String>) -> Self {
+    /// Changed (TMAIL-368): takes the per-request CSP nonce by argument
+    /// rather than generating one internally, so the inline
+    /// `<style nonce="…">` on base.html matches the `style-src` source on
+    /// the response header that `security_headers_middleware` set.
+    fn new(
+        error: Option<String>,
+        csrf_token: impl Into<String>,
+        csp_nonce: impl Into<String>,
+    ) -> Self {
         Self {
             error,
             csrf_token: csrf_token.into(),
-            csp_nonce: CspNonce::new().into_string(),
+            csp_nonce: csp_nonce.into(),
         }
     }
 }
@@ -271,6 +280,10 @@ fn bounce_to_login_with_reason(reason_param: &str) -> Response {
 /// re-enter their password.
 pub async fn get_challenge(
     State(state): State<AppState>,
+    // Added (TMAIL-368): per-request CSP nonce from the security_headers
+    // middleware. Threaded into the challenge template so the inline
+    // `<style nonce="…">` on base.html matches the response CSP header.
+    Extension(csp_nonce): Extension<CspNonce>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
     let Some((token_id, sig)) = extract_pending_cookie(&headers) else {
@@ -298,7 +311,7 @@ pub async fn get_challenge(
         }
     };
 
-    let template = TotpChallengeTemplate::new(None, pending.csrf_token);
+    let template = TotpChallengeTemplate::new(None, pending.csrf_token, csp_nonce.as_str());
     render_challenge_response(StatusCode::OK, template)
 }
 
@@ -306,6 +319,10 @@ pub async fn get_challenge(
 /// either issue a real session or re-render the form with an error.
 pub async fn post_challenge(
     State(state): State<AppState>,
+    // Added (TMAIL-368): per-request CSP nonce for the re-render-on-failure
+    // path. Bounce branches (Redirect) don't need it; only the wrong-code
+    // re-render does.
+    Extension(csp_nonce): Extension<CspNonce>,
     headers: HeaderMap,
     axum::Form(form): axum::Form<TotpChallengeForm>,
 ) -> Result<Response, AppError> {
@@ -393,8 +410,11 @@ pub async fn post_challenge(
 
         // Re-render the form with a generic error. CSRF token stays the same
         // (the same pending row backs it) so the user can immediately retry.
-        let template =
-            TotpChallengeTemplate::new(Some(GENERIC_CODE_ERROR.to_string()), pending.csrf_token);
+        let template = TotpChallengeTemplate::new(
+            Some(GENERIC_CODE_ERROR.to_string()),
+            pending.csrf_token,
+            csp_nonce.as_str(),
+        );
         return render_challenge_response(StatusCode::UNAUTHORIZED, template);
     }
 

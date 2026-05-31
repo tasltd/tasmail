@@ -1,4 +1,8 @@
 // Added (TMAIL-356): Per-request CSP nonce generator for the /classic surface.
+// Changed (TMAIL-368): bumped entropy from 16 → 32 bytes per the P0 #14 spec
+// ("Fresh nonce per request (32 random bytes, base64)"), and added the
+// `from_extensions_or_new` helper so middleware-injected nonces flow through
+// `Request`-taking handlers without each call site re-rolling its own.
 //
 // PURPOSE
 // -------
@@ -10,27 +14,31 @@
 //
 // FORMAT
 // ------
-// 16 random bytes, base64-standard encoded → 22 visible chars plus 2 `=` pads
-// (CSP nonce values are base64; the spec allows pad chars). 16 bytes ≈ 128
-// bits of entropy, which matches the W3C CSP nonce guidance and OWASP's
-// "at least 128 bits" rule. We use `rand::thread_rng` which is the
-// `ChaCha`-backed CSPRNG seeded from the OS entropy pool — fine for nonces.
+// 32 random bytes, base64-standard encoded → 43 visible chars plus 1 `=` pad
+// (CSP nonce values are base64; the spec allows pad chars). 32 bytes ≈ 256
+// bits of entropy, well above the W3C CSP nonce guidance and OWASP's
+// "at least 128 bits" rule. We use the rand 0.9 thread-local `ChaCha`-backed
+// CSPRNG seeded from the OS entropy pool — fine for nonces.
 //
 // HOW IT FLOWS
 // ------------
-// 1. The handler calls `CspNonce::new()` once per request.
-// 2. The nonce string is set as a field on the Askama template struct
-//    (`csp_nonce: String`) and rendered into the `<style nonce="{{...}}">`
-//    attribute on base.html.
-// 3. TMAIL-368 will wire the same value into the response header by storing
-//    `CspNonce` in a request extension on the way in and reading it in the
-//    security_headers middleware on the way out. That refactor lands in the
-//    follow-up; this module only exposes the constructor today.
+// 1. `security_headers_middleware` calls `CspNonce::new()` once per
+//    /classic/* request and inserts it into `request.extensions_mut()` before
+//    delegating to the handler.
+// 2. Handlers extract it via the `axum::Extension<CspNonce>` extractor (or
+//    `req.extensions().get::<CspNonce>()` for handlers that take `Request`
+//    directly) and pass the string into their Askama template struct's
+//    `csp_nonce: String` field.
+// 3. The middleware then assembles the `Content-Security-Policy` response
+//    header with the same nonce baked into the `style-src` source list, so
+//    the inline `<style nonce="…">` block on base.html is admitted by the
+//    browser while every other inline style is rejected.
 
+use axum::http::Extensions;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use rand::RngCore;
 
-/// 128-bit cryptographic nonce, base64-encoded, suitable for use in a CSP
+/// 256-bit cryptographic nonce, base64-encoded, suitable for use in a CSP
 /// `'nonce-XXX'` source expression and the matching `<style nonce="XXX">`
 /// attribute on inline styles in the Classic UI base layout.
 ///
@@ -43,24 +51,18 @@ use rand::RngCore;
 pub struct CspNonce(String);
 
 impl CspNonce {
-    /// Generate a fresh 128-bit nonce, base64-encoded.
+    /// Generate a fresh 256-bit nonce, base64-encoded.
     pub fn new() -> Self {
         // rand 0.9 deprecated `thread_rng()` → `rng()`. `rng()` returns the
         // same thread-local ChaCha-backed CSPRNG, seeded from the OS entropy
         // pool on first use.
-        let mut bytes = [0u8; 16];
+        let mut bytes = [0u8; 32];
         rand::rng().fill_bytes(&mut bytes);
         Self(BASE64.encode(bytes))
     }
 
-    /// Borrow the encoded value (for templates that take `&str` / for hand-built
-    /// CSP header strings in TMAIL-368).
-    ///
-    /// Marked `dead_code`-allowed because it has no caller until TMAIL-368
-    /// wires the CSP middleware. Keeping it part of the public API now means
-    /// that follow-up doesn't need to touch this module just to expose a
-    /// borrowing accessor.
-    #[allow(dead_code)]
+    /// Borrow the encoded value (used by the `Content-Security-Policy` header
+    /// builder in `security_headers_middleware`).
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -69,6 +71,18 @@ impl CspNonce {
     /// the value into an Askama template struct's `csp_nonce: String` field.
     pub fn into_string(self) -> String {
         self.0
+    }
+
+    /// Added (TMAIL-368): pull a request-scoped nonce out of `Extensions` (the
+    /// one that `security_headers_middleware` inserted on the way in). If the
+    /// extension is missing — which in production should never happen for
+    /// `/classic/*` paths, but DOES happen in unit tests that exercise a
+    /// handler without the middleware stack — we fall back to a fresh nonce
+    /// so the page still renders. The fallback CANNOT silently corrupt CSP in
+    /// production because the middleware always inserts before delegating, so
+    /// the only path that hits the fallback is the test harness.
+    pub fn from_extensions_or_new(ext: &Extensions) -> Self {
+        ext.get::<CspNonce>().cloned().unwrap_or_else(CspNonce::new)
     }
 }
 
@@ -83,15 +97,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn nonce_is_22_to_24_chars_of_base64() {
-        // 16 raw bytes → base64 STANDARD encoding produces exactly 24 chars
-        // (22 sig + 2 `=` pad). Lock the length in so a switch to base64-URL
-        // / unpadded engine doesn't slip the format past us silently.
+    fn nonce_is_44_chars_of_base64() {
+        // 32 raw bytes → base64 STANDARD encoding produces exactly 44 chars
+        // (43 sig + 1 `=` pad). Lock the length in so a switch to base64-URL
+        // / unpadded engine doesn't slip the format past us silently, and so
+        // a future regression of the byte count (back to 16 or up to 64)
+        // surfaces here rather than in the CSP header at runtime.
         let n = CspNonce::new();
         assert_eq!(
             n.as_str().len(),
-            24,
-            "expected 24-char (22+2 padding) base64 string, got {:?}",
+            44,
+            "expected 44-char (43+1 padding) base64 string, got {:?}",
             n.as_str()
         );
     }
@@ -116,7 +132,7 @@ mod tests {
     fn nonces_are_unique_per_call() {
         // Defence in depth: a nonce that repeats across requests defeats
         // its purpose. Generate a batch and assert they're all distinct.
-        // With 128 bits of entropy, the chance of two collisions in 1000
+        // With 256 bits of entropy, the chance of two collisions in 1000
         // draws is astronomically low — a collision here means the RNG is
         // broken or someone replaced `thread_rng` with a constant.
         let mut seen = std::collections::HashSet::new();
@@ -134,5 +150,36 @@ mod tests {
         let borrowed = n.as_str().to_string();
         let owned = n.into_string();
         assert_eq!(borrowed, owned);
+    }
+
+    #[test]
+    fn from_extensions_returns_inserted_nonce() {
+        // Added (TMAIL-368): the middleware inserts a CspNonce into the
+        // request extensions; handlers that read it via this helper MUST
+        // get the SAME value back — if they got a fresh nonce, the header
+        // and the inline `<style nonce="…">` would diverge and the browser
+        // would block every CSS rule on the page.
+        let mut ext = Extensions::new();
+        let injected = CspNonce::new();
+        let injected_str = injected.as_str().to_string();
+        ext.insert(injected);
+
+        let pulled = CspNonce::from_extensions_or_new(&ext);
+        assert_eq!(
+            pulled.as_str(),
+            injected_str,
+            "from_extensions_or_new must return the previously-inserted nonce"
+        );
+    }
+
+    #[test]
+    fn from_extensions_falls_back_to_fresh_when_missing() {
+        // Test-harness fallback: handlers exercised without the middleware
+        // still need a renderable page. The fallback is fine here because
+        // there's no CSP header pinning the value; in production the
+        // middleware always pre-inserts so this branch is unreachable.
+        let ext = Extensions::new();
+        let n = CspNonce::from_extensions_or_new(&ext);
+        assert_eq!(n.as_str().len(), 44, "fallback nonce must be 44 chars");
     }
 }

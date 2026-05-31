@@ -136,6 +136,10 @@ pub async fn post_delete(
     State(state): State<AppState>,
     Extension(claims): Extension<Claims>,
     Extension(session): Extension<ClassicSession>,
+    // Added (TMAIL-368): per-request CSP nonce for the confirm-page render
+    // path. The Move-to-Trash + permanent-delete branches return 303 with
+    // no body, so they don't need the nonce — only the confirm render does.
+    Extension(csp_nonce): Extension<CspNonce>,
     Path((folder, uid)): Path<(String, u32)>,
     Form(form): Form<DeleteForm>,
 ) -> Result<Response, AppError> {
@@ -216,7 +220,7 @@ pub async fn post_delete(
         form_action,
         cancel_href,
         csrf_token: session.csrf_token.clone(),
-        csp_nonce: CspNonce::new().into_string(),
+        csp_nonce: csp_nonce.into_string(),
     };
 
     let html = template

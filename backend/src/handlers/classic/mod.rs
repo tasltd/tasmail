@@ -313,14 +313,16 @@ async fn index_redirect(headers: HeaderMap) -> Redirect {
 /// user can spot a typo without having to reconstruct it from the URL bar.
 async fn not_found(req: Request) -> Response {
     let path = req.uri().path().to_string();
+    // Changed (TMAIL-368): pull the per-request CSP nonce out of request
+    // extensions instead of rolling our own. `security_headers_middleware`
+    // inserts a `CspNonce` on every /classic/* request so the inline
+    // <style nonce="…"> on base.html matches the `style-src 'self'
+    // 'nonce-XXX'` source on the response header. The `from_extensions_or_new`
+    // helper falls back to a fresh nonce only in unit tests that bypass the
+    // middleware.
     let tpl = NotFoundTemplate {
         path,
-        // Added (TMAIL-356): Fresh CSP nonce per response so the inline
-        // <style> on base.html survives the `style-src 'self' 'nonce-XXX'`
-        // header that TMAIL-368 will ship. Today the header isn't set yet;
-        // the nonce attribute is harmless in its absence and ready when it
-        // lands.
-        csp_nonce: CspNonce::new().into_string(),
+        csp_nonce: CspNonce::from_extensions_or_new(req.extensions()).into_string(),
     };
     match tpl.render() {
         Ok(body) => (StatusCode::NOT_FOUND, Html(body)).into_response(),

@@ -21,8 +21,6 @@ use askama::Template;
 use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Response};
 
-use super::CspNonce;
-
 /// Form field name used by every Classic UI `<form>` to carry the
 /// per-session CSRF token. Centralised so a future rename touches one
 /// constant, not eight templates.
@@ -53,13 +51,22 @@ pub struct CsrfErrorTemplate {
 }
 
 impl CsrfErrorTemplate {
-    /// Build the struct with a fresh per-request nonce. The middleware uses
-    /// this so it doesn't have to know about CspNonce internals.
-    pub fn new(reason: impl Into<String>, retry_path: impl Into<String>) -> Self {
+    /// Build the struct with an explicitly-supplied CSP nonce.
+    ///
+    /// Changed (TMAIL-368): takes the nonce as a parameter rather than
+    /// generating one internally so the value matches the per-request nonce
+    /// `security_headers_middleware` baked into the response CSP header.
+    /// Callers pull it from `req.extensions().get::<CspNonce>()` and pass
+    /// the encoded string in.
+    pub fn new(
+        reason: impl Into<String>,
+        retry_path: impl Into<String>,
+        csp_nonce: impl Into<String>,
+    ) -> Self {
         Self {
             reason: reason.into(),
             retry_path: retry_path.into(),
-            csp_nonce: CspNonce::new().into_string(),
+            csp_nonce: csp_nonce.into(),
         }
     }
 }
@@ -71,8 +78,17 @@ impl CsrfErrorTemplate {
 /// render — which would mean a build-time invariant broke — falls back to a
 /// plain-text 403 so the user still sees *something* rather than the JSON
 /// `AppError` envelope.
-pub fn render_csrf_error_response(reason: impl Into<String>, retry_path: impl Into<String>) -> Response {
-    let tpl = CsrfErrorTemplate::new(reason, retry_path);
+///
+/// Changed (TMAIL-368): now takes the per-request `csp_nonce` so the inline
+/// `<style nonce="…">` on base.html matches the response CSP header that the
+/// security_headers middleware also sets. The classic_csrf_middleware pulls
+/// the nonce out of request extensions and threads it in.
+pub fn render_csrf_error_response(
+    reason: impl Into<String>,
+    retry_path: impl Into<String>,
+    csp_nonce: impl Into<String>,
+) -> Response {
+    let tpl = CsrfErrorTemplate::new(reason, retry_path, csp_nonce);
     match tpl.render() {
         Ok(body) => (StatusCode::FORBIDDEN, Html(body)).into_response(),
         Err(e) => {
@@ -99,6 +115,10 @@ mod tests {
     }
 
     fn render_with(reason: &str, retry_path: &str) -> String {
+        // Build via the explicit struct literal so this helper stays one
+        // line away from showing the fixed test nonce — readers don't have
+        // to chase the `CsrfErrorTemplate::new` API to understand what's
+        // being asserted on.
         CsrfErrorTemplate {
             reason: reason.to_string(),
             retry_path: retry_path.to_string(),
@@ -166,15 +186,15 @@ mod tests {
     }
 
     #[test]
-    fn new_constructor_generates_fresh_nonce_per_call() {
-        // Reusing a nonce defeats CSP — the constructor must call
-        // CspNonce::new() once per build, never cache.
-        let a = CsrfErrorTemplate::new("r", "/x");
-        let b = CsrfErrorTemplate::new("r", "/x");
-        assert_ne!(
-            a.csp_nonce, b.csp_nonce,
-            "consecutive CsrfErrorTemplate::new() calls returned identical \
-             nonces — CspNonce::new() must be invoked per build"
-        );
+    fn new_constructor_stores_passed_in_nonce_verbatim() {
+        // Changed (TMAIL-368): the constructor no longer rolls its own
+        // nonce — it stores whatever the caller passed in. The middleware
+        // is the source of truth for the per-request value now. This test
+        // pins the new contract: same input → same nonce, no surprise
+        // randomness on the way through.
+        let a = CsrfErrorTemplate::new("r", "/x", "nonce-aaa");
+        let b = CsrfErrorTemplate::new("r", "/x", "nonce-bbb");
+        assert_eq!(a.csp_nonce, "nonce-aaa");
+        assert_eq!(b.csp_nonce, "nonce-bbb");
     }
 }

@@ -43,6 +43,7 @@ use axum::{
     extract::{Query, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Redirect, Response},
+    Extension,
 };
 
 use crate::error::AppError;
@@ -108,12 +109,23 @@ impl LoginTemplate {
     /// Build a fresh template with no error and an empty email. Used by
     /// `GET /classic/login` and by the POST handler when it needs to
     /// re-render the form on failure.
-    fn new(email: impl Into<String>, error: Option<String>, csrf_token: impl Into<String>) -> Self {
+    ///
+    /// Changed (TMAIL-368): takes the CSP nonce as an explicit parameter
+    /// instead of generating its own. The middleware pre-inserts one nonce
+    /// per /classic/* request into `req.extensions()` and the handler
+    /// threads it through to here so the header nonce + the inline
+    /// `<style nonce="…">` attribute agree byte-for-byte.
+    fn new(
+        email: impl Into<String>,
+        error: Option<String>,
+        csrf_token: impl Into<String>,
+        csp_nonce: impl Into<String>,
+    ) -> Self {
         Self {
             email: email.into(),
             error,
             csrf_token: csrf_token.into(),
-            csp_nonce: CspNonce::new().into_string(),
+            csp_nonce: csp_nonce.into(),
         }
     }
 }
@@ -248,6 +260,11 @@ impl LoginQuery {
 /// session to store it in. The mapping is whitelisted to fixed server
 /// strings — see `LoginQuery::flash_message`.
 pub async fn get_login(
+    // Added (TMAIL-368): pull the per-request CSP nonce out of request
+    // extensions where `security_headers_middleware` parked it on the way
+    // in. Threading it explicitly through every handler signature keeps the
+    // header-vs-template binding visible to readers (and to the type system).
+    Extension(csp_nonce): Extension<CspNonce>,
     headers: HeaderMap,
     Query(query): Query<LoginQuery>,
 ) -> Result<Response, AppError> {
@@ -267,7 +284,12 @@ pub async fn get_login(
     }
 
     let token = generate_csrf_token();
-    let template = LoginTemplate::new(String::new(), query.flash_message(), &token);
+    let template = LoginTemplate::new(
+        String::new(),
+        query.flash_message(),
+        &token,
+        csp_nonce.as_str(),
+    );
     render_login_response(
         StatusCode::OK,
         template,
@@ -287,6 +309,10 @@ pub async fn get_login(
 /// verification step.
 pub async fn post_login(
     State(state): State<AppState>,
+    // Added (TMAIL-368): same as `get_login` — the middleware's per-request
+    // nonce flows in here so every re-render-on-failure path uses the same
+    // value that's in the response CSP header.
+    Extension(csp_nonce): Extension<CspNonce>,
     headers: HeaderMap,
     axum::Form(form): axum::Form<LoginForm>,
 ) -> Result<Response, AppError> {
@@ -299,6 +325,7 @@ pub async fn post_login(
             CSRF_ERROR_MESSAGE,
             StatusCode::BAD_REQUEST,
             true,
+            csp_nonce.as_str(),
         );
     };
     if form.csrf.is_empty() || !validate_csrf_token(&form.csrf, &cookie_token) {
@@ -307,6 +334,7 @@ pub async fn post_login(
             CSRF_ERROR_MESSAGE,
             StatusCode::BAD_REQUEST,
             true,
+            csp_nonce.as_str(),
         );
     }
 
@@ -319,6 +347,7 @@ pub async fn post_login(
             GENERIC_LOGIN_ERROR,
             StatusCode::BAD_REQUEST,
             true,
+            csp_nonce.as_str(),
         );
     }
 
@@ -347,6 +376,7 @@ pub async fn post_login(
                 GENERIC_LOGIN_ERROR,
                 StatusCode::UNAUTHORIZED,
                 true,
+                csp_nonce.as_str(),
             );
         }
         // Database / internal errors bubble up to the global AppError handler
@@ -426,6 +456,10 @@ fn render_failure(
     error: &str,
     status: StatusCode,
     rotate_token: bool,
+    // Added (TMAIL-368): explicit CSP nonce — must be the per-request value
+    // the security_headers middleware also baked into the CSP response
+    // header. Threaded from the public handler signatures.
+    csp_nonce: &str,
 ) -> Result<Response, AppError> {
     let token = if rotate_token {
         generate_csrf_token()
@@ -435,7 +469,7 @@ fn render_failure(
         // caller passes true.
         generate_csrf_token()
     };
-    let template = LoginTemplate::new(email, Some(error.to_string()), &token);
+    let template = LoginTemplate::new(email, Some(error.to_string()), &token, csp_nonce);
     render_login_response(status, template, Some(build_login_csrf_cookie(&token)))
 }
 

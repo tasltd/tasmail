@@ -174,7 +174,17 @@ pub struct ComposeTemplate {
 
 impl ComposeTemplate {
     /// Blank-state factory used by GET /classic/compose on a fresh load.
-    pub fn fresh(source_folder: impl Into<String>, csrf_token: impl Into<String>) -> Self {
+    ///
+    /// Changed (TMAIL-368): takes the per-request CSP nonce by argument so
+    /// the inline `<style nonce="…">` on base.html matches the strict
+    /// `/classic/*` response CSP header. Callers pull the nonce from
+    /// `req.extensions().get::<CspNonce>()` via the `axum::Extension<CspNonce>`
+    /// extractor.
+    pub fn fresh(
+        source_folder: impl Into<String>,
+        csrf_token: impl Into<String>,
+        csp_nonce: impl Into<String>,
+    ) -> Self {
         let folder = source_folder.into();
         let href = urlencoding::encode(&folder).into_owned();
         Self {
@@ -190,7 +200,7 @@ impl ComposeTemplate {
             prior_attachment_names: vec![],
             error: None,
             csrf_token: csrf_token.into(),
-            csp_nonce: CspNonce::new().into_string(),
+            csp_nonce: csp_nonce.into(),
         }
     }
 }
@@ -390,6 +400,8 @@ pub async fn get_compose(
     State(state): State<AppState>,
     Extension(claims): Extension<Claims>,
     Extension(session): Extension<crate::models::classic_session::ClassicSession>,
+    // Added (TMAIL-368): per-request CSP nonce from `security_headers_middleware`.
+    Extension(csp_nonce): Extension<CspNonce>,
     Query(query): Query<ComposeQuery>,
 ) -> Result<Response, AppError> {
     let mailbox_id: Uuid = claims
@@ -398,7 +410,8 @@ pub async fn get_compose(
         .map_err(|_| AppError::Internal(anyhow::anyhow!("Invalid mailbox ID in classic claims")))?;
 
     let folder = query.folder_or_default();
-    let mut template = ComposeTemplate::fresh(&folder, &session.csrf_token);
+    let mut template =
+        ComposeTemplate::fresh(&folder, &session.csrf_token, csp_nonce.as_str());
 
     if let Some((uid, mode)) = query.prefill_target() {
         match fetch_prefill(&state, mailbox_id, &folder, uid, mode).await {
@@ -735,6 +748,10 @@ pub async fn post_compose(
     State(state): State<AppState>,
     Extension(claims): Extension<Claims>,
     Extension(session): Extension<crate::models::classic_session::ClassicSession>,
+    // Added (TMAIL-368): per-request CSP nonce for the re-render-on-failure
+    // path. The success path is a 303 redirect with no body so it carries
+    // no inline `<style>` — only the failure branch needs the nonce.
+    Extension(csp_nonce): Extension<CspNonce>,
     multipart: Multipart,
 ) -> Result<Response, AppError> {
     let mailbox_id: Uuid = claims
@@ -766,6 +783,7 @@ pub async fn post_compose(
                     total_bytes: 0,
                 },
                 vec![],
+                csp_nonce.as_str(),
             );
         }
     };
@@ -814,6 +832,7 @@ pub async fn post_compose(
                     total_bytes: prior_total_bytes,
                 },
                 prior_filenames,
+                csp_nonce.as_str(),
             );
         }
     };
@@ -892,6 +911,7 @@ pub async fn post_compose(
                 total_bytes: prior_total_bytes,
             },
             prior_filenames,
+            csp_nonce.as_str(),
         ),
     }
 }
@@ -922,6 +942,10 @@ fn render_error_form(
     error: &str,
     submission: ComposeSubmission,
     prior_attachment_names: Vec<String>,
+    // Added (TMAIL-368): explicit CSP nonce — must be the per-request value
+    // the security_headers middleware already baked into the response CSP
+    // header. Threaded from `post_compose`.
+    csp_nonce: &str,
 ) -> Result<Response, AppError> {
     let folder = if submission.source_folder.trim().is_empty() {
         "INBOX".to_string()
@@ -943,7 +967,7 @@ fn render_error_form(
         prior_attachment_names,
         error: Some(error.to_string()),
         csrf_token: csrf_token.to_string(),
-        csp_nonce: CspNonce::new().into_string(),
+        csp_nonce: csp_nonce.to_string(),
     };
     let html = template
         .render()
@@ -974,7 +998,11 @@ mod tests {
     }
 
     fn fresh_template() -> ComposeTemplate {
-        ComposeTemplate::fresh("INBOX", "test-csrf-token")
+        // Changed (TMAIL-368): `fresh` now takes the CSP nonce as a third
+        // argument so the template-vs-CSP-header binding is explicit. Tests
+        // can pass any fixed value; production code threads the per-request
+        // value from request extensions.
+        ComposeTemplate::fresh("INBOX", "test-csrf-token", "test-nonce-fixed-for-tests")
     }
 
     // ----- ComposeQuery -----
@@ -1595,7 +1623,7 @@ mod tests {
 
     #[test]
     fn compose_template_renders_cancel_link_back_to_source_folder() {
-        let t = ComposeTemplate::fresh("Sent", "test-csrf-token");
+        let t = ComposeTemplate::fresh("Sent", "test-csrf-token", "test-nonce-fixed-for-tests");
         let body = t.render().expect("template renders");
         assert!(
             body.contains("href=\"/classic/folders/Sent\""),
