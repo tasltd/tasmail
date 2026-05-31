@@ -112,3 +112,6 @@ pub mod sync;
 pub mod warmup;
 // Added: Cache management handlers for Redis admin operations
 pub mod cache;
+// Added (TMAIL-355): Server-rendered no-JS `/classic` surface scaffold.
+// Owns its own sub-router; child tasks add login, folder, message, compose.
+pub mod classic;

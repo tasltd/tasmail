@@ -82,6 +82,15 @@ bytes = "1"
 # and NTLM are off by default — turn on later when the auth-side ticket lands.
 ldap3 = { version = "0.12", default-features = false, features = ["tls-rustls", "tls-rustls-ring"] }
 
+# Added (TMAIL-355): Compile-time-checked HTML templates for the /classic
+# no-JS surface. Picked over Tera/Maud because templates are validated at
+# build time (typos in field names fail `cargo build` rather than at runtime
+# on a customer page), it has no runtime parser/interpreter, and the license
+# is MIT/Apache-2.0. Integration crates were dropped in askama 0.13 — we
+# render manually with `template.render()` + `axum::response::Html`. See
+# `docs/research/askama-axum-integration.md`.
+askama = "0.13"
+
 # Added: DLP milter daemon for the optional self-host Postfix deployment (TMAIL-108)
 [[bin]]
 name = "dlp_milter"

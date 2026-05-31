@@ -1098,6 +1098,17 @@ pub fn create_router(state: AppState) -> Router {
         axum::http::HeaderValue::from_static("1.0"),
     );
 
+    // Added (TMAIL-355): `/classic` no-JS surface scaffold. Merged at the
+    // top level with full `/classic/...` paths (including its own
+    // `/classic/{*rest}` catch-all for 404s) so the fallback only matches
+    // unknown paths under `/classic/` — it never hijacks `/api/*` misses.
+    //
+    // The classic router intentionally does NOT inherit `auth_middleware`
+    // or `rls_context_middleware`: those expect Bearer JWTs in the
+    // Authorization header, which is unreachable without JavaScript. Its
+    // own session middleware ships in TMAIL-357.
+    let classic_routes = handlers::classic::router();
+
     // Added: Multi-algorithm compression for low-bandwidth mobile clients (TMAIL-52).
     // CompressionLayer::new() negotiates gzip, brotli, and deflate based on the
     // client's Accept-Encoding header. Brotli wins for text payloads (JSON, HTML);
@@ -1106,6 +1117,7 @@ pub fn create_router(state: AppState) -> Router {
         .merge(auth_routes)
         .merge(public_routes)
         .merge(protected_routes)
+        .merge(classic_routes)
         .layer(
             CompressionLayer::new()
                 .gzip(true)
