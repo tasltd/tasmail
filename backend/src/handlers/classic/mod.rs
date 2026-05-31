@@ -133,6 +133,13 @@ pub mod move_to;
 // version with a folder selector. Read-only GET — no CSRF needed.
 pub mod search;
 
+// Added (TMAIL-374): 3-step server-rendered BYOK signup wizard (P1 #20).
+// Lives on the PUBLIC sub-router — the user has no real session yet, and the
+// wizard's own state is carried in the signed `tasmail_classic_signup_draft`
+// cookie pointing at a `classic_signup_drafts` row. Each step's POST does its
+// own double-submit-cookie CSRF check against the draft row's csrf_token.
+pub mod signup;
+
 // NAME: Session cookie name shared with the Classic UI auth handler that
 // lands in TMAIL-357 (P0 #3). The scaffold only needs to *detect* presence;
 // the cookie value is opaque here and validated later by the dedicated
@@ -200,6 +207,21 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route(
             "/classic/login/2fa",
             get(totp_challenge::get_challenge).post(totp_challenge::post_challenge),
+        )
+        // Added (TMAIL-374): 3-step BYOK signup wizard. All routes are
+        // PUBLIC (the user has no session yet) and carry their own
+        // double-submit-cookie CSRF via the draft row's csrf_token.
+        .route(
+            "/classic/signup",
+            get(signup::get_step1_account).post(signup::post_step1_account),
+        )
+        .route(
+            "/classic/signup/imap",
+            get(signup::get_step2_servers).post(signup::post_step2_servers),
+        )
+        .route(
+            "/classic/signup/done",
+            get(signup::get_step3_done).post(signup::post_step3_done),
         )
         // Added (TMAIL-360): authenticated sub-router for state-changing
         // POST endpoints that need a verified session AND CSRF protection.

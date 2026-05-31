@@ -105,3 +105,6 @@ pub mod classic_session;
 // Added (TMAIL-361): One-shot 2FA-challenge rows gating /classic logins for
 // users with TOTP enrolled. See `migrations/081_pending_2fa_tokens.sql`.
 pub mod pending_2fa_token;
+// Added (TMAIL-374): In-progress state for the 3-step /classic signup
+// wizard. See `migrations/082_classic_signup_drafts.sql`.
+pub mod classic_signup_draft;

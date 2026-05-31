@@ -1,0 +1,91 @@
+{% extends "classic/base.html" %}
+
+{# TMAIL-374 — Signup wizard Step 1 of 3 for the `/classic` no-JS surface.
+
+   Model:
+     * `email`         — pre-fill across a failed POST so the user doesn't
+                         retype the address. Empty on fresh GET. HTML-escaped
+                         by Askama auto-escape for the .html extension.
+     * `display_name`  — optional, preserved across re-renders the same way.
+     * `error`         — Some("…") on validation/CSRF/conflict; None on
+                         fresh GET. Rendered inside a role="alert" block.
+     * `csrf_token`    — bound to the `classic_signup_drafts` row that the
+                         `tasmail_classic_signup_draft` cookie resolves to.
+                         Validated by POST via constant-time compare.
+     * `csp_nonce`     — per-request CSP nonce required by base.html.
+     * `current_step`  — always 1 on this template; drives the progress bar.
+
+   This page is publicly reachable at /classic/signup. No JavaScript runs
+   anywhere on this page — works in lynx, w3m, and any HTML5 browser. #}
+
+{% block title %}Create your TASMail account · Step 1 of 3{% endblock %}
+
+{% block content %}
+  <h1>Create your TASMail account</h1>
+
+  <ol aria-label="Signup progress" style="display: flex; gap: 0.75rem; flex-wrap: wrap; padding: 0; list-style: none; margin: 0.5rem 0 1rem;">
+    <li><strong>1. Account</strong></li>
+    <li>2. Mail servers</li>
+    <li>3. Finish</li>
+  </ol>
+
+  <p>
+    TASMail is a webmail UI for any IMAP/SMTP server &mdash; we never store
+    your mail, only the encrypted credentials needed to fetch it. Pick a
+    sign-in for the TASMail account itself; you'll attach your existing
+    mailbox (Gmail, Outlook, Zoho, FastMail, &hellip;) on the next step.
+  </p>
+
+  {% if let Some(msg) = error %}
+    <div class="alert alert-error" role="alert">
+      <strong>{{ msg }}</strong>
+    </div>
+  {% endif %}
+
+  <form method="post" action="/classic/signup" autocomplete="on" novalidate>
+    {# Double-submit-cookie CSRF token. The matching value sits in the
+       `tasmail_classic_signup_draft` cookie + the draft row. #}
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+
+    <label for="email">Email address</label>
+    <input type="email"
+           id="email"
+           name="email"
+           value="{{ email }}"
+           autocomplete="username"
+           inputmode="email"
+           required
+           aria-required="true"
+           aria-describedby="email-help"
+           autofocus>
+    <small id="email-help">We'll use this as your TASMail sign-in. It doesn't have to match the mailbox you'll attach next.</small>
+
+    <label for="display_name">Display name <small>(optional)</small></label>
+    <input type="text"
+           id="display_name"
+           name="display_name"
+           value="{{ display_name }}"
+           autocomplete="name"
+           maxlength="120">
+
+    <label for="password">Password</label>
+    <input type="password"
+           id="password"
+           name="password"
+           autocomplete="new-password"
+           minlength="8"
+           required
+           aria-required="true"
+           aria-describedby="password-help">
+    <small id="password-help">At least 8 characters. A passphrase is easier to remember than a complex password.</small>
+
+    <button type="submit">Continue to mail servers</button>
+  </form>
+
+  <p>
+    <small>
+      Already have a TASMail account?
+      <a href="/classic/login">Sign in instead</a>.
+    </small>
+  </p>
+{% endblock %}

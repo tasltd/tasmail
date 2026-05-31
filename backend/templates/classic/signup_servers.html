@@ -1,0 +1,197 @@
+{% extends "classic/base.html" %}
+
+{# TMAIL-374 — Signup wizard Step 2 of 3 for the `/classic` no-JS surface.
+
+   Model:
+     * `email`           — the email entered in Step 1 (display only,
+                           pre-fills both username fields below).
+     * `presets`         — Vec<PresetView> — provider auto-fill picker.
+     * `picked_name`     — name of the currently-picked preset; empty for
+                           "Custom / None of these". Drives the "active"
+                           styling on the picker links.
+     * `picked_hint`     — friendly hint for the picked provider (e.g.
+                           "Use a Google App Password, not your account
+                           password.").
+     * `imap_*` / `smtp_*` — form field values (host, port, username,
+                           encryption). Passwords are NEVER reflected back
+                           to the rendered form — every re-render makes the
+                           user retype them.
+     * `imap_error` / `smtp_error` — Some("…") on per-section test failure.
+     * `error`           — top-of-form non-field error (CSRF, encryption).
+     * `csrf_token`      — bound to the draft row.
+     * `csp_nonce`       — per-request CSP nonce required by base.html.
+     * `current_step`    — always 2 on this template.
+
+   The same `_csrf` field name as the rest of the Classic UI; same shape as
+   `classic_signup_drafts.csrf_token`. #}
+
+{% block title %}Connect your mailbox · Step 2 of 3{% endblock %}
+
+{% block content %}
+  <h1>Connect your mailbox</h1>
+
+  <ol aria-label="Signup progress" style="display: flex; gap: 0.75rem; flex-wrap: wrap; padding: 0; list-style: none; margin: 0.5rem 0 1rem;">
+    <li>1. Account &check;</li>
+    <li><strong>2. Mail servers</strong></li>
+    <li>3. Finish</li>
+  </ol>
+
+  <p>
+    TASMail is a webmail UI for any IMAP/SMTP server. Pick your provider to
+    auto-fill, or enter your server settings manually. We'll test both
+    connections when you submit.
+  </p>
+
+  {% if let Some(msg) = error %}
+    <div class="alert alert-error" role="alert">
+      <strong>{{ msg }}</strong>
+    </div>
+  {% endif %}
+
+  <fieldset>
+    <legend>Pick a provider <small>(optional auto-fill)</small></legend>
+    <ul style="display: flex; flex-wrap: wrap; gap: 0.25rem 0.5rem; padding: 0; list-style: none; margin: 0.5rem 0;">
+      {% for preset in presets %}
+        <li>
+          <a href="/classic/signup/imap?preset={{ preset.name }}"
+             {% if picked_name == preset.name %}aria-current="true" style="font-weight: 700;"{% endif %}>
+            {{ preset.name }}
+          </a>
+        </li>
+      {% endfor %}
+      <li>
+        <a href="/classic/signup/imap"
+           {% if picked_name == "" %}aria-current="true" style="font-weight: 700;"{% endif %}>
+          Custom / None of these
+        </a>
+      </li>
+    </ul>
+    {% if picked_hint != "" %}
+      <p><small>&#128161; {{ picked_hint }}</small></p>
+    {% endif %}
+  </fieldset>
+
+  <form method="post" action="/classic/signup/imap" autocomplete="on" novalidate>
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <input type="hidden" name="picked_name" value="{{ picked_name }}">
+
+    <fieldset>
+      <legend>IMAP (incoming mail)</legend>
+
+      {% if let Some(msg) = imap_error %}
+        <div class="alert alert-error" role="alert">
+          <strong>IMAP error:</strong> {{ msg }}
+        </div>
+      {% endif %}
+
+      <label for="imap_host">Server host</label>
+      <input type="text"
+             id="imap_host"
+             name="imap_host"
+             value="{{ imap_host }}"
+             placeholder="imap.example.com"
+             autocomplete="off"
+             required
+             aria-required="true">
+
+      <label for="imap_port">Port</label>
+      <input type="number"
+             id="imap_port"
+             name="imap_port"
+             value="{{ imap_port }}"
+             min="1"
+             max="65535"
+             required
+             aria-required="true">
+
+      <label for="imap_encryption">Encryption</label>
+      <select id="imap_encryption" name="imap_encryption" required aria-required="true">
+        <option value="ssl"{% if imap_encryption == "ssl" %} selected{% endif %}>SSL/TLS</option>
+        <option value="starttls"{% if imap_encryption == "starttls" %} selected{% endif %}>STARTTLS</option>
+        <option value="none"{% if imap_encryption == "none" %} selected{% endif %}>None (insecure)</option>
+      </select>
+
+      <label for="imap_username">Username</label>
+      <input type="text"
+             id="imap_username"
+             name="imap_username"
+             value="{{ imap_username }}"
+             autocomplete="off"
+             placeholder="usually your full email address"
+             required
+             aria-required="true">
+
+      <label for="imap_password">Password / App Password</label>
+      <input type="password"
+             id="imap_password"
+             name="imap_password"
+             autocomplete="off"
+             required
+             aria-required="true">
+    </fieldset>
+
+    <fieldset>
+      <legend>SMTP (outgoing mail)</legend>
+
+      {% if let Some(msg) = smtp_error %}
+        <div class="alert alert-error" role="alert">
+          <strong>SMTP error:</strong> {{ msg }}
+        </div>
+      {% endif %}
+
+      <label for="smtp_host">Server host</label>
+      <input type="text"
+             id="smtp_host"
+             name="smtp_host"
+             value="{{ smtp_host }}"
+             placeholder="smtp.example.com"
+             autocomplete="off"
+             required
+             aria-required="true">
+
+      <label for="smtp_port">Port</label>
+      <input type="number"
+             id="smtp_port"
+             name="smtp_port"
+             value="{{ smtp_port }}"
+             min="1"
+             max="65535"
+             required
+             aria-required="true">
+
+      <label for="smtp_encryption">Encryption</label>
+      <select id="smtp_encryption" name="smtp_encryption" required aria-required="true">
+        <option value="ssl"{% if smtp_encryption == "ssl" %} selected{% endif %}>SSL/TLS</option>
+        <option value="starttls"{% if smtp_encryption == "starttls" %} selected{% endif %}>STARTTLS</option>
+        <option value="none"{% if smtp_encryption == "none" %} selected{% endif %}>None (insecure)</option>
+      </select>
+
+      <label for="smtp_username">Username</label>
+      <input type="text"
+             id="smtp_username"
+             name="smtp_username"
+             value="{{ smtp_username }}"
+             autocomplete="off"
+             placeholder="usually your full email address"
+             required
+             aria-required="true">
+
+      <label for="smtp_password">Password / App Password</label>
+      <input type="password"
+             id="smtp_password"
+             name="smtp_password"
+             autocomplete="off"
+             required
+             aria-required="true">
+    </fieldset>
+
+    <button type="submit">Test &amp; save mail servers</button>
+  </form>
+
+  <p>
+    <small>
+      Account email: <strong>{{ email }}</strong> &middot;
+      <a href="/classic/signup">&larr; Back to Step 1</a>
+    </small>
+  </p>
+{% endblock %}

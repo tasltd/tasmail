@@ -1,0 +1,50 @@
+{% extends "classic/base.html" %}
+
+{# TMAIL-374 — Signup wizard Step 3 of 3 for the `/classic` no-JS surface.
+
+   Model:
+     * `email`         — the TASMail account email (display only).
+     * `csrf_token`    — bound to the draft row. Validated on POST before
+                         we create the real classic_sessions row.
+     * `csp_nonce`     — per-request CSP nonce required by base.html.
+     * `current_step`  — always 3 on this template.
+
+   The "Go to inbox" button is a form POST (not a GET link) so the session
+   creation runs server-side and the response can attach the session cookie
+   in the same redirect. A GET link would force a separate "establish session"
+   request after the inbox loaded. #}
+
+{% block title %}You're all set · Step 3 of 3{% endblock %}
+
+{% block content %}
+  <h1>You&rsquo;re all set</h1>
+
+  <ol aria-label="Signup progress" style="display: flex; gap: 0.75rem; flex-wrap: wrap; padding: 0; list-style: none; margin: 0.5rem 0 1rem;">
+    <li>1. Account &check;</li>
+    <li>2. Mail servers &check;</li>
+    <li><strong>3. Finish</strong></li>
+  </ol>
+
+  <div class="alert alert-success" role="status">
+    <strong>Welcome to TASMail!</strong>
+    Your account <code>{{ email }}</code> is ready and your mail servers are connected.
+  </div>
+
+  <p>
+    Click <strong>Go to inbox</strong> to sign in and open your mailbox.
+    We&rsquo;ll fetch your messages from your IMAP server on the next page.
+  </p>
+
+  <form method="post" action="/classic/signup/done">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <button type="submit">Go to inbox</button>
+  </form>
+
+  <p>
+    <small>
+      Need to change a server setting?
+      <a href="/classic/signup/imap">Go back to Step 2</a>
+      (your settings are preserved).
+    </small>
+  </p>
+{% endblock %}
