@@ -322,6 +322,30 @@ pub async fn evaluate_password_login(
     Ok(mailbox)
 }
 
+/// Added (TMAIL-376): Hash a new password and persist it to the mailbox row.
+///
+/// Thin convenience wrapper used by the Classic UI's `/classic/settings/password`
+/// handler (and any future surface that needs to rotate a user's password
+/// without going through the full forgot-password email flow). The caller is
+/// responsible for having already verified the current password — typically
+/// via `evaluate_password_login` — and for revoking outstanding sessions
+/// afterwards.
+///
+/// Returns `true` when the UPDATE touched a row, `false` when the mailbox
+/// id no longer resolves (the user was deleted between the verify step
+/// and this call). Callers should treat `false` as a hard error since the
+/// session under which the change was requested is by definition stale.
+pub async fn change_password(
+    pool: &sqlx::PgPool,
+    mailbox_id: Uuid,
+    new_password: &str,
+) -> Result<bool, AppError> {
+    let new_hash = hash_password(new_password)?;
+    Mailbox::update_password(pool, mailbox_id, &new_hash)
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("update_password failed: {}", e)))
+}
+
 /// Authenticate user: verify credentials, create tokens, store session
 ///
 /// Added (TMAIL-273): Enforces per-account brute-force lockout in addition

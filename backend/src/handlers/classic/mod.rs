@@ -149,6 +149,16 @@ pub mod signup;
 // pre-session cookies.
 pub mod password_reset;
 
+// Added (TMAIL-376): /classic/settings/* handlers. First inhabitant is the
+// change-password form (`get_password` / `post_password`). The module is
+// mounted on the AUTHENTICATED sub-router so it inherits both
+// classic_session_middleware (cookie → session row in extensions) and
+// classic_csrf_middleware (validates `_csrf` form field against the
+// session row's csrf_token on POST). Future settings sub-pages
+// (signature, sessions, vacation, BYOK) will land as additional
+// handlers in the same module.
+pub mod settings;
+
 // NAME: Session cookie name shared with the Classic UI auth handler that
 // lands in TMAIL-357 (P0 #3). The scaffold only needs to *detect* presence;
 // the cookie value is opaque here and validated later by the dedicated
@@ -369,6 +379,17 @@ fn authenticated_router(state: AppState) -> Router<AppState> {
         // the ClassicSession so the logout form partial can render the
         // session-scoped CSRF token in its hidden input.
         .route("/classic/search", get(search::get_search))
+        // Added (TMAIL-376): GET + POST /classic/settings/password — the
+        // change-password form (P1 #22). POST re-verifies the current
+        // password through the same per-account lockout machinery as
+        // /classic/login, rotates the hash, then revokes every OTHER
+        // classic session and every SPA refresh token for the user.
+        // The current session row is preserved so the user stays
+        // signed in on this browser.
+        .route(
+            "/classic/settings/password",
+            get(settings::get_password).post(settings::post_password),
+        )
         // Inner layer: CSRF check on state-changing methods. Runs AFTER
         // the session middleware on the request side, so the session row
         // (carrying the expected token) is in extensions when it executes.

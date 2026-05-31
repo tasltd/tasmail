@@ -132,6 +132,32 @@ impl ClassicSession {
         Ok(result.rows_affected())
     }
 
+    /// Added (TMAIL-376): Delete every classic session row for `user_id`
+    /// EXCEPT the one whose id matches `keep`. Used by the change-password
+    /// handler to revoke every *other* live classic session for the user
+    /// without signing the current browser out (the user just successfully
+    /// re-authenticated by typing their current password, so logging them
+    /// out would be hostile UX).
+    ///
+    /// Returns the number of rows deleted so the caller can audit-log it.
+    /// The `keep` id does not have to actually exist — if the current
+    /// request's session row was already cleaned up by another flow, this
+    /// reduces to `delete_all_for_user`.
+    pub async fn delete_others_for_user(
+        pool: &sqlx::PgPool,
+        user_id: Uuid,
+        keep: Uuid,
+    ) -> Result<u64, sqlx::Error> {
+        let result = sqlx::query(
+            "DELETE FROM classic_sessions WHERE user_id = $1 AND id <> $2",
+        )
+        .bind(user_id)
+        .bind(keep)
+        .execute(pool)
+        .await?;
+        Ok(result.rows_affected())
+    }
+
     /// Background sweep — call from the scheduler tick that already prunes
     /// the JWT `sessions` table (see `services::email_scheduler`).
     #[allow(dead_code)]
