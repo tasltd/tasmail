@@ -161,6 +161,9 @@ body {
 }
 .folder-item:hover { background: #e8e8e8; }
 .folder-item--active { background: #dbeafe; color: var(--color-primary); font-weight: 600; }
+/* Added (TMAIL-398): Inbox row stays larger + bold so first-time users
+   can find email at a glance, even when no folder is selected. */
+.folder-item--primary { font-size: 15px; font-weight: 600; padding: 10px 12px; }
 .folder-item__name { flex: 1; }
 .folder-item__badge {
   background: var(--color-primary);

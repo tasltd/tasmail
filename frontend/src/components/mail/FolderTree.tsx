@@ -46,11 +46,15 @@ function FolderItem({ folder }: { folder: Folder }) {
 
   const Icon = FOLDER_ICONS[folder.name] || FolderIcon;
   const isActive = selectedFolder === folder.name;
+  // Added (TMAIL-398): Inbox row is the visually dominant entry per the
+  // grouped-sidebar redesign — bold/larger row marks it as the primary
+  // mail destination so first-time users find it immediately.
+  const isPrimary = folder.name === 'INBOX';
 
   return (
     <button
       // Changed: Added drop handlers and drop-target class for visual feedback (TMAIL-122)
-      className={`folder-item ${isActive ? 'folder-item--active' : ''} ${isOver ? 'folder-item--drop-target' : ''}`}
+      className={`folder-item ${isActive ? 'folder-item--active' : ''} ${isPrimary ? 'folder-item--primary' : ''} ${isOver ? 'folder-item--drop-target' : ''}`}
       onClick={() => setSelectedFolder(folder.name)}
       {...dropHandlers}
     >
