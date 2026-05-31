@@ -85,6 +85,12 @@ pub mod folder;
 // wired in for those follow-ups).
 pub mod message;
 
+// Added (TMAIL-365): GET /classic/folders/{folder}/messages/{uid}/parts/{part_id}
+// — attachment download endpoint. Streams the part bytes from IMAP with a
+// hard-sanitised filename in `Content-Disposition` (RFC 6266) and a chunked
+// response body. Mounts on the authenticated sub-router below.
+pub mod attachment;
+
 // NAME: Session cookie name shared with the Classic UI auth handler that
 // lands in TMAIL-357 (P0 #3). The scaffold only needs to *detect* presence;
 // the cookie value is opaque here and validated later by the dedicated
@@ -215,6 +221,15 @@ fn authenticated_router(state: AppState) -> Router<AppState> {
         .route(
             "/classic/folders/{folder}/messages/{uid}",
             get(message::get_message),
+        )
+        // Added (TMAIL-365): attachment download. GET-only; the read view
+        // (TMAIL-363) wires links of this exact shape onto every attachment
+        // row. The handler reuses the same BYOK IMAP fetch path the read
+        // view does and streams the part bytes back with a hard-sanitised
+        // filename in Content-Disposition.
+        .route(
+            "/classic/folders/{folder}/messages/{uid}/parts/{part_id}",
+            get(attachment::get_attachment),
         )
         // Inner layer: CSRF check on state-changing methods. Runs AFTER
         // the session middleware on the request side, so the session row
