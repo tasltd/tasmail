@@ -12,7 +12,9 @@
     "test:watch": "vitest",
     "e2e": "playwright test --project=firefox",
     "e2e:headed": "playwright test --project=firefox --headed",
+    "e2e:firefox": "playwright test --project=firefox-test --pass-with-no-tests e2e/firefox/",
     "e2e:report": "playwright show-report",
+    "start-test-backend": "TASMAIL_PORT=3399 DATABASE_URL=postgres://tasmail:tasmail@localhost/tasmail_e2e CORS_ORIGIN=http://localhost:5273 cargo run --manifest-path ../backend/Cargo.toml",
     "trace-check": "python3 ../scripts/trace-check.py",
     "trace-check:update": "python3 ../scripts/trace-check.py --update",
     "build:alt-ui": "bash ../scripts/build-alt-ui.sh"

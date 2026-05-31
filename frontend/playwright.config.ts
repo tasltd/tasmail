@@ -35,7 +35,20 @@ export default defineConfig({
     {
       // Added: Firefox-only project per HARD RULE
       name: 'firefox',
+      // Skip the new e2e/firefox/ tree — those specs run under firefox-test.
+      testIgnore: '**/firefox/**',
       use: { ...devices['Desktop Firefox'] },
+    },
+    {
+      // Added: Firefox project for the new Modern/Classic UI specs under
+      // e2e/firefox/ that target the dedicated test backend on :3399 fronted
+      // by the local Vite proxy at :5273 (TMAIL-388).
+      name: 'firefox-test',
+      testDir: './e2e/firefox',
+      use: {
+        ...devices['Desktop Firefox'],
+        baseURL: process.env.PLAYWRIGHT_TEST_BASE_URL ?? 'http://localhost:5273',
+      },
     },
   ],
   // Added: Screenshot and report output directories

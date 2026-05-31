@@ -1,0 +1,13 @@
+TASMail E2E fixture — sample attachment (TMAIL-388)
+=====================================================
+
+This file is uploaded by the Modern UI compose specs to exercise the
+multipart attachment path end-to-end (compose → /api/messages/send →
+IMAP append → reader attachment list).
+
+It is intentionally small (a few hundred bytes) so the IMAP server can
+swallow it without bumping into per-message size limits, and plain text
+so the reader can render it inline if needed.
+
+Replace the contents freely — specs only assert the filename round-trips,
+not the byte-level payload.
