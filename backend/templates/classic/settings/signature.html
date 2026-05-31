@@ -1,0 +1,182 @@
+{% extends "classic/base.html" %}
+
+{# TMAIL-378 — Single-signature settings page for the /classic no-JS surface
+   (gap-analysis P1 #24).
+
+   Required template context (all set by
+   `handlers::classic::settings_signature::get_signature` / `post_signature`):
+     * `body`                    — current textarea value (saved text_body
+                                   on a fresh load; submitted value on a
+                                   validation-failure re-render).
+     * `is_default`              — checkbox state. Always true on a brand-
+                                   new render (sensible default); reflects
+                                   the saved value otherwise.
+     * `has_existing_signature`  — drives whether the "Remove signature"
+                                   button renders. Hidden for brand-new
+                                   users so they don't see a destructive
+                                   action they can't actually take.
+     * `preview_html`            — sanitised HTML (`html_body` from the DB
+                                   on a fresh load; the live sanitised
+                                   submission on a re-render). Empty
+                                   string when there's nothing to preview.
+     * `flash`                   — Some(("success"|"error", msg)) when
+                                   arriving from a POST round-trip; None
+                                   on a fresh GET.
+     * `csrf_token`              — session csrf for the save form, the
+                                   remove form, AND the logout partial.
+     * `csp_nonce`               — per-request CSP nonce required by base.html. #}
+
+{% block title %}Signature{% endblock %}
+
+{% block logout_form %}{% include "classic/_logout_form.html" %}{% endblock %}
+
+{% block content %}
+  <style nonce="{{ csp_nonce }}">
+    /* TMAIL-378 — signature settings layout.
+       Mirrors `sessions.html` so the two settings pages look like part of
+       the same surface. */
+    .signature-help {
+      color: var(--tm-muted);
+      margin: 0 0 1rem;
+    }
+    .signature-body {
+      width: 100%;
+      max-width: 48rem;
+      min-height: 10rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.9375rem;
+      line-height: 1.5;
+    }
+    .signature-default {
+      margin: 0.5rem 0 1rem;
+    }
+    .signature-preview {
+      margin: 1.5rem 0;
+      padding: 0.75rem 1rem;
+      border: 1px solid var(--tm-border);
+      border-radius: 4px;
+      background: var(--tm-bg-light);
+    }
+    .signature-preview h2 {
+      font-size: 1rem;
+      margin: 0 0 0.5rem;
+      color: var(--tm-muted);
+    }
+    .signature-preview-body {
+      color: var(--tm-charcoal-900);
+      /* Preserve whitespace so plain-text signatures keep their line
+         breaks even after sanitisation (which strips raw \n). */
+      white-space: pre-wrap;
+    }
+    .signature-actions {
+      display: flex;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .signature-remove-form {
+      margin: 2rem 0 0;
+      padding: 1rem;
+      border: 1px solid var(--tm-border);
+      border-radius: 4px;
+      background: var(--tm-bg-light);
+    }
+    .signature-remove-form h2 {
+      font-size: 1.05rem;
+      margin: 0 0 0.5rem;
+      color: var(--tm-danger);
+    }
+    .signature-remove-form button {
+      background: var(--tm-surface);
+      color: var(--tm-danger);
+      border: 1px solid var(--tm-danger);
+    }
+    .signature-remove-form button:hover {
+      background: var(--tm-danger);
+      color: #ffffff;
+    }
+  </style>
+
+  <h1>Signature</h1>
+
+  <p class="signature-help">
+    Set a default signature that is automatically appended to every new
+    message, reply, and forward. You can edit or remove it inline in the
+    compose form before sending. HTML formatting is supported; anything
+    unsafe (scripts, tracking pixels, inline event handlers) is stripped.
+  </p>
+
+  {% if let Some((kind, msg)) = flash %}
+    {% if kind == "success" %}
+      <div class="alert alert-success" role="status">
+        <strong>{{ msg }}</strong>
+      </div>
+    {% else %}
+      <div class="alert alert-error" role="alert">
+        <strong>{{ msg }}</strong>
+      </div>
+    {% endif %}
+  {% endif %}
+
+  <form method="post" action="/classic/settings/signature" autocomplete="off" novalidate>
+    {# Session-scoped CSRF token — validated by classic_csrf_middleware. #}
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+
+    <label for="signature-body">Signature</label>
+    <textarea id="signature-body"
+              name="body"
+              class="signature-body"
+              rows="8"
+              maxlength="8192"
+              aria-describedby="signature-body-help">{{ body }}</textarea>
+    <p id="signature-body-help" class="signature-help">
+      <small>
+        Plain text (line breaks preserved) or simple HTML
+        (<code>&lt;b&gt;</code>, <code>&lt;i&gt;</code>,
+        <code>&lt;a&gt;</code>, <code>&lt;br&gt;</code>,
+        <code>&lt;p&gt;</code>). Maximum 8 KB.
+      </small>
+    </p>
+
+    <p class="signature-default">
+      <label>
+        <input type="checkbox"
+               name="is_default"
+               value="on"
+               {% if is_default %}checked{% endif %}>
+        Set as default (auto-append to new messages, replies, and forwards)
+      </label>
+    </p>
+
+    <div class="signature-actions">
+      <button type="submit" name="action" value="save">Save signature</button>
+      <a class="secondary-link" href="/classic/folders/INBOX">Cancel</a>
+    </div>
+  </form>
+
+  {% if !preview_html.is_empty() %}
+    <section class="signature-preview" aria-labelledby="signature-preview-heading">
+      <h2 id="signature-preview-heading">Preview</h2>
+      {# `|safe` is sound here — `preview_html` was produced by the strict
+         allowlist sanitiser, so every script / style / event handler /
+         remote image src has already been stripped or rewritten before
+         this value reached the template. #}
+      <div class="signature-preview-body">{{ preview_html|safe }}</div>
+    </section>
+  {% endif %}
+
+  {% if has_existing_signature %}
+    <form method="post"
+          action="/classic/settings/signature"
+          class="signature-remove-form"
+          aria-labelledby="signature-remove-heading">
+      <h2 id="signature-remove-heading">Remove signature</h2>
+      <p>
+        Deletes the saved signature. New messages, replies, and forwards
+        will be sent without a signature until you save a new one.
+      </p>
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <button type="submit" name="action" value="remove">Remove signature</button>
+    </form>
+  {% endif %}
+{% endblock %}

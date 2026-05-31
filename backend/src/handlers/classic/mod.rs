@@ -168,6 +168,17 @@ pub mod settings;
 // full session + CSRF middleware stack.
 pub mod sessions;
 
+// Added (TMAIL-378): /classic/settings/signature handlers (P1 #24).
+// Single-signature settings page. GET renders the form with the user's
+// saved default signature prefilled; POST dispatches on the `action`
+// form field (`save` / `remove`) and writes through the existing
+// `signatures` table via `models::signature::{Signature, CreateSignature,
+// UpdateSignature}`. Mounted on the AUTHENTICATED sub-router so it
+// inherits both the session and CSRF middleware. The saved default
+// signature's text_body is auto-appended on `get_compose` (see
+// `compose::append_signature`).
+pub mod settings_signature;
+
 // NAME: Session cookie name shared with the Classic UI auth handler that
 // lands in TMAIL-357 (P0 #3). The scaffold only needs to *detect* presence;
 // the cookie value is opaque here and validated later by the dedicated
@@ -426,6 +437,16 @@ fn authenticated_router(state: AppState) -> Router<AppState> {
         .route(
             "/classic/settings/sessions/revoke-all/confirm",
             post(sessions::post_revoke_all_confirm),
+        )
+        // Added (TMAIL-378): GET + POST /classic/settings/signature —
+        // single-signature settings page (P1 #24). The "Settings" link in
+        // base.html's primary nav already points here, so the route is
+        // discoverable from every page without a separate menu edit. POST
+        // dispatches on the `action` form field (save / remove) and
+        // writes through the existing /api/signatures model.
+        .route(
+            "/classic/settings/signature",
+            get(settings_signature::get_signature).post(settings_signature::post_signature),
         )
         // Inner layer: CSRF check on state-changing methods. Runs AFTER
         // the session middleware on the request side, so the session row

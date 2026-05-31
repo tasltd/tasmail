@@ -46,6 +46,7 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::error::AppError;
+use crate::models::signature::Signature;
 use crate::services::auth_service::Claims;
 use crate::services::imap_service::ImapService;
 use crate::services::smtp_service::{OutgoingAttachment, SendRequest, SmtpService};
@@ -53,6 +54,14 @@ use crate::state::AppState;
 use crate::validation::{self, MAX_MESSAGE_BODY_LEN};
 
 use super::CspNonce;
+
+// Added (TMAIL-378): RFC 3676 §4.3 signature separator. Exactly "-- "
+// (dash, dash, space) followed by a line-feed — kept as a constant so the
+// `append_signature` helper and its unit tests share one definition.
+// `\n\n` precedes the separator so the user's body and the signature
+// always sit in distinct paragraphs even when the body doesn't end in a
+// newline.
+pub const SIGNATURE_SEPARATOR: &str = "\n\n-- \n";
 
 /// Hard cap on `body` + sum-of-attachment-sizes. Per gap-analysis P0 #12.
 /// Surfaces as a friendly "Total upload too large" form-level error rather
@@ -378,6 +387,73 @@ pub fn split_recipient_field(field: &str) -> Vec<String> {
         .collect()
 }
 
+/// Added (TMAIL-378): suffix the user's default signature onto the body
+/// being prefilled into the compose form, using the RFC 3676 §4.3
+/// signature separator (`-- ` followed by a line-feed). Returns the
+/// original body unchanged when the signature is empty.
+///
+/// Idempotent — if the body already ends with `{SIGNATURE_SEPARATOR}{sig}`
+/// (modulo trailing whitespace), the input is returned untouched. That
+/// matters for the failure-path re-render in `post_compose`: the user's
+/// in-progress submission already contains the appended signature, and
+/// we don't want a second copy to grow on every validation failure.
+///
+/// Pure function so unit tests can pin the formatting without spinning
+/// up DB or IMAP.
+pub fn append_signature(body: &str, signature_text: &str) -> String {
+    // Trim trailing newlines AND spaces from the signature — a signature
+    // that's whitespace-only must behave the same as an empty one (the
+    // caller is paying for the lookup either way, but we shouldn't
+    // emit a separator with nothing meaningful after it). The lead is
+    // preserved so a `"\n\nBest,"` signature still renders correctly.
+    let sig = signature_text.trim_end_matches(|c: char| c.is_whitespace());
+    if sig.is_empty() {
+        return body.to_string();
+    }
+    // Idempotency check: does the body already end with our separator +
+    // signature? Compare on the trimmed-right version so trailing
+    // whitespace doesn't defeat the check.
+    let body_rtrim = body.trim_end_matches(|c: char| c == '\n' || c == '\r' || c == ' ');
+    let expected_suffix = format!("{SIGNATURE_SEPARATOR}{sig}");
+    if body_rtrim.ends_with(&expected_suffix) {
+        return body.to_string();
+    }
+    // Strip trailing newlines from the body so we don't double-pad before
+    // the separator (which starts with `\n\n`).
+    let body_clean = body.trim_end_matches(|c: char| c == '\n' || c == '\r');
+    format!("{body_clean}{SIGNATURE_SEPARATOR}{sig}")
+}
+
+/// Look up the user's default signature, if any. Internal-only; called
+/// from `get_compose` to populate the auto-append. Logs and swallows DB
+/// failures (returning `None`) so a transient DB blip doesn't gate the
+/// user out of composing a new mail.
+async fn load_default_signature_text(state: &AppState, mailbox_id: Uuid) -> Option<String> {
+    match Signature::find_default(&state.db, mailbox_id).await {
+        Ok(Some(sig)) => {
+            // text_body is the canonical plain-text form persisted by
+            // the classic signature handler — use it directly. (html_body
+            // exists for rich rendering elsewhere but plain text is the
+            // right thing to drop into a no-JS compose textarea.)
+            let trimmed = sig.text_body.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(sig.text_body)
+            }
+        }
+        Ok(None) => None,
+        Err(e) => {
+            tracing::warn!(
+                error = ?e,
+                user_id = ?mailbox_id,
+                "classic compose: default signature lookup failed — composing without auto-append"
+            );
+            None
+        }
+    }
+}
+
 /// Truncate `value` to `MAX_PREFILL_HEADER_LEN` chars so a hostile or
 /// runaway echo doesn't make the re-render OOM. Returns the original
 /// unchanged when under the cap.
@@ -438,6 +514,16 @@ pub async fn get_compose(
                 );
             }
         }
+    }
+
+    // Added (TMAIL-378): auto-append the user's default signature (if any)
+    // using the RFC 3676 §4.3 separator. Applies uniformly to blank
+    // compose, reply, reply-all, and forward — the prefilled body already
+    // contains the quoted original (reply/forward) or is empty (blank),
+    // and the signature lands below either way. The user can edit or
+    // delete it inline before sending.
+    if let Some(sig_text) = load_default_signature_text(&state, mailbox_id).await {
+        template.body = append_signature(&template.body, &sig_text);
     }
 
     let html = template
@@ -1640,5 +1726,112 @@ mod tests {
         let body = t.render().expect("template renders");
         assert!(!body.contains("<script>alert(1)</script>"));
         assert!(!body.contains("<img src=x onerror=evil>"));
+    }
+
+    // ----- append_signature (TMAIL-378) -----
+
+    #[test]
+    fn signature_separator_is_rfc3676() {
+        // RFC 3676 §4.3: "-- " followed by CRLF (or LF on POSIX text
+        // bodies). The dash-dash-space marker is what every desktop mail
+        // client recognises as the signature delimiter.
+        assert_eq!(SIGNATURE_SEPARATOR, "\n\n-- \n");
+    }
+
+    #[test]
+    fn append_signature_returns_body_unchanged_when_sig_empty() {
+        assert_eq!(append_signature("Hello", ""), "Hello");
+        assert_eq!(append_signature("Hello", "   "), "Hello");
+        assert_eq!(append_signature("Hello", "\n\n"), "Hello");
+    }
+
+    #[test]
+    fn append_signature_appends_to_blank_body() {
+        let result = append_signature("", "Best,\nKwame");
+        assert_eq!(result, "\n\n-- \nBest,\nKwame");
+    }
+
+    #[test]
+    fn append_signature_appends_after_existing_body() {
+        let result = append_signature("Body text", "Best,\nKwame");
+        assert_eq!(result, "Body text\n\n-- \nBest,\nKwame");
+    }
+
+    #[test]
+    fn append_signature_collapses_trailing_newlines_before_separator() {
+        // The separator already starts with `\n\n`; if the body has a
+        // trailing newline we'd otherwise get three blank lines.
+        let result = append_signature("Body text\n\n\n", "Sig");
+        assert_eq!(result, "Body text\n\n-- \nSig");
+    }
+
+    #[test]
+    fn append_signature_idempotent_on_already_appended_body() {
+        let first = append_signature("Body", "Sig");
+        let second = append_signature(&first, "Sig");
+        assert_eq!(
+            first, second,
+            "double-append should be a no-op: first={first:?} second={second:?}"
+        );
+    }
+
+    #[test]
+    fn append_signature_idempotent_when_body_has_trailing_whitespace() {
+        let appended = append_signature("Body", "Sig");
+        let with_trailing_ws = format!("{appended}   \n\n");
+        let again = append_signature(&with_trailing_ws, "Sig");
+        // The trailing whitespace on the in-progress body must NOT
+        // trigger a second append.
+        assert!(
+            again.matches("-- \nSig").count() == 1,
+            "expected exactly one signature, got: {again:?}"
+        );
+    }
+
+    #[test]
+    fn append_signature_re_appends_when_user_changed_the_signature() {
+        // A "Sig v1" body should grow a "Sig v2" suffix when the saved
+        // signature changes — idempotency is per-signature, not "any
+        // signature".
+        let appended = append_signature("Body", "Sig v1");
+        let new_signature = append_signature(&appended, "Sig v2");
+        assert!(
+            new_signature.contains("Sig v1"),
+            "old signature should still appear in user's body: {new_signature:?}"
+        );
+        assert!(
+            new_signature.contains("Sig v2"),
+            "new signature should be appended: {new_signature:?}"
+        );
+    }
+
+    #[test]
+    fn append_signature_works_on_reply_quoted_body() {
+        // The reply body shape is `\n\n{attribution}\n{quoted}\n` —
+        // appending the signature should slot in cleanly at the end.
+        let reply_body = build_quoted_body(
+            Some("Alice <a@x.com>"),
+            Some("Mon, 1 Jan 2026"),
+            Some("Original line"),
+            PrefillMode::Reply,
+        );
+        let result = append_signature(&reply_body, "Sig");
+        // The signature appears AFTER the quoted block.
+        assert!(result.ends_with("-- \nSig"), "result: {result}");
+        // The quoted body is still intact.
+        assert!(result.contains("> Original line"));
+    }
+
+    #[test]
+    fn append_signature_works_on_forward_banner_body() {
+        let fwd_body = build_quoted_body(
+            Some("Alice"),
+            Some("Date"),
+            Some("Original line"),
+            PrefillMode::Forward,
+        );
+        let result = append_signature(&fwd_body, "Sig");
+        assert!(result.ends_with("-- \nSig"), "result: {result}");
+        assert!(result.contains("---------- Forwarded message ----------"));
     }
 }
