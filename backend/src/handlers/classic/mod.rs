@@ -70,6 +70,13 @@ pub mod logout;
 // yet); cookie-based gate state rides on `pending_2fa_tokens` (5 min TTL).
 pub mod totp_challenge;
 
+// Added (TMAIL-362): GET /classic/folders/{folder}?page=N — the inbox /
+// folder view. Mounts on the authenticated sub-router so it inherits
+// classic_session_middleware (Claims + ClassicSession in extensions)
+// + classic_csrf_middleware (no-op on GET, primed for the bulk-action
+// POST a follow-up task will add to this same path).
+pub mod folder;
+
 // NAME: Session cookie name shared with the Classic UI auth handler that
 // lands in TMAIL-357 (P0 #3). The scaffold only needs to *detect* presence;
 // the cookie value is opaque here and validated later by the dedicated
@@ -185,6 +192,12 @@ fn authenticated_router(state: AppState) -> Router<AppState> {
         // (no GET handler means an `<img src="/classic/logout">` exploit
         // can't even kick off the chain).
         .route("/classic/logout", post(logout::post_logout))
+        // Added (TMAIL-362): inbox / folder view. GET-only today; a future
+        // P1 #29 task will add a POST handler on the same path for the
+        // bulk-action bar (mark read / move / delete). The CSRF middleware
+        // is already layered below, so adding POST later is a one-line
+        // change with no boilerplate to update.
+        .route("/classic/folders/{folder}", get(folder::get_folder))
         // Inner layer: CSRF check on state-changing methods. Runs AFTER
         // the session middleware on the request side, so the session row
         // (carrying the expected token) is in extensions when it executes.

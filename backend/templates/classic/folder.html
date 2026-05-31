@@ -1,0 +1,262 @@
+{% extends "classic/base.html" %}
+
+{# TMAIL-362 — Inbox / folder view for the /classic no-JS surface.
+
+   Layout:
+     * Two-column flex container: sidebar (folder nav, read-only) on the
+       left, main content (message table + pagination) on the right.
+     * Sidebar pins built-in folders (INBOX, Drafts, Sent, Trash...) at
+       the top in a fixed order, then renders any other folders the IMAP
+       server returned in server order.
+     * Main column renders a semantic `<table>` of `Sender | Subject |
+       Date` with one row per message on the current page. Newest first,
+       25 per page. Unread rows get `msg-row-unread` + `<strong>` on the
+       subject so they remain distinguishable in monochrome / lynx.
+     * Above the table sits a stub bulk-action form (P1 #29 will hook up
+       the buttons). The checkboxes on the rows already render with
+       `name=uid value=N` so the action handler only has to add the
+       button bindings later.
+     * Below the table sits the pagination footer: `Showing N–M of T`
+       and `Page X of Y` plus prev / next links when applicable. The
+       links use `rel="prev"` / `rel="next"` so screen readers and
+       browser back/forward UI announce them as paged navigation.
+
+   Required template context (all set by `handlers::classic::folder::get_folder`):
+     * `current_folder`       — display name (e.g. INBOX)
+     * `current_folder_href`  — URL-encoded segment for links
+     * `total_messages`       — IMAP EXISTS for the current folder
+     * `current_page`         — 0-based page index
+     * `total_pages`          — `>= 1`
+     * `first_index` / `last_index` — 1-based message numbers on this page
+     * `has_prev`, `prev_href`, `has_next`, `next_href`
+     * `sidebar: Vec<SidebarFolder>` — fully-ordered sidebar
+     * `messages: Vec<MessageRow>` — flattened row data for this page
+     * `csrf_token`           — threaded into logout form + bulk-action stub
+     * `csp_nonce`            — required by base.html #}
+
+{% block title %}{{ current_folder }}{% endblock %}
+
+{% block logout_form %}{% include "classic/_logout_form.html" %}{% endblock %}
+
+{% block content %}
+  <style nonce="{{ csp_nonce }}">
+    /* Folder view-specific layout. Inherits base.html palette tokens. */
+    .folder-layout {
+      display: flex;
+      flex-direction: row;
+      gap: 1.5rem;
+      align-items: flex-start;
+    }
+    .folder-sidebar {
+      flex: 0 0 14rem;
+      max-width: 14rem;
+    }
+    .folder-sidebar h2 {
+      font-size: 0.875rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--tm-muted);
+      margin: 0.5rem 0 0.25rem;
+    }
+    .folder-sidebar ul {
+      list-style: none;
+      margin: 0 0 1rem;
+      padding: 0;
+    }
+    .folder-sidebar li { margin: 0; }
+    .folder-sidebar a {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.25rem 0.5rem;
+      text-decoration: none;
+      border-left: 3px solid transparent;
+      color: var(--tm-link);
+    }
+    .folder-sidebar a:hover { text-decoration: underline; }
+    .folder-sidebar a[aria-current="page"] {
+      border-left-color: var(--tm-teal-400);
+      background: var(--tm-bg-light);
+      font-weight: 700;
+      color: var(--tm-charcoal-900);
+    }
+    .folder-unread {
+      display: inline-block;
+      min-width: 1.5rem;
+      padding: 0 0.25rem;
+      text-align: center;
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: #ffffff;
+      background: var(--tm-blue-600);
+      border-radius: 8px;
+    }
+    .folder-main {
+      flex: 1 1 auto;
+      min-width: 0; /* allow table to shrink in narrow viewports */
+    }
+    .msg-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9375rem;
+    }
+    .msg-table th,
+    .msg-table td {
+      text-align: left;
+      padding: 0.4rem 0.5rem;
+      border-bottom: 1px solid var(--tm-border);
+      vertical-align: top;
+    }
+    .msg-table th { background: var(--tm-bg-light); color: var(--tm-muted); }
+    .msg-table .col-check { width: 2rem; }
+    .msg-table .col-date { width: 11rem; white-space: nowrap; color: var(--tm-muted); }
+    .msg-table .col-sender { width: 12rem; }
+    .msg-row-unread { background: var(--tm-bg-light); }
+    .msg-row-unread .col-sender,
+    .msg-row-unread .col-subject a { font-weight: 700; }
+    .msg-empty {
+      padding: 2rem 1rem;
+      text-align: center;
+      color: var(--tm-muted);
+      background: var(--tm-bg-light);
+      border: 1px dashed var(--tm-border);
+      border-radius: 4px;
+    }
+    .pagination {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem 1.5rem;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 1rem;
+      padding: 0.5rem 0;
+      border-top: 1px solid var(--tm-border);
+      color: var(--tm-muted);
+      font-size: 0.875rem;
+    }
+    .pagination a { text-decoration: underline; }
+    .bulk-actions {
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-bottom: 0.5rem;
+    }
+    .bulk-actions button {
+      margin: 0;
+      padding: 0.25rem 0.75rem;
+      font-size: 0.875rem;
+    }
+    .bulk-actions .stub-note {
+      color: var(--tm-muted);
+      font-size: 0.75rem;
+      margin-left: auto;
+    }
+    /* Stack columns on narrow viewports so the sidebar collapses above
+       the message table rather than squashing both columns. */
+    @media (max-width: 48em) {
+      .folder-layout { flex-direction: column; }
+      .folder-sidebar { flex-basis: auto; max-width: none; }
+      .msg-table .col-sender { width: auto; }
+      .msg-table .col-date { width: auto; white-space: normal; }
+    }
+  </style>
+
+  <div class="folder-layout">
+
+    {# ───────── Sidebar (folder nav) ───────── #}
+    <nav class="folder-sidebar" aria-label="Folders">
+      <h2 id="folder-nav-heading">Mailboxes</h2>
+      <ul aria-labelledby="folder-nav-heading">
+        {% for f in sidebar %}
+          <li>
+            <a href="/classic/folders/{{ f.href_segment|safe }}"
+               {% if f.is_current %}aria-current="page"{% endif %}>
+              <span class="folder-name">{{ f.name }}</span>
+              {% if let Some(n) = f.unseen %}
+                {% if *n > 0 %}<span class="folder-unread" aria-label="{{ n }} unread">{{ n }}</span>{% endif %}
+              {% endif %}
+            </a>
+          </li>
+        {% endfor %}
+      </ul>
+      <p>
+        <small>Folder management lands in a follow-up release.</small>
+      </p>
+    </nav>
+
+    {# ───────── Main content (message list) ───────── #}
+    <section class="folder-main" aria-labelledby="folder-heading">
+      <h1 id="folder-heading">{{ current_folder }}</h1>
+
+      {# Bulk-action form. Today the buttons are stubs — P1 #29 will add
+         real handlers. We render the form NOW so the row checkboxes have
+         a place to submit to, and the CSRF token is already threaded
+         through. The action="" attribute makes a stray submission a
+         no-op refresh of the current page. #}
+      <form class="bulk-actions" method="post" action="">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <button type="submit" name="action" value="mark_read" disabled>Mark read</button>
+        <button type="submit" name="action" value="mark_unread" disabled>Mark unread</button>
+        <button type="submit" name="action" value="move" disabled>Move…</button>
+        <button type="submit" name="action" value="delete" disabled>Delete</button>
+        <span class="stub-note">Bulk actions arrive in a follow-up release.</span>
+      </form>
+
+      <table class="msg-table" aria-describedby="folder-heading">
+        <thead>
+          <tr>
+            <th scope="col" class="col-check">
+              <span class="visually-hidden">Select</span>
+            </th>
+            <th scope="col" class="col-sender">Sender</th>
+            <th scope="col" class="col-subject">Subject</th>
+            <th scope="col" class="col-date">Date</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if messages.is_empty() %}
+            <tr><td colspan="4" class="msg-empty">No messages in this folder.</td></tr>
+          {% else %}
+            {% for m in messages %}
+              <tr class="msg-row{% if !m.is_read %} msg-row-unread{% endif %}">
+                <td class="col-check">
+                  <input type="checkbox" form="" name="uid" value="{{ m.uid }}" aria-label="Select message from {{ m.from }}">
+                </td>
+                <td class="col-sender">{{ m.from }}</td>
+                <td class="col-subject">
+                  <a href="{{ m.message_href }}">
+                    {% if m.is_read %}{{ m.subject }}{% else %}<strong>{{ m.subject }}</strong>{% endif %}
+                  </a>
+                </td>
+                <td class="col-date">{{ m.date }}</td>
+              </tr>
+            {% endfor %}
+          {% endif %}
+        </tbody>
+      </table>
+
+      <nav class="pagination" aria-label="Folder pagination">
+        <span>
+          {% if total_messages == 0 %}
+            No messages.
+          {% else %}
+            Showing {{ last_index }}&ndash;{{ first_index }} of {{ total_messages }}.
+          {% endif %}
+        </span>
+        <span>
+          {% if has_prev %}
+            <a rel="prev" href="{{ prev_href }}">&larr; Newer</a>
+          {% endif %}
+          {% if has_prev && has_next %} &middot; {% endif %}
+          {% if has_next %}
+            <a rel="next" href="{{ next_href }}">Older &rarr;</a>
+          {% endif %}
+        </span>
+        <span>Page {{ current_page + 1 }} of {{ total_pages }}</span>
+      </nav>
+    </section>
+
+  </div>
+{% endblock %}
