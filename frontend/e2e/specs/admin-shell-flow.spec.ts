@@ -1,12 +1,20 @@
 /**
  * TMAIL-197: AdminShell scaffold + RequireAdmin guard.
+ * Updated (TMAIL-400): the AdminShell left rail is now registry-driven
+ * (admin-nav-registry.ts). The count assertion below was 8 pre-400 and is
+ * 26 post-400; the manager-walk still covers the original 6 real managers
+ * so a regression in any of feature-flags / quote-requests / audit-log /
+ * cache / domains / payment-providers / users / warmup is still caught
+ * here. The 18 NEW admin entries (DLP, eDiscovery, SAML, OIDC, LDAP, DANE,
+ * Retention, Branding, Hostnames, Bulk Import, ActiveSync, Plugins,
+ * Webhooks, Chat Integrations, Shared Mailboxes, Deliverability, Archive,
+ * Billing) get their own focused walk in admin-shell-extended-flow.spec.ts.
  *
  * Two passes:
  *   - non-admin user lands on /admin → role-gate page renders, no sidebar.
  *   - admin user (manually toggled via DB) sees the AdminShell sidebar with
- *     all nine entries, can navigate between feature-flags / quote-requests
- *     (real managers) and audit-log / cache / domains / payment-providers /
- *     users / warmup (placeholders for TMAIL-198..203).
+ *     the full registry, can navigate between feature-flags / quote-requests
+ *     (real managers) and the other 6 real managers shipped in TMAIL-198..203.
  */
 import { test, expect } from '../fixtures/base.js';
 import { execFileSync } from 'node:child_process';
@@ -82,11 +90,16 @@ test.describe('AdminShell + RequireAdmin (TMAIL-197)', () => {
     }, [adminTokens.access_token, adminTokens.refresh_token]);
 
     await page.goto('/admin');
-    // Index redirect lands on feature-flags; sidebar with all nine entries is visible.
+    // Index redirect lands on feature-flags; sidebar with the full
+    // registry is visible. TMAIL-400 grew the rail to 26 entries grouped
+    // under 7 group headers — assert both the surface count and that the
+    // group headers actually rendered so a future refactor that drops
+    // grouping fails here.
     await expect(page).toHaveURL(/\/admin\/feature-flags$/);
     await expect(page.locator('.admin-shell__sidebar')).toBeVisible({ timeout: 10_000 });
     const navItems = page.locator('.admin-shell__nav-item');
-    await expect(navItems).toHaveCount(8);
+    await expect(navItems).toHaveCount(26);
+    await expect(page.locator('.admin-shell__group')).toHaveCount(7);
     await takeScreenshot(page, 'admin-shell/02-feature-flags-active');
 
     // Changed: TMAIL-198..203 replaced the placeholder routes with real

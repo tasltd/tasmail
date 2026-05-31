@@ -9,6 +9,9 @@ import { AppShell } from './components/layout/AppShell';
 import { LoginPage } from './components/auth/LoginPage';
 import { LandingPage } from './components/landing/LandingPage';
 import { ErrorBoundary } from './components/shared/ErrorBoundary';
+// Added (TMAIL-400): admin Route block iterates this registry — no per-manager
+// import or Route element needed below.
+import { ADMIN_NAV, DEFAULT_ADMIN_ID } from './components/admin/admin-nav-registry';
 import './App.css';
 
 // Changed (TMAIL-259): auxiliary routes (signup, onboarding, pricing, admin,
@@ -19,16 +22,8 @@ import './App.css';
 const SignupPage = lazy(() => import('./components/auth/SignupPage').then((m) => ({ default: m.SignupPage })));
 const OnboardingWizard = lazy(() => import('./components/onboarding/OnboardingWizard').then((m) => ({ default: m.OnboardingWizard })));
 const PricingPage = lazy(() => import('./components/landing/PricingPage').then((m) => ({ default: m.PricingPage })));
-const FeatureFlagsManager = lazy(() => import('./components/admin/FeatureFlagsManager').then((m) => ({ default: m.FeatureFlagsManager })));
-const QuoteRequestsManager = lazy(() => import('./components/admin/QuoteRequestsManager').then((m) => ({ default: m.QuoteRequestsManager })));
 const AdminShell = lazy(() => import('./components/admin/AdminShell').then((m) => ({ default: m.AdminShell })));
 const RequireAdmin = lazy(() => import('./components/admin/RequireAdmin').then((m) => ({ default: m.RequireAdmin })));
-const AuditLogManager = lazy(() => import('./components/admin/AuditLogManager').then((m) => ({ default: m.AuditLogManager })));
-const CacheManager = lazy(() => import('./components/admin/CacheManager').then((m) => ({ default: m.CacheManager })));
-const DomainsManager = lazy(() => import('./components/admin/DomainsManager').then((m) => ({ default: m.DomainsManager })));
-const PaymentProvidersManager = lazy(() => import('./components/admin/PaymentProvidersManager').then((m) => ({ default: m.PaymentProvidersManager })));
-const UsersManager = lazy(() => import('./components/admin/UsersManager').then((m) => ({ default: m.UsersManager })));
-const WarmupManager = lazy(() => import('./components/admin/WarmupManager').then((m) => ({ default: m.WarmupManager })));
 const UsageBillingPage = lazy(() => import('./components/billing/UsageBillingPage').then((m) => ({ default: m.UsageBillingPage })));
 const BookingPage = lazy(() => import('./components/booking/BookingPage').then((m) => ({ default: m.BookingPage })));
 // Added (TMAIL-399): SettingsHub mounts under /app/settings/* and replaces the
@@ -149,10 +144,10 @@ function AppContent() {
             </RequireAuth>
           }
         />
-        {/* TMAIL-197: every /admin/* page mounts inside AdminShell behind the
-            RequireAdmin gate. Existing FeatureFlagsManager and QuoteRequestsManager
-            move under here; placeholders cover TMAIL-198..203 until each manager
-            ships. */}
+        {/* TMAIL-197 / TMAIL-400: every /admin/* page mounts inside AdminShell
+            behind the RequireAdmin gate. Routes are registry-driven now —
+            ADMIN_NAV is the single source of truth for the path slug, label
+            and the lazy-loaded manager component. */}
         <Route
           path="/admin"
           element={
@@ -163,15 +158,11 @@ function AppContent() {
             </RequireAuth>
           }
         >
-          <Route index element={<Navigate to="feature-flags" replace />} />
-          <Route path="feature-flags" element={<FeatureFlagsManager />} />
-          <Route path="quote-requests" element={<QuoteRequestsManager />} />
-          <Route path="audit-log" element={<AuditLogManager />} />
-          <Route path="cache" element={<CacheManager />} />
-          <Route path="domains" element={<DomainsManager />} />
-          <Route path="payment-providers" element={<PaymentProvidersManager />} />
-          <Route path="users" element={<UsersManager />} />
-          <Route path="warmup" element={<WarmupManager />} />
+          <Route index element={<Navigate to={DEFAULT_ADMIN_ID} replace />} />
+          {ADMIN_NAV.map((item) => {
+            const Comp = item.component;
+            return <Route key={item.id} path={item.id} element={<Comp />} />;
+          })}
         </Route>
         {/* TMAIL-179: in-app usage & billing dashboard for the BYOK plan. */}
         <Route

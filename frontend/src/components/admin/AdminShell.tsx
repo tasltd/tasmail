@@ -1,40 +1,22 @@
 // TMAIL-197: shared chrome for /admin/* pages.
-//
-// Sidebar + outlet so every admin manager (existing FeatureFlagsManager,
-// QuoteRequestsManager + the six TMAIL-198..203 stubs) renders inside the
-// same layout. RequireAdmin sits one level up in the route tree.
+// Changed (TMAIL-400): the inline 8-entry NAV array is replaced by the
+// data-driven admin-nav-registry.ts. The left rail now groups all 26
+// admin managers under their group headers (System / Tenant / Identity /
+// Compliance / Mail / Integrations / Billing) so the surface stays
+// scannable as we add more operator tools. RequireAdmin sits one level
+// up in the route tree; App.tsx's /admin Routes block iterates the same
+// registry to register the per-id Routes.
 import { NavLink, Outlet } from 'react-router-dom';
+import { ArrowLeft } from 'lucide-react';
 import {
-  ToggleRight,
-  Inbox,
-  ScrollText,
-  Database,
-  Globe,
-  CreditCard,
-  Users,
-  Activity,
-  ArrowLeft,
-} from 'lucide-react';
+  ADMIN_GROUP_LABELS,
+  groupedAdminNav,
+  type AdminNavItem,
+} from './admin-nav-registry';
 import './AdminShell.css';
 
-interface NavEntry {
-  to: string;
-  label: string;
-  icon: React.ReactElement;
-}
-
-const NAV: NavEntry[] = [
-  { to: '/admin/feature-flags', label: 'Feature flags', icon: <ToggleRight size={18} /> },
-  { to: '/admin/quote-requests', label: 'Quote requests', icon: <Inbox size={18} /> },
-  { to: '/admin/audit-log', label: 'Audit log', icon: <ScrollText size={18} /> },
-  { to: '/admin/cache', label: 'Cache', icon: <Database size={18} /> },
-  { to: '/admin/domains', label: 'Domains', icon: <Globe size={18} /> },
-  { to: '/admin/payment-providers', label: 'Payment providers', icon: <CreditCard size={18} /> },
-  { to: '/admin/users', label: 'Users', icon: <Users size={18} /> },
-  { to: '/admin/warmup', label: 'IP warm-up', icon: <Activity size={18} /> },
-];
-
 export function AdminShell() {
+  const groups = groupedAdminNav();
   return (
     <div className="admin-shell">
       <aside className="admin-shell__sidebar">
@@ -44,18 +26,18 @@ export function AdminShell() {
         <a href="/app" className="admin-shell__back">
           <ArrowLeft size={14} /> Back to mailbox
         </a>
-        <nav className="admin-shell__nav">
-          {NAV.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              className={({ isActive }) =>
-                `admin-shell__nav-item ${isActive ? 'admin-shell__nav-item--active' : ''}`
-              }
+        <nav className="admin-shell__nav" data-testid="admin-shell-nav">
+          {groups.map(({ group, items }) => (
+            <div
+              key={group}
+              className={`admin-shell__group admin-shell__group--${group}`}
+              data-testid={`admin-shell-group-${group}`}
             >
-              {item.icon}
-              <span>{item.label}</span>
-            </NavLink>
+              <div className="admin-shell__group-label">{ADMIN_GROUP_LABELS[group]}</div>
+              {items.map((item) => (
+                <AdminNavEntry key={item.id} item={item} />
+              ))}
+            </div>
           ))}
         </nav>
       </aside>
@@ -66,8 +48,25 @@ export function AdminShell() {
   );
 }
 
+function AdminNavEntry({ item }: { item: AdminNavItem }) {
+  const Icon = item.icon;
+  return (
+    <NavLink
+      to={`/admin/${item.id}`}
+      data-testid={`admin-nav-${item.id}`}
+      className={({ isActive }) =>
+        `admin-shell__nav-item ${isActive ? 'admin-shell__nav-item--active' : ''}`
+      }
+    >
+      <Icon size={18} />
+      <span>{item.label}</span>
+    </NavLink>
+  );
+}
+
 // TMAIL-198..203 placeholder. Each follow-up ticket replaces the body with a
-// real manager component but keeps the file path and route stable.
+// real manager component but keeps the file path and route stable. Kept
+// after the TMAIL-400 refactor so any future stubbed entry can reuse it.
 export function AdminPlaceholder({
   title,
   ticket,

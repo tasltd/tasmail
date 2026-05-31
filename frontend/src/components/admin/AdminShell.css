@@ -36,6 +36,31 @@
 
 .admin-shell__nav { display: flex; flex-direction: column; gap: 2px; }
 
+/* Added (TMAIL-400): group container + group header in the admin left rail.
+   Mirrors the Sidebar group separators introduced in TMAIL-398 so the
+   admin surface stays scannable as more managers land. */
+.admin-shell__group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--color-border, #e5e7eb);
+}
+.admin-shell__group:first-of-type {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+.admin-shell__group-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-secondary, #64748b);
+  padding: 6px 12px 4px;
+}
+
 .admin-shell__nav-item {
   display: flex;
   align-items: center;
