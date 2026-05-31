@@ -70,6 +70,15 @@ pub mod logout;
 // yet); cookie-based gate state rides on `pending_2fa_tokens` (5 min TTL).
 pub mod totp_challenge;
 
+// Added (TMAIL-381): GET + POST handlers for /classic/login/2fa/sms — the
+// SMS-OTP challenge that gates Classic UI logins when the resolved mailbox
+// has `sms_otp_enabled = true` and `totp_enabled = false`. Sister of the
+// TOTP challenge above: same pending_2fa_tokens envelope, same signed
+// cookie, same attempt-counter. The SMS code itself lives in the
+// `sms_otp_codes` table (migration 012) — generated on the first GET and
+// rotated by an explicit "Resend SMS" form submission (rate-limited).
+pub mod sms_otp_challenge;
+
 // Added (TMAIL-362): GET /classic/folders/{folder}?page=N — the inbox /
 // folder view. Mounts on the authenticated sub-router so it inherits
 // classic_session_middleware (Claims + ClassicSession in extensions)
@@ -269,6 +278,14 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route(
             "/classic/login/2fa",
             get(totp_challenge::get_challenge).post(totp_challenge::post_challenge),
+        )
+        // Added (TMAIL-381): public SMS-OTP 2FA challenge route. Sibling
+        // of /classic/login/2fa above — same public sub-router because
+        // the user has no real classic_sessions row yet (the cookie
+        // resolves to a `pending_2fa_tokens` row, not a session).
+        .route(
+            "/classic/login/2fa/sms",
+            get(sms_otp_challenge::get_challenge).post(sms_otp_challenge::post_challenge),
         )
         // Added (TMAIL-374): 3-step BYOK signup wizard. All routes are
         // PUBLIC (the user has no session yet) and carry their own

@@ -53,6 +53,7 @@ use crate::services::auth_service::evaluate_password_login;
 use crate::state::AppState;
 
 use super::auth::{create_session_and_cookie, generate_csrf_token, INBOX_PATH, LOGIN_PATH};
+use super::sms_otp_challenge::SMS_CHALLENGE_PATH;
 use super::totp_challenge::{
     build_set_pending_cookie_header, CHALLENGE_PATH, EXPIRED_OR_INVALID_ERROR,
     TOO_MANY_CODES_ERROR,
@@ -418,18 +419,21 @@ pub async fn post_login(
         Err(other) => return Err(other),
     };
 
-    // 4) 2FA short-circuit (TMAIL-361). If the resolved mailbox has TOTP
-    //    enrolled we MUST NOT create the full `classic_sessions` row yet —
-    //    that would defeat the 2FA gate. Instead:
-    //      a) Clear any stale pending-2FA rows for this user (e.g. an
-    //         abandoned previous attempt) so we don't accumulate them.
-    //      b) Insert a fresh `pending_2fa_tokens` row (5 min fixed TTL).
-    //      c) Set the `tasmail_classic_pending_2fa` cookie carrying the
-    //         row's id + an HMAC signature.
-    //      d) Also clear the pre-session login CSRF cookie (it's been
-    //         consumed by this POST and the next stage doesn't need it).
-    //      e) 303 → /classic/login/2fa.
-    if mailbox.totp_enabled && mailbox.totp_secret.is_some() {
+    // 4) 2FA short-circuit (TMAIL-361 / TMAIL-381). If the resolved mailbox
+    //    has either TOTP OR SMS-OTP enrolled we MUST NOT create the full
+    //    `classic_sessions` row yet — that would defeat the 2FA gate. The
+    //    common envelope (pending_2fa_tokens row + signed cookie) is shared
+    //    by both factors; we 303 to the factor-specific challenge page.
+    //
+    //    Precedence: TOTP wins when both are enrolled — it's stronger
+    //    (offline, no SMS-provider dependency, no carrier-cost). The SMS
+    //    challenge page surfaces a "Use authenticator app instead" link
+    //    when the resolved mailbox also has TOTP enrolled, in case a
+    //    future refactor lets the user pick.
+    let totp_active = mailbox.totp_enabled && mailbox.totp_secret.is_some();
+    let sms_active = !totp_active
+        && sms_otp_enrolled(&state.db, mailbox.id).await.unwrap_or(false);
+    if totp_active || sms_active {
         // Best-effort clear of previous gates for this user. Failures here
         // are not fatal — the new row will still resolve via its cookie.
         let _ = PendingTwoFactorToken::delete_for_user(&state.db, mailbox.id).await;
@@ -449,7 +453,15 @@ pub async fn post_login(
             ))
         })?;
 
-        let mut resp = Redirect::to(CHALLENGE_PATH).into_response();
+        // Factor-specific landing page. Note SMS_CHALLENGE_PATH lives next
+        // to /classic/login on the public sub-router — both 303 targets are
+        // reachable without a real session.
+        let target_path = if totp_active {
+            CHALLENGE_PATH
+        } else {
+            SMS_CHALLENGE_PATH
+        };
+        let mut resp = Redirect::to(target_path).into_response();
         if let Ok(hv) =
             HeaderValue::from_str(&build_set_pending_cookie_header(&state.config.jwt.secret, pending.id))
         {
@@ -461,7 +473,8 @@ pub async fn post_login(
         tracing::info!(
             user_id = ?mailbox.id,
             pending_id = ?pending.id,
-            "classic login passed password — gating on TOTP challenge"
+            factor = if totp_active { "totp" } else { "sms" },
+            "classic login passed password — gating on 2FA challenge"
         );
         return Ok(resp);
     }
@@ -504,6 +517,27 @@ fn render_failure(
     };
     let template = LoginTemplate::new(email, Some(error.to_string()), &token, csp_nonce);
     render_login_response(status, template, Some(build_login_csrf_cookie(&token)))
+}
+
+/// Added (TMAIL-381): Lookup helper for the SMS-OTP enrollment gate. Returns
+/// true only when the mailbox has both `sms_otp_enabled = true` AND a
+/// phone number configured — both are required to actually deliver the code
+/// at challenge time, so treating "enabled but no phone" as inactive avoids
+/// 303-ing the user into a challenge page that can't function.
+///
+/// Lives here (not on the Mailbox model) because the model intentionally
+/// stays narrow — the existing API doesn't depend on these columns and we
+/// don't want to widen `Mailbox` just for this one branch in login. A
+/// future task that fans the SMS columns out to more callers should
+/// promote them onto the struct.
+async fn sms_otp_enrolled(pool: &sqlx::PgPool, mailbox_id: uuid::Uuid) -> Result<bool, sqlx::Error> {
+    let row: Option<(bool, Option<String>)> = sqlx::query_as(
+        "SELECT sms_otp_enabled, phone_number FROM mailboxes WHERE id = $1",
+    )
+    .bind(mailbox_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(matches!(row, Some((true, Some(ref p))) if !p.is_empty()))
 }
 
 #[cfg(test)]

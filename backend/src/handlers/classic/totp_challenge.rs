@@ -108,7 +108,12 @@ pub const EXPIRED_OR_INVALID_ERROR: &str =
 
 /// HMAC-SHA256 the pending-2FA token id under the JWT secret, base64url-encoded
 /// without padding. Same shape as `classic_session::sign_session_id`.
-fn sign_token_id(jwt_secret: &str, token_id: Uuid) -> String {
+///
+/// Changed (TMAIL-381): exposed `pub(super)` so the sibling SMS-OTP challenge
+/// module can reuse the pending-2FA cookie envelope. The signature shape is
+/// factor-agnostic — only the verification step differs between TOTP and
+/// SMS-OTP, so sharing the cookie helpers keeps the gate semantics identical.
+pub(super) fn sign_token_id(jwt_secret: &str, token_id: Uuid) -> String {
     let mut mac = HmacSha256::new_from_slice(jwt_secret.as_bytes())
         .expect("HMAC-SHA256 accepts keys of any length");
     mac.update(token_id.as_bytes());
@@ -117,7 +122,10 @@ fn sign_token_id(jwt_secret: &str, token_id: Uuid) -> String {
 
 /// Constant-time HMAC verify. Matches the manual ct compare used elsewhere
 /// in the Classic surface (we don't pull in `subtle` just for this).
-fn verify_token_signature(jwt_secret: &str, token_id: Uuid, supplied_sig: &str) -> bool {
+///
+/// Changed (TMAIL-381): exposed `pub(super)` so the SMS challenge can run
+/// the same cookie-signature check the TOTP challenge does.
+pub(super) fn verify_token_signature(jwt_secret: &str, token_id: Uuid, supplied_sig: &str) -> bool {
     let expected = sign_token_id(jwt_secret, token_id);
     if expected.len() != supplied_sig.len() {
         return false;
@@ -153,7 +161,12 @@ pub fn build_clear_pending_cookie_header() -> String {
 }
 
 /// Parse the cookie header and pull out `(token_id, signature)`.
-fn extract_pending_cookie(headers: &HeaderMap) -> Option<(Uuid, String)> {
+///
+/// Changed (TMAIL-381): exposed `pub(super)` so the SMS challenge module
+/// can reuse the same cookie envelope parser. Keeping a single source of
+/// truth for the cookie shape means TOTP and SMS gates can never drift
+/// out of step on a cookie-rename / signature-format change.
+pub(super) fn extract_pending_cookie(headers: &HeaderMap) -> Option<(Uuid, String)> {
     let cookie_header = headers.get(header::COOKIE)?.to_str().ok()?;
     let raw = cookie_header
         .split(';')

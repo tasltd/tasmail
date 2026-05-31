@@ -1,0 +1,126 @@
+{% extends "classic/base.html" %}
+
+{# TMAIL-381 — SMS-OTP challenge form for the `/classic` no-JS surface.
+
+   Model:
+     * `error`            — Some("Incorrect verification code.") on a failed
+                            POST verify, OR a rate-limit message on a too-soon
+                            resend. None on the fresh GET.
+     * `info`             — Some("We sent a verification code to +233***789.")
+                            on the fresh GET (and on a successful resend), so
+                            the user knows where the code went. None on a
+                            failed-code re-render.
+     * `csrf_token`       — bound to the `pending_2fa_tokens` row that the
+                            `tasmail_classic_pending_2fa` cookie resolves to.
+                            Validated by POST /classic/login/2fa/sms via the
+                            same constant-time compare the canonical csrf
+                            middleware uses.
+     * `phone_masked`     — best-effort masked phone (e.g. "+233***789") for
+                            the info copy. Pulled from `mailboxes.phone_number`
+                            via the same mask helper /api/sms-otp/status uses.
+     * `totp_available`   — true if the resolved mailbox ALSO has TOTP enrolled
+                            (`totp_enabled = true`). When set, we surface a
+                            "Use authenticator app instead" link to the TOTP
+                            challenge — covers the rare case where a user has
+                            both factors enrolled and prefers TOTP for a
+                            specific sign-in.
+     * `csp_nonce`        — per-request CSP nonce required by base.html.
+
+   This page is reached ONLY after `/classic/login` has accepted a password
+   from a user whose mailbox has `sms_otp_enabled = true` and `totp_enabled
+   = false`. The pending-2FA cookie was set by the login handler's 303 — if
+   the user lands here without one, we bounce them to /classic/login with
+   `?error=2fa_expired` so the login page can flash the right copy.
+
+   The form deliberately stays minimal:
+     * One 6-digit field, inputmode=numeric + autocomplete=one-time-code
+       so iOS/Android forward the SMS code from the OS, even though this is
+       a no-JS surface.
+     * One "Resend SMS" submit button as a separate <form> action so it does
+       NOT clobber the verify form's `code` field.
+     * Visible CSP-nonced inline styles via base.html — no JS keystroke
+       shaping, no JS submit, no autocomplete trickery. lynx renders this
+       perfectly.
+     * Same `_csrf` hidden input shape as the login + TOTP forms so a future
+       migration to a unified middleware doesn't have to rename inputs. #}
+
+{% block title %}Enter your verification code{% endblock %}
+
+{% block content %}
+  <h1>Enter your verification code</h1>
+
+  {% if let Some(msg) = info %}
+    <div class="alert alert-success" role="status">
+      <strong>{{ msg }}</strong>
+    </div>
+  {% endif %}
+
+  {% if let Some(msg) = error %}
+    <div class="alert alert-error" role="alert">
+      <strong>{{ msg }}</strong>
+    </div>
+  {% endif %}
+
+  <p>
+    We sent a 6-digit verification code to your registered phone
+    {% if let Some(phone) = phone_masked %}
+      (<strong>{{ phone }}</strong>)
+    {% endif %}.
+    Enter it below to finish signing in.
+  </p>
+
+  <form method="post" action="/classic/login/2fa/sms" autocomplete="on" novalidate>
+    {# CSRF token bound to the pending_2fa_tokens row. Constant-time-compared
+       against the row's csrf_token column on POST. #}
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    {# Explicit `action=verify` so the dispatching handler can branch on it
+       cleanly even when the implicit "Verify" submit button fires. The
+       sibling Resend form uses `action=resend` instead. #}
+    <input type="hidden" name="action" value="verify">
+
+    <label for="code">6-digit code</label>
+    <input type="text"
+           id="code"
+           name="code"
+           autocomplete="one-time-code"
+           inputmode="numeric"
+           pattern="[0-9]{6}"
+           minlength="6"
+           maxlength="6"
+           required
+           aria-required="true"
+           aria-describedby="code-help"
+           autofocus>
+    <small id="code-help">
+      The code is valid for 5 minutes. If it expires, use the Resend SMS
+      button below to send a new one.
+    </small>
+
+    <button type="submit">Verify</button>
+  </form>
+
+  {# Resend lives in its OWN form so a click on it doesn't try to validate the
+     (likely empty) code field. The handler routes on `name="action"`. #}
+  <form method="post" action="/classic/login/2fa/sms" autocomplete="off" novalidate>
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <input type="hidden" name="action" value="resend">
+    <button type="submit">Resend SMS</button>
+  </form>
+
+  {% if totp_available %}
+    <p>
+      <small>
+        Prefer your authenticator app?
+        <a href="/classic/login/2fa">Use authenticator app instead</a>.
+      </small>
+    </p>
+  {% endif %}
+
+  <p>
+    <small>
+      Lost access to the phone that receives the SMS? Sign in from a device
+      that has your saved recovery code and disable two-factor authentication
+      from the Settings page, then re-enrol from your new device.
+    </small>
+  </p>
+{% endblock %}
