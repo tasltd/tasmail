@@ -111,6 +111,52 @@
       border: 1px dashed var(--tm-border);
       border-radius: 4px;
     }
+    /* TMAIL-386 — "[Remote images blocked]" / "[Remote images shown]"
+       banner that sits above the body. Two visual states keyed off the
+       same .img-banner block; the .shown variant uses a muted tint so it
+       doesn't compete with the body for attention. */
+    .img-banner {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.5rem 0.75rem;
+      margin: 0 0 0.75rem;
+      padding: 0.6rem 0.85rem;
+      background: var(--tm-bg-light);
+      border: 1px solid var(--tm-border);
+      border-radius: 4px;
+      font-size: 0.9375rem;
+    }
+    .img-banner.shown {
+      background: var(--tm-surface);
+      color: var(--tm-muted);
+      font-size: 0.875rem;
+    }
+    .img-banner-label {
+      font-weight: 600;
+      color: var(--tm-charcoal-900);
+    }
+    .img-banner.shown .img-banner-label {
+      color: var(--tm-muted);
+      font-weight: 500;
+    }
+    .img-banner form {
+      display: inline;
+      margin: 0;
+    }
+    .img-banner button {
+      padding: 0.3rem 0.7rem;
+      font-size: 0.875rem;
+      border-radius: 3px;
+      background: var(--tm-surface);
+      color: var(--tm-link);
+      border: 1px solid var(--tm-border);
+      cursor: pointer;
+    }
+    .img-banner button:hover {
+      background: var(--tm-bg-light);
+      text-decoration: underline;
+    }
     /* Attachment list. <ul> with one <li> per attachment — each is a
        download <a> with content-type + size as muted secondary text. */
     .attachments {
@@ -244,6 +290,46 @@
       {% endif %}
     </dl>
   </section>
+
+  {# ───────── Remote-image banner (TMAIL-386) ───────── #}
+  {# Two-state banner that sits above the body:
+       * remote_images_present && !remote_images_shown — render the
+         "[Remote images blocked]" notice + two forms: a one-shot
+         "Show images" POST and, when the sender parsed cleanly, the
+         persistent "Always show images from this sender" POST.
+       * remote_images_present &&  remote_images_shown — render a muted
+         "[Remote images shown]" notice so the user always sees WHY the
+         privacy default flipped on for this view.
+     Both forms carry the session CSRF token; the always-allow form also
+     carries the parsed sender as a hidden field so the POST handler
+     doesn't have to re-fetch the message just to learn who sent it. #}
+  {% if remote_images_present %}
+    {% if remote_images_shown %}
+      <section class="img-banner shown" aria-label="Remote images shown">
+        <span class="img-banner-label">[Remote images shown]</span>
+        {% if remote_images_from_allowlisted_sender %}
+          <span>Sender is on your always-allow list.</span>
+        {% else %}
+          <span>One-time only — this view.</span>
+        {% endif %}
+      </section>
+    {% else %}
+      <section class="img-banner" aria-label="Remote images blocked">
+        <span class="img-banner-label">[Remote images blocked]</span>
+        <form method="post" action="{{ show_images_once_action }}">
+          <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+          <button type="submit">Show images</button>
+        </form>
+        {% if !allow_sender_address.is_empty() %}
+          <form method="post" action="{{ show_images_always_action }}">
+            <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+            <input type="hidden" name="sender" value="{{ allow_sender_address }}">
+            <button type="submit">Always show images from this sender</button>
+          </form>
+        {% endif %}
+      </section>
+    {% endif %}
+  {% endif %}
 
   {# ───────── Body ───────── #}
   <section class="msg-body" aria-label="Message body">

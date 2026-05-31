@@ -51,16 +51,20 @@
 
 use askama::Template;
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    Extension,
+    Extension, Form,
 };
+use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::error::AppError;
+use crate::models::remote_image_allowlist;
 use crate::services::auth_service::Claims;
-use crate::services::html_sanitizer::sanitize_email_html;
+use crate::services::html_sanitizer::{
+    html_has_remote_images, sanitize_email_html_with_options, SanitizeOptions,
+};
 use crate::services::imap_service::{Attachment, FullMessage, ImapService};
 use crate::state::AppState;
 
@@ -142,14 +146,99 @@ pub struct AttachmentRow {
 ///   1. `html_body` if present and non-empty → sanitise and render as HTML
 ///   2. `text_body` if present and non-empty → render as plain text
 ///   3. `Empty` — no usable body
-pub fn build_body(text_body: Option<&str>, html_body: Option<&str>) -> BodyRendering {
+///
+/// `allow_remote_images` is forwarded straight to the sanitiser
+/// (`SanitizeOptions::allow_remote_images`). Defaults to `false` everywhere
+/// except the two TMAIL-386 opt-in paths:
+///   * `?show_images=1` query on the GET handler (one-shot per render).
+///   * Per-sender row in `remote_image_allowlist` ("Always show images
+///     from this sender").
+pub fn build_body(
+    text_body: Option<&str>,
+    html_body: Option<&str>,
+    allow_remote_images: bool,
+) -> BodyRendering {
     if let Some(html) = html_body.filter(|s| !s.trim().is_empty()) {
-        return BodyRendering::Html(sanitize_email_html(html));
+        let cleaned = sanitize_email_html_with_options(
+            html,
+            SanitizeOptions {
+                allow_remote_images,
+            },
+        );
+        return BodyRendering::Html(cleaned);
     }
     if let Some(text) = text_body.filter(|s| !s.trim().is_empty()) {
         return BodyRendering::Text(text.to_string());
     }
     BodyRendering::Empty
+}
+
+/// PURPOSE (TMAIL-386): pull the bare email address out of a From header
+/// display string like `"Alice <alice@example.com>"` or `alice@example.com`
+/// so it can be used as the lookup key for the per-sender allowlist.
+///
+/// Returns `None` when the input doesn't contain a recognisable `@`-bearing
+/// token — defensive, so a hostile sender that ships a malformed `From`
+/// header can't accidentally land an empty row in `remote_image_allowlist`
+/// or short-circuit the lookup against `WHERE sender_address = ''`.
+///
+/// Heuristic — good enough for an opt-in keyed on what the user sees in the
+/// From row, without dragging in a full RFC 5322 address parser:
+///   * If the string contains `<...>`, return whatever's between the angle
+///     brackets when that span contains an `@`.
+///   * Otherwise, scan word-by-word and return the first whitespace-
+///     separated token that contains `@`.
+///   * Trim ASCII whitespace and surrounding `"` / `'` / `,` / `;` from the
+///     result, then enforce `local@domain` shape.
+pub fn parse_sender_email(from_header: &str) -> Option<String> {
+    let candidate = if let (Some(lt), Some(gt)) = (from_header.find('<'), from_header.rfind('>')) {
+        if gt > lt {
+            let inside = &from_header[lt + 1..gt];
+            if inside.contains('@') {
+                inside.to_string()
+            } else {
+                from_header.to_string()
+            }
+        } else {
+            from_header.to_string()
+        }
+    } else {
+        from_header.to_string()
+    };
+    // If there were no angle brackets, scan space-separated tokens for the
+    // first `@`-bearing one. (Display name first, address last is the most
+    // common shape: `Alice alice@example.com`.)
+    let token = if candidate.contains('<') {
+        // The candidate is still the full string because angle parsing
+        // didn't yield an @-bearing inner span. Fall through to token scan.
+        candidate
+            .split_whitespace()
+            .find(|t| t.contains('@'))
+            .unwrap_or("")
+            .to_string()
+    } else if candidate.contains('@') && candidate.split_whitespace().count() <= 1 {
+        candidate
+    } else {
+        candidate
+            .split_whitespace()
+            .find(|t| t.contains('@'))
+            .unwrap_or("")
+            .to_string()
+    };
+    let trimmed = token
+        .trim()
+        .trim_matches(|c: char| c == '"' || c == '\'' || c == ',' || c == ';' || c == '<' || c == '>')
+        .trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    // Enforce shape: exactly one `@`, non-empty local + domain, and the
+    // domain has at least one `.`.
+    let (local, domain) = trimmed.split_once('@')?;
+    if local.is_empty() || domain.is_empty() || !domain.contains('.') {
+        return None;
+    }
+    Some(trimmed.to_string())
 }
 
 /// Added (TMAIL-371): Detect whether the message's IMAP flag set carries
@@ -274,6 +363,38 @@ pub struct MessageTemplate {
     /// couldn't reach the cache + DB, in which case the partial just
     /// renders nothing so the rest of the read view still loads.
     pub quota_indicator: Option<super::QuotaIndicator>,
+    /// Added (TMAIL-386): `true` when the *raw* (pre-sanitiser) HTML body
+    /// contained at least one remote `<img src="http(s)://...">` element.
+    /// Drives the "[Remote images blocked]" banner above the body — the
+    /// banner is only useful when there were blocked images to opt back in
+    /// to seeing.
+    pub remote_images_present: bool,
+    /// Added (TMAIL-386): `true` when this render is currently surfacing
+    /// the real remote URLs (because the user clicked "Show images" OR the
+    /// sender is on `remote_image_allowlist`). Drives the *second* banner
+    /// state — when images ARE shown, we tell the user why so they don't
+    /// think the privacy default broke.
+    pub remote_images_shown: bool,
+    /// Added (TMAIL-386): `true` when the sender is on
+    /// `remote_image_allowlist`. Drives a small "Always-allowed sender"
+    /// note in the shown-images banner so the user knows the persistent
+    /// allowlist row is what's surfacing the images (vs the one-shot
+    /// `?show_images=1` query).
+    pub remote_images_from_allowlisted_sender: bool,
+    /// Added (TMAIL-386): URL-encoded sender address (or empty when the
+    /// sender header didn't parse to a valid `local@domain.tld`). Empty
+    /// means the "Always show images from this sender" button MUST NOT
+    /// render — there's nothing valid to persist. Embedded in the form
+    /// action so the POST handler doesn't have to re-fetch the message
+    /// just to learn who sent it.
+    pub allow_sender_address: String,
+    /// Added (TMAIL-386): POST action for the one-shot "Show images" button
+    /// (the form posts to the same message URL with `?show_images=1` so the
+    /// 303-redirect lands on the same GET handler with the query primed).
+    pub show_images_once_action: String,
+    /// Added (TMAIL-386): POST action for the persistent "Always show
+    /// images from this sender" button.
+    pub show_images_always_action: String,
 }
 
 /// GET /classic/folders/{folder}/messages/{uid} — render the message
@@ -284,6 +405,26 @@ pub struct MessageTemplate {
 /// missing UID as `AppError::NotFound`. Both render through the global
 /// error layer; mapping IMAP "no such mailbox / no such uid" errors to
 /// a friendlier Classic-UI page is the P2 polish task.
+/// Added (TMAIL-386): query-string carrier for the one-shot "Show images"
+/// opt-in. Set by the POST `show-images-once` handler's 303 redirect, then
+/// consumed on the follow-up GET. `serde(default)` so the bare
+/// `/classic/folders/INBOX/messages/42` URL (the common case) still
+/// deserialises without 400'ing.
+#[derive(Debug, Default, Deserialize)]
+pub struct MessageQuery {
+    #[serde(default)]
+    pub show_images: Option<String>,
+}
+
+impl MessageQuery {
+    /// True when the query carries `?show_images=1` (or `=true` / `=yes` —
+    /// same liberal accept the Delete form's `is_confirmed()` uses, so the
+    /// flag is impossible to mis-set when typed by hand).
+    pub fn show_images(&self) -> bool {
+        matches!(self.show_images.as_deref(), Some("1" | "true" | "yes"))
+    }
+}
+
 pub async fn get_message(
     State(state): State<AppState>,
     Extension(claims): Extension<Claims>,
@@ -292,6 +433,9 @@ pub async fn get_message(
     // on base.html matches the strict /classic/* CSP response header.
     Extension(csp_nonce): Extension<CspNonce>,
     Path((folder, uid)): Path<(String, u32)>,
+    // Added (TMAIL-386): `?show_images=1` opt-in for the one-shot Show
+    // images form.
+    Query(query): Query<MessageQuery>,
 ) -> Result<Response, AppError> {
     let mailbox_id: Uuid = claims
         .sub
@@ -344,7 +488,51 @@ pub async fn get_message(
     let to = full.to.join(", ");
     let cc = full.cc.join(", ");
     let date = full.date.unwrap_or_default();
-    let body = build_body(full.text_body.as_deref(), full.html_body.as_deref());
+
+    // Added (TMAIL-386): decide whether this render surfaces real remote
+    // <img src=...> URLs or leaves the sanitiser's privacy default in place.
+    // Two independent opt-ins compose:
+    //   * One-shot: `?show_images=1` on the GET (set by the POST handler
+    //     `post_show_images_once` via a 303 redirect — keeps the opt-in
+    //     scoped to a single page view, not persisted).
+    //   * Persistent: the parsed sender address sits in the user's
+    //     `remote_image_allowlist`. We swallow lookup errors so a transient
+    //     DB hiccup degrades to "block images" (the privacy-safe direction)
+    //     rather than 500'ing the read view.
+    let sender_email = parse_sender_email(&from);
+    let from_allowlisted_sender = if let Some(addr) = sender_email.as_deref() {
+        match remote_image_allowlist::is_allowed(&state.db, mailbox_id, addr).await {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(
+                    error = ?e,
+                    "remote_image_allowlist lookup failed; defaulting to block"
+                );
+                false
+            }
+        }
+    } else {
+        false
+    };
+    let one_shot_show = query.show_images();
+    let allow_remote_images = one_shot_show || from_allowlisted_sender;
+
+    // Pre-scan the raw HTML body for any remote <img src=...> so the
+    // template can decide whether to render the "[Remote images blocked]"
+    // banner. We check the *raw* HTML (not the sanitised output) so the
+    // banner stays accurate even when the sanitiser has already rewritten
+    // every remote URL to the placeholder.
+    let remote_images_present = full
+        .html_body
+        .as_deref()
+        .map(html_has_remote_images)
+        .unwrap_or(false);
+
+    let body = build_body(
+        full.text_body.as_deref(),
+        full.html_body.as_deref(),
+        allow_remote_images,
+    );
     let attachments = build_attachment_rows(&full.attachments, &folder_href, full.uid);
     // Added (TMAIL-371): resolve the starred state from the message's IMAP
     // flag set so the read view's Star button renders as "Star" vs
@@ -368,6 +556,12 @@ pub async fn get_message(
     // Added (TMAIL-372): per-message move endpoint — sibling of `/delete`
     // and `/flag` so the URL layout stays consistent.
     let move_action = format!("{}/move", base);
+    // Added (TMAIL-386): two POST endpoints fed by the read-view banner.
+    // `/show-images-once` 303-redirects back to the GET handler with
+    // `?show_images=1`; `/show-images-always` writes a row to
+    // `remote_image_allowlist` keyed on the parsed sender then 303s back.
+    let show_images_once_action = format!("{}/show-images-once", base);
+    let show_images_always_action = format!("{}/show-images-always", base);
 
     // Added (TMAIL-384): hydrate the footer quota indicator. Cache-first
     // (see context::load_quota_indicator) — `None` on Redis + DB outage,
@@ -396,6 +590,15 @@ pub async fn get_message(
         csrf_token: session.csrf_token.clone(),
         csp_nonce: csp_nonce.into_string(),
         quota_indicator,
+        remote_images_present,
+        remote_images_shown: allow_remote_images && remote_images_present,
+        remote_images_from_allowlisted_sender: from_allowlisted_sender && remote_images_present,
+        // Empty string when the sender header didn't parse — the template
+        // hides the "Always show images from this sender" button in that
+        // case so we can't submit a junk row.
+        allow_sender_address: sender_email.unwrap_or_default(),
+        show_images_once_action,
+        show_images_always_action,
     };
 
     let html = template.render().map_err(|e| {
@@ -410,6 +613,93 @@ pub async fn get_message(
         html,
     )
         .into_response())
+}
+
+// =====================================================================
+// TMAIL-386 — Remote-image opt-in handlers.
+// =====================================================================
+//
+// Two POSTs land on the message read view's banner. Both rely on the
+// session + CSRF middleware layered upstream (see
+// `handlers::classic::authenticated_router`) — no auth or CSRF work
+// happens in these handlers themselves; both just verify session
+// presence via `Claims` and 303-redirect back to the GET handler.
+
+/// Form body shape for `show-images-always`. The sender address is rendered
+/// into a hidden field on the read view so the POST handler doesn't have to
+/// re-fetch the message just to learn who sent it. `serde(default)` so a
+/// missing field surfaces as `None` instead of 400'ing — the handler maps
+/// `None` to a 400 with a clear message.
+#[derive(Debug, Default, Deserialize)]
+pub struct ShowImagesAlwaysForm {
+    #[serde(default)]
+    pub sender: Option<String>,
+}
+
+/// POST `/classic/folders/{folder}/messages/{uid}/show-images-once`.
+///
+/// One-shot opt-in. No DB write — the handler just 303-redirects back to
+/// the GET endpoint with `?show_images=1` so the same render that just had
+/// images blocked now surfaces the real remote URLs. The next click on a
+/// different message lands on the privacy-safe default again.
+///
+/// CSRF + session are enforced upstream by the classic auth + CSRF
+/// middleware (the route is mounted on `authenticated_router`).
+pub async fn post_show_images_once(
+    Path((folder, uid)): Path<(String, u32)>,
+) -> Result<Response, AppError> {
+    let folder_href = urlencoding::encode(&folder).into_owned();
+    let target = format!(
+        "/classic/folders/{}/messages/{}?show_images=1",
+        folder_href, uid
+    );
+    Ok((StatusCode::SEE_OTHER, [(axum::http::header::LOCATION, target)]).into_response())
+}
+
+/// POST `/classic/folders/{folder}/messages/{uid}/show-images-always`.
+///
+/// Persistent opt-in. Parses the submitted sender address (sanity-checked
+/// against the same `parse_sender_email` rules that built the hidden field
+/// in the first place — defence-in-depth, so a tampered form can't sneak a
+/// malformed row past `remote_image_allowlist::allow_sender`), then UPSERTs
+/// a row in `remote_image_allowlist`. 303-redirects back to the GET
+/// handler so the next render of THIS message — and every future message
+/// from this sender — surfaces the real remote URLs.
+///
+/// Returns a 400 if the form doesn't carry a parseable sender (would
+/// indicate either a tampered form OR a sender that the original render
+/// couldn't parse either — in which case we shouldn't have rendered the
+/// "Always allow" button to begin with).
+pub async fn post_show_images_always(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path((folder, uid)): Path<(String, u32)>,
+    Form(form): Form<ShowImagesAlwaysForm>,
+) -> Result<Response, AppError> {
+    let mailbox_id: Uuid = claims.sub.parse().map_err(|_| {
+        AppError::Internal(anyhow::anyhow!("Invalid mailbox ID in classic claims"))
+    })?;
+    let raw = form.sender.unwrap_or_default();
+    let parsed = parse_sender_email(&raw).ok_or_else(|| {
+        AppError::BadRequest(
+            "Cannot allow images: the message's From header did not parse to a valid \
+             email address. Use the one-shot \"Show images\" button instead."
+                .to_string(),
+        )
+    })?;
+    // Idempotent upsert — re-clicking the button on a sender that's already
+    // allowlisted is a safe no-op. We don't surface a "Sender was already
+    // allowed" banner today; the post-303 GET silently shows images either
+    // way, which is the right UX.
+    remote_image_allowlist::allow_sender(&state.db, mailbox_id, &parsed).await?;
+
+    let folder_href = urlencoding::encode(&folder).into_owned();
+    // We don't tack on `?show_images=1` here — the persistent allowlist
+    // entry will make the GET render surface real images on its own. (We
+    // also redirect without the query so a future "Forget this sender"
+    // action lands on the privacy-safe view the moment the row is gone.)
+    let target = format!("/classic/folders/{}/messages/{}", folder_href, uid);
+    Ok((StatusCode::SEE_OTHER, [(axum::http::header::LOCATION, target)]).into_response())
 }
 
 #[cfg(test)]
@@ -455,6 +745,18 @@ mod tests {
             csrf_token: "test-csrf-token".to_string(),
             csp_nonce: "test-nonce-fixed".to_string(),
             quota_indicator: None,
+            // TMAIL-386 defaults — every existing test exercises the
+            // "no remote images at all" path so the banner doesn't render
+            // and the existing assertions still hold. Banner-specific
+            // tests below toggle these flags explicitly.
+            remote_images_present: false,
+            remote_images_shown: false,
+            remote_images_from_allowlisted_sender: false,
+            allow_sender_address: String::new(),
+            show_images_once_action: "/classic/folders/INBOX/messages/42/show-images-once"
+                .to_string(),
+            show_images_always_action: "/classic/folders/INBOX/messages/42/show-images-always"
+                .to_string(),
         }
     }
 
@@ -484,33 +786,33 @@ mod tests {
 
     #[test]
     fn build_body_prefers_html_when_present() {
-        let body = build_body(Some("plain alt"), Some("<p>HTML</p>"));
+        let body = build_body(Some("plain alt"), Some("<p>HTML</p>"), false);
         assert!(body.is_html());
         assert!(body.html().contains("<p>HTML</p>"));
     }
 
     #[test]
     fn build_body_falls_back_to_text_when_html_missing() {
-        let body = build_body(Some("plain only"), None);
+        let body = build_body(Some("plain only"), None, false);
         assert!(body.is_text());
         assert_eq!(body.text(), "plain only");
     }
 
     #[test]
     fn build_body_falls_back_to_text_when_html_empty() {
-        let body = build_body(Some("plain"), Some("   "));
+        let body = build_body(Some("plain"), Some("   "), false);
         assert!(body.is_text());
     }
 
     #[test]
     fn build_body_returns_empty_when_neither_present() {
-        let body = build_body(None, None);
+        let body = build_body(None, None, false);
         assert!(body.is_empty());
     }
 
     #[test]
     fn build_body_sanitises_html_strips_script() {
-        let body = build_body(None, Some("<p>ok</p><script>alert('xss')</script>"));
+        let body = build_body(None, Some("<p>ok</p><script>alert('xss')</script>"), false);
         assert!(body.is_html());
         let html = body.html();
         assert!(!html.contains("<script"));
@@ -520,9 +822,41 @@ mod tests {
 
     #[test]
     fn build_body_sanitises_html_strips_onload() {
-        let body = build_body(None, Some(r#"<body onload="evil()">x</body>"#));
+        let body = build_body(None, Some(r#"<body onload="evil()">x</body>"#), false);
         assert!(body.is_html());
         assert!(!body.html().contains("onload"));
+    }
+
+    // ----- TMAIL-386: build_body honours allow_remote_images -----
+
+    #[test]
+    fn build_body_blocks_remote_image_when_allow_is_false() {
+        // Default (privacy-aware) path. The sanitiser rewrites the remote
+        // src to its 1×1 placeholder; the original URL must not survive.
+        let body = build_body(
+            None,
+            Some(r#"<p>hi</p><img src="https://tracker.example.com/x.gif">"#),
+            false,
+        );
+        assert!(body.is_html());
+        assert!(!body.html().contains("tracker.example.com"));
+    }
+
+    #[test]
+    fn build_body_surfaces_remote_image_when_allow_is_true() {
+        // The Show-images opt-in path (TMAIL-386). With allow=true the
+        // sanitiser leaves the remote URL in place.
+        let body = build_body(
+            None,
+            Some(r#"<p>hi</p><img src="https://example.com/banner.png">"#),
+            true,
+        );
+        assert!(body.is_html());
+        assert!(
+            body.html().contains("https://example.com/banner.png"),
+            "remote URL should survive when allow_remote_images=true: {}",
+            body.html()
+        );
     }
 
     // ----- build_attachment_rows -----
@@ -1062,6 +1396,290 @@ mod tests {
             !body.contains(">Move<"),
             "Move submit button must NOT render when no targets: {body}"
         );
+    }
+
+    // ===== TMAIL-386: parse_sender_email helper =====
+
+    #[test]
+    fn parse_sender_email_extracts_address_from_display_form() {
+        assert_eq!(
+            parse_sender_email("Alice <alice@example.com>").as_deref(),
+            Some("alice@example.com")
+        );
+        assert_eq!(
+            parse_sender_email("\"Bob B.\" <bob@example.com>").as_deref(),
+            Some("bob@example.com")
+        );
+    }
+
+    #[test]
+    fn parse_sender_email_handles_bare_address() {
+        assert_eq!(
+            parse_sender_email("alice@example.com").as_deref(),
+            Some("alice@example.com")
+        );
+        assert_eq!(
+            parse_sender_email("  alice@example.com  ").as_deref(),
+            Some("alice@example.com")
+        );
+    }
+
+    #[test]
+    fn parse_sender_email_returns_none_for_unparseable_input() {
+        assert!(parse_sender_email("").is_none());
+        assert!(parse_sender_email("Alice").is_none());
+        assert!(parse_sender_email("not-an-email").is_none());
+        // Missing domain dot — most providers require at least one,
+        // and our writer / read paths use the lookup key as opaque so a
+        // junk `alice@localhost` row would never get a real match.
+        assert!(parse_sender_email("alice@localhost").is_none());
+        // Missing local-part / domain.
+        assert!(parse_sender_email("@example.com").is_none());
+        assert!(parse_sender_email("alice@").is_none());
+    }
+
+    #[test]
+    fn parse_sender_email_preserves_plus_addressing() {
+        assert_eq!(
+            parse_sender_email("Alice <alice+lists@example.com>").as_deref(),
+            Some("alice+lists@example.com")
+        );
+    }
+
+    // ===== TMAIL-386: MessageQuery -> show_images flag =====
+
+    #[test]
+    fn message_query_recognises_truthy_values() {
+        let mut q = MessageQuery {
+            show_images: Some("1".to_string()),
+        };
+        assert!(q.show_images());
+        q.show_images = Some("true".to_string());
+        assert!(q.show_images());
+        q.show_images = Some("yes".to_string());
+        assert!(q.show_images());
+    }
+
+    #[test]
+    fn message_query_rejects_anything_else() {
+        assert!(!MessageQuery::default().show_images());
+        assert!(!MessageQuery {
+            show_images: Some("0".to_string()),
+        }
+        .show_images());
+        assert!(!MessageQuery {
+            show_images: Some("".to_string()),
+        }
+        .show_images());
+        assert!(!MessageQuery {
+            show_images: Some("nope".to_string()),
+        }
+        .show_images());
+    }
+
+    // ===== TMAIL-386: banner rendering branches =====
+
+    #[test]
+    fn template_renders_no_banner_when_no_remote_images_present() {
+        // The fresh fixture has remote_images_present=false; neither
+        // banner state should render and the body sits directly under
+        // the header block as it did before TMAIL-386. We assert on the
+        // rendered label span and the form action (not a freeform
+        // substring) so the leak-free CSS comment that mentions both
+        // banner copies doesn't trip this test.
+        let body = fresh_template().render().expect("template renders");
+        assert!(
+            !body.contains(">[Remote images blocked]<"),
+            "blocked-images banner label must NOT render when no remote images are present: {body}"
+        );
+        assert!(
+            !body.contains(">[Remote images shown]<"),
+            "shown-images banner label must NOT render when no remote images are present: {body}"
+        );
+        assert!(
+            !body.contains("show-images-once"),
+            "show-images-once form action must NOT render when no remote images are present: {body}"
+        );
+        assert!(
+            !body.contains("show-images-always"),
+            "show-images-always form action must NOT render when no remote images are present: {body}"
+        );
+    }
+
+    #[test]
+    fn template_renders_blocked_banner_with_show_once_button_when_images_present_and_blocked() {
+        let mut t = fresh_template();
+        t.remote_images_present = true;
+        t.remote_images_shown = false;
+        t.allow_sender_address = "alice@example.com".to_string();
+        let body = t.render().expect("template renders");
+        assert!(
+            body.contains(">[Remote images blocked]<"),
+            "blocked-images banner label must render: {body}"
+        );
+        // The one-shot "Show images" form must POST to the show-images-once
+        // endpoint and carry the session CSRF token.
+        assert!(
+            body.contains(
+                "action=\"/classic/folders/INBOX/messages/42/show-images-once\""
+            ),
+            "show-images-once form action missing: {body}"
+        );
+        // The button label is the user-facing "Show images" copy.
+        assert!(
+            body.contains(">Show images<"),
+            "Show images button missing: {body}"
+        );
+        // Locate the show-images-once form and verify it carries the csrf
+        // hidden field.
+        let action_at = body
+            .find("action=\"/classic/folders/INBOX/messages/42/show-images-once\"")
+            .expect("show-images-once action present");
+        let form_start = body[..action_at]
+            .rfind("<form")
+            .expect("show-images-once must sit inside a <form>");
+        let form_end = body[form_start..]
+            .find("</form>")
+            .map(|i| form_start + i)
+            .expect("show-images-once form closing tag");
+        let form_segment = &body[form_start..form_end];
+        assert!(
+            form_segment.contains("name=\"_csrf\" value=\"test-csrf-token\""),
+            "show-images-once form must carry the session csrf_token: {form_segment}"
+        );
+    }
+
+    #[test]
+    fn template_renders_always_allow_button_when_sender_parsed() {
+        // When the parsed sender is non-empty, the "Always show images from
+        // this sender" form must render too — with the sender as a hidden
+        // field so the POST handler doesn't have to re-fetch.
+        let mut t = fresh_template();
+        t.remote_images_present = true;
+        t.remote_images_shown = false;
+        t.allow_sender_address = "alice@example.com".to_string();
+        let body = t.render().expect("template renders");
+        assert!(
+            body.contains(
+                "action=\"/classic/folders/INBOX/messages/42/show-images-always\""
+            ),
+            "show-images-always form action missing: {body}"
+        );
+        assert!(
+            body.contains(">Always show images from this sender<"),
+            "Always show button missing: {body}"
+        );
+        assert!(
+            body.contains("name=\"sender\" value=\"alice@example.com\""),
+            "hidden sender field missing or wrong: {body}"
+        );
+    }
+
+    #[test]
+    fn template_omits_always_allow_button_when_sender_unparsed() {
+        // Edge case — a From header that didn't parse to a real address
+        // (display-name-only sender, malformed RFC 5322, etc.). The
+        // one-shot Show images button still renders so the user can opt in
+        // for this view, but the Always-allow button MUST NOT render — we
+        // have nothing valid to persist.
+        let mut t = fresh_template();
+        t.remote_images_present = true;
+        t.remote_images_shown = false;
+        t.allow_sender_address = String::new();
+        let body = t.render().expect("template renders");
+        assert!(
+            body.contains(">[Remote images blocked]<"),
+            "blocked-images banner must still render: {body}"
+        );
+        assert!(
+            body.contains(">Show images<"),
+            "one-shot Show images must still render: {body}"
+        );
+        assert!(
+            !body.contains("show-images-always"),
+            "Always-allow form must NOT render when sender unparsed: {body}"
+        );
+        assert!(
+            !body.contains(">Always show images from this sender<"),
+            "Always-allow button label must NOT render when sender unparsed: {body}"
+        );
+    }
+
+    #[test]
+    fn template_renders_muted_shown_banner_when_images_are_already_shown_one_shot() {
+        // remote_images_shown=true with allowlisted_sender=false means the
+        // user clicked the one-shot Show images button. The muted banner
+        // says "One-time only — this view." so the user always knows why
+        // images are surfacing.
+        let mut t = fresh_template();
+        t.remote_images_present = true;
+        t.remote_images_shown = true;
+        t.remote_images_from_allowlisted_sender = false;
+        let body = t.render().expect("template renders");
+        assert!(body.contains(">[Remote images shown]<"), "shown banner label missing: {body}");
+        assert!(
+            body.contains("One-time only"),
+            "one-shot copy missing in shown banner: {body}"
+        );
+        // The two opt-in forms MUST NOT render — they belong to the
+        // blocked-state branch.
+        assert!(
+            !body.contains("show-images-once"),
+            "show-images-once form must NOT render in shown state: {body}"
+        );
+        assert!(
+            !body.contains("show-images-always"),
+            "show-images-always form must NOT render in shown state: {body}"
+        );
+    }
+
+    #[test]
+    fn template_renders_shown_banner_with_allowlist_note_when_sender_is_persisted() {
+        let mut t = fresh_template();
+        t.remote_images_present = true;
+        t.remote_images_shown = true;
+        t.remote_images_from_allowlisted_sender = true;
+        let body = t.render().expect("template renders");
+        assert!(body.contains(">[Remote images shown]<"));
+        assert!(
+            body.contains("always-allow list"),
+            "allowlisted-sender copy missing in shown banner: {body}"
+        );
+        // The one-time-only copy MUST NOT leak into this branch — that
+        // would confuse the user about why images are surfacing.
+        assert!(
+            !body.contains("One-time only"),
+            "one-time-only copy must NOT render when sender is allowlisted: {body}"
+        );
+    }
+
+    #[test]
+    fn template_html_escapes_sender_address_in_hidden_field() {
+        // Defence in depth — the address comes from `parse_sender_email`
+        // which sanity-checks the shape, but a hostile From header could
+        // still smuggle weird characters. Lock auto-escape on so a future
+        // bug can't leak a raw payload into the hidden field's value.
+        let mut t = fresh_template();
+        t.remote_images_present = true;
+        t.allow_sender_address = "alice@\"x.example.com".to_string();
+        let body = t.render().expect("template renders");
+        assert!(!body.contains("alice@\"x.example.com"));
+        assert!(
+            body.contains("alice@&quot;x.example.com")
+                || body.contains("alice@&#34;x.example.com"),
+            "sender value must be HTML-escaped: {body}"
+        );
+    }
+
+    // ===== TMAIL-386: ShowImagesAlwaysForm =====
+
+    #[test]
+    fn show_images_always_form_default_is_none() {
+        // serde(default) means a missing `sender` field deserialises as
+        // None rather than 400'ing the request, so the handler can map it
+        // to a friendlier 400 with an actionable error message.
+        let f = ShowImagesAlwaysForm::default();
+        assert!(f.sender.is_none());
     }
 
     #[test]

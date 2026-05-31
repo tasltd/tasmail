@@ -111,3 +111,7 @@ pub mod classic_signup_draft;
 // Added (TMAIL-375): One-shot password-reset tokens for the /classic
 // no-JS surface. See `migrations/083_password_reset_tokens.sql`.
 pub mod password_reset_token;
+// Added (TMAIL-386): Per-user / per-sender allowlist for remote `<img>`
+// rendering in the Classic UI message view. See
+// `migrations/084_remote_image_allowlist.sql`.
+pub mod remote_image_allowlist;

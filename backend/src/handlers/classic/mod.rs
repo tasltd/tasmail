@@ -441,6 +441,26 @@ fn authenticated_router(state: AppState) -> Router<AppState> {
             "/classic/folders/{folder}/messages/{uid}/move",
             post(move_to::post_message_move),
         )
+        // Added (TMAIL-386): two POST endpoints that feed the "[Remote
+        // images blocked]" banner on the message read view.
+        //   * /show-images-once   — one-shot. 303s back to the GET with
+        //                           `?show_images=1` so this render only
+        //                           surfaces the real remote URLs.
+        //   * /show-images-always — persistent. UPSERTs a row in
+        //                           `remote_image_allowlist` keyed on the
+        //                           parsed sender, then 303s back to the
+        //                           GET. Every future message from that
+        //                           sender renders with images on.
+        // Same CSRF + session layering as every other state-changing
+        // /classic POST.
+        .route(
+            "/classic/folders/{folder}/messages/{uid}/show-images-once",
+            post(message::post_show_images_once),
+        )
+        .route(
+            "/classic/folders/{folder}/messages/{uid}/show-images-always",
+            post(message::post_show_images_always),
+        )
         // Added (TMAIL-373): GET-only search endpoint. Renders the form
         // + paginated results page. Read-only — the CSRF middleware
         // below is a no-op on GET, and the session middleware injects

@@ -104,6 +104,53 @@ pub fn sanitize_email_html_with_options(raw_html: &str, opts: SanitizeOptions) -
     }
 }
 
+/// PURPOSE (TMAIL-386): cheap pre-render scan that returns `true` when the
+/// raw `text/html` body contains at least one `<img>` element with a remote
+/// `http(s)://...` `src`. The Classic UI message handler calls this BEFORE
+/// the sanitiser runs so it can decide whether to render the "[Remote
+/// images blocked]" banner above the body.
+///
+/// We don't pull a full HTML parser in for this — a substring scan is enough
+/// to distinguish "this email has remote images" from "no remote images at
+/// all" and we already feed the body through ammonia immediately afterwards
+/// for the real safety guarantees. False positives here (e.g. a literal
+/// `<img src="http"` string inside a `<pre>` block) only cost a banner the
+/// user can ignore; false negatives would silently strip the opt-in UX,
+/// so the scan errs on the side of detecting.
+///
+/// Case-insensitive on both the tag name and the URL scheme. Quoted (`"..."`
+/// or `'...'`) and unquoted `src=http...` shapes are all detected.
+pub fn html_has_remote_images(raw_html: &str) -> bool {
+    let lower = raw_html.to_ascii_lowercase();
+    let mut cursor = 0usize;
+    while let Some(rel) = lower[cursor..].find("<img") {
+        let tag_start = cursor + rel;
+        // Bound the scan at the end of this opening tag — beyond `>` is
+        // the rest of the document and won't tell us about this <img>.
+        let tag_end = lower[tag_start..]
+            .find('>')
+            .map(|i| tag_start + i)
+            .unwrap_or(lower.len());
+        let tag = &lower[tag_start..tag_end];
+        // Match any of `src="http`, `src='http`, `src=http` — covers
+        // every browser-recognised quoting variant for a remote src.
+        if tag.contains("src=\"http://")
+            || tag.contains("src=\"https://")
+            || tag.contains("src='http://")
+            || tag.contains("src='https://")
+            || tag.contains("src=http://")
+            || tag.contains("src=https://")
+        {
+            return true;
+        }
+        cursor = tag_end + 1;
+        if cursor >= lower.len() {
+            break;
+        }
+    }
+    false
+}
+
 /// Shared base config — every knob that doesn't depend on the
 /// `allow_remote_images` flag goes here. The two callers wrap it with the
 /// appropriate `attribute_filter`.
@@ -558,6 +605,58 @@ mod tests {
         let input = "<p>missing close <a href='https://example.com'>open<unclosed";
         let out = sanitize_email_html(input);
         assert!(!out.contains("<unclosed"));
+    }
+
+    // ---- html_has_remote_images (TMAIL-386) ----------------------------
+
+    #[test]
+    fn has_remote_images_detects_http_src() {
+        assert!(html_has_remote_images(
+            r#"<p>hi</p><img src="http://x.example.com/p.gif">"#
+        ));
+    }
+
+    #[test]
+    fn has_remote_images_detects_https_src() {
+        assert!(html_has_remote_images(
+            r#"<img src="https://tracker.example.com/beacon.png?u=1">"#
+        ));
+    }
+
+    #[test]
+    fn has_remote_images_is_case_insensitive_on_tag_and_scheme() {
+        assert!(html_has_remote_images(r#"<IMG SRC="HTTPS://x.example.com/p">"#));
+        assert!(html_has_remote_images(r#"<Img Src="Http://y.example.com/q">"#));
+    }
+
+    #[test]
+    fn has_remote_images_accepts_single_and_unquoted_attribute_values() {
+        assert!(html_has_remote_images(r#"<img src='http://x.example.com/p'>"#));
+        assert!(html_has_remote_images(r#"<img src=http://x.example.com/p>"#));
+    }
+
+    #[test]
+    fn has_remote_images_is_false_for_inline_data_image() {
+        // Inline `data:image/*` images are part of the MIME body — they don't
+        // trigger the banner. Same for `cid:` references.
+        assert!(!html_has_remote_images(
+            r#"<img src="data:image/png;base64,iVBOR=="><img src="cid:logo">"#
+        ));
+    }
+
+    #[test]
+    fn has_remote_images_is_false_for_empty_or_no_imgs() {
+        assert!(!html_has_remote_images(""));
+        assert!(!html_has_remote_images("<p>just text</p>"));
+        assert!(!html_has_remote_images("<a href=\"https://example.com\">link</a>"));
+    }
+
+    #[test]
+    fn has_remote_images_handles_multiple_imgs_returning_true_on_any_remote() {
+        // Mixed inline + remote — the banner needs to render even if only
+        // one of the images is remote.
+        let body = r#"<img src="cid:logo"> body <img src="https://tracker.example.com/p">"#;
+        assert!(html_has_remote_images(body));
     }
 
     #[test]
