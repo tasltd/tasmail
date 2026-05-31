@@ -28,6 +28,15 @@
 {% block content %}
   <h1>Sign in to TASMail Classic</h1>
 
+  {# TMAIL-375 — success flash (e.g. post-password-reset landing). Rendered
+     ABOVE the error block so an info + error combination (rare but
+     possible) stacks in natural top-to-bottom order. #}
+  {% if let Some(msg) = info %}
+    <div class="alert alert-success" role="status">
+      <strong>{{ msg }}</strong>
+    </div>
+  {% endif %}
+
   {% if let Some(msg) = error %}
     <div class="alert alert-error" role="alert">
       <strong>{{ msg }}</strong>
@@ -60,6 +69,12 @@
 
     <button type="submit">Sign in</button>
   </form>
+
+  <p>
+    <small>
+      <a href="/classic/password-reset/request">Forgot your password?</a>
+    </small>
+  </p>
 
   <p>
     <small>

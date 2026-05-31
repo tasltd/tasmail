@@ -140,6 +140,15 @@ pub mod search;
 // own double-submit-cookie CSRF check against the draft row's csrf_token.
 pub mod signup;
 
+// Added (TMAIL-375): Password reset request + confirm flow (P1 #21). All
+// four routes (GET+POST on each of /classic/password-reset/{request,confirm})
+// sit on the PUBLIC sub-router — the user has NO session at this point.
+// Each POST uses the same OWASP double-submit-cookie CSRF pattern login and
+// signup use, with its own `tasmail_classic_pwreset_csrf` cookie scoped to
+// Path=/classic/password-reset so it doesn't collide with the sibling
+// pre-session cookies.
+pub mod password_reset;
+
 // NAME: Session cookie name shared with the Classic UI auth handler that
 // lands in TMAIL-357 (P0 #3). The scaffold only needs to *detect* presence;
 // the cookie value is opaque here and validated later by the dedicated
@@ -222,6 +231,21 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route(
             "/classic/signup/done",
             get(signup::get_step3_done).post(signup::post_step3_done),
+        )
+        // Added (TMAIL-375): Password reset request + confirm flow. Both
+        // pages are PUBLIC (the user is signed out / has lost their
+        // password). The CSRF defence rides on the same OWASP double-
+        // submit-cookie pattern login + signup use — the cookie name is
+        // `tasmail_classic_pwreset_csrf` scoped to
+        // Path=/classic/password-reset so it doesn't collide with the
+        // sibling pre-session cookies.
+        .route(
+            "/classic/password-reset/request",
+            get(password_reset::get_request).post(password_reset::post_request),
+        )
+        .route(
+            "/classic/password-reset/confirm",
+            get(password_reset::get_confirm).post(password_reset::post_confirm),
         )
         // Added (TMAIL-360): authenticated sub-router for state-changing
         // POST endpoints that need a verified session AND CSRF protection.

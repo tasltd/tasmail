@@ -108,3 +108,6 @@ pub mod pending_2fa_token;
 // Added (TMAIL-374): In-progress state for the 3-step /classic signup
 // wizard. See `migrations/082_classic_signup_drafts.sql`.
 pub mod classic_signup_draft;
+// Added (TMAIL-375): One-shot password-reset tokens for the /classic
+// no-JS surface. See `migrations/083_password_reset_tokens.sql`.
+pub mod password_reset_token;

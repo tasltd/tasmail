@@ -98,6 +98,11 @@ pub struct LoginTemplate {
     /// `Some("…")` on a failed login or CSRF rejection; `None` on a fresh
     /// GET. Rendered inside a `role="alert"` block.
     pub error: Option<String>,
+    /// Added (TMAIL-375): `Some("…")` on a success-flash render (currently
+    /// only post-password-reset via `?reset=ok`); `None` otherwise.
+    /// Rendered inside an `alert-success role="status"` block ABOVE the
+    /// error alert.
+    pub info: Option<String>,
     /// The pre-session CSRF token that also sits in the
     /// `tasmail_classic_login_csrf` cookie.
     pub csrf_token: String,
@@ -124,6 +129,9 @@ impl LoginTemplate {
         Self {
             email: email.into(),
             error,
+            // Default: no success flash. Only the GET handler sets this
+            // when `?reset=ok` is on the URL.
+            info: None,
             csrf_token: csrf_token.into(),
             csp_nonce: csp_nonce.into(),
         }
@@ -226,10 +234,18 @@ fn render_login_response(
 /// to store it in. Only whitelisted values are honoured (see `LoginQuery::
 /// flash_message`) — anything else is silently dropped to keep the form
 /// from being weaponised as a reflected-XSS-by-error-string vector.
+///
+/// Added (TMAIL-375): `?reset=ok` is a parallel slot for SUCCESS flashes
+/// (currently only the post-password-reset landing). Same whitelist
+/// discipline — anything outside the recognised set yields `None`.
 #[derive(serde::Deserialize, Debug, Default)]
 pub struct LoginQuery {
     #[serde(default)]
     pub error: Option<String>,
+    /// TMAIL-375: `?reset=ok` is the success flash from the password-reset
+    /// confirm POST. Whitelisted server-side to one fixed string.
+    #[serde(default)]
+    pub reset: Option<String>,
 }
 
 impl LoginQuery {
@@ -240,6 +256,18 @@ impl LoginQuery {
         match self.error.as_deref() {
             Some("2fa_expired") => Some(EXPIRED_OR_INVALID_ERROR.to_string()),
             Some("2fa_too_many") => Some(TOO_MANY_CODES_ERROR.to_string()),
+            _ => None,
+        }
+    }
+
+    /// Added (TMAIL-375): translate the `?reset=…` value into a fixed
+    /// SUCCESS message rendered alongside the form. Anything we don't
+    /// recognise yields `None`.
+    fn success_message(&self) -> Option<String> {
+        match self.reset.as_deref() {
+            Some("ok") => Some(
+                "Your password has been updated. Sign in with your new password.".to_string(),
+            ),
             _ => None,
         }
     }
@@ -284,12 +312,17 @@ pub async fn get_login(
     }
 
     let token = generate_csrf_token();
-    let template = LoginTemplate::new(
+    let mut template = LoginTemplate::new(
         String::new(),
         query.flash_message(),
         &token,
         csp_nonce.as_str(),
     );
+    // Added (TMAIL-375): plumb the success-flash slot too. Whitelisted
+    // values like `?reset=ok` produce a fixed server-defined success
+    // string rendered ABOVE the form. Anything we don't recognise yields
+    // None and the page renders exactly as before.
+    template.info = query.success_message();
     render_login_response(
         StatusCode::OK,
         template,
@@ -481,6 +514,10 @@ mod tests {
         LoginTemplate {
             email: String::new(),
             error: None,
+            // Added (TMAIL-375): success-flash slot defaults to None for
+            // existing tests; new tests that exercise the reset-success
+            // path build their own struct with `info: Some(...)`.
+            info: None,
             csrf_token: "fixed-csrf-token-for-tests".to_string(),
             csp_nonce: "fixed-nonce-for-tests".to_string(),
         }
@@ -678,5 +715,93 @@ mod tests {
         // creating an enumeration oracle (CSRF state is per-browser, not
         // per-account).
         assert_ne!(CSRF_ERROR_MESSAGE, GENERIC_LOGIN_ERROR);
+    }
+
+    // --- TMAIL-375: success-flash slot on the login form ---
+
+    #[test]
+    fn login_query_success_message_whitelists_reset_ok() {
+        let q = LoginQuery {
+            error: None,
+            reset: Some("ok".to_string()),
+        };
+        let msg = q.success_message().expect("?reset=ok must yield a message");
+        assert!(
+            msg.to_lowercase().contains("password has been updated"),
+            "reset=ok flash must mention the password update: {msg}"
+        );
+    }
+
+    #[test]
+    fn login_query_success_message_drops_unknown_reset_value() {
+        // Anything outside the whitelist yields None — no reflected-XSS
+        // vector via the query string.
+        let q = LoginQuery {
+            error: None,
+            reset: Some("\"><script>alert(1)</script>".to_string()),
+        };
+        assert!(q.success_message().is_none());
+    }
+
+    #[test]
+    fn login_query_success_message_none_when_param_absent() {
+        let q = LoginQuery {
+            error: None,
+            reset: None,
+        };
+        assert!(q.success_message().is_none());
+    }
+
+    #[test]
+    fn login_template_renders_info_alert_when_present() {
+        let mut t = fresh_template();
+        t.info = Some("Your password has been updated.".to_string());
+        let body = t.render().expect("template renders");
+        // Success alert uses role="status" (vs role="alert" for errors)
+        // so a screen reader doesn't interrupt — it's informational, not
+        // a failure.
+        assert!(
+            body.contains("alert-success"),
+            "info alert must use alert-success class: {body}"
+        );
+        assert!(
+            body.contains("role=\"status\""),
+            "info alert must use role=status, not role=alert: {body}"
+        );
+        assert!(body.contains("Your password has been updated."));
+    }
+
+    #[test]
+    fn login_template_info_renders_above_error_when_both_present() {
+        // Rare but possible — a user lands on /login?reset=ok then types
+        // a wrong password. The info ("reset succeeded") MUST render
+        // before the error ("bad credentials") so the natural reading
+        // order matches the chronological order of events.
+        let mut t = fresh_template();
+        t.info = Some("Reset done.".to_string());
+        t.error = Some("Bad creds.".to_string());
+        let body = t.render().expect("template renders");
+        let info_at = body.find("Reset done.").expect("info present");
+        let error_at = body.find("Bad creds.").expect("error present");
+        assert!(
+            info_at < error_at,
+            "info alert must render before error alert: info@{info_at} error@{error_at}"
+        );
+    }
+
+    #[test]
+    fn login_template_has_forgot_password_link() {
+        // TMAIL-375: every login page must surface a discoverable
+        // "Forgot your password?" link — that's the only entry point a
+        // signed-out user has to the reset flow.
+        let body = fresh_template().render().expect("template renders");
+        assert!(
+            body.contains("/classic/password-reset/request"),
+            "login page must link to /classic/password-reset/request: {body}"
+        );
+        assert!(
+            body.to_lowercase().contains("forgot"),
+            "link text must include the word 'Forgot' for findability"
+        );
     }
 }
