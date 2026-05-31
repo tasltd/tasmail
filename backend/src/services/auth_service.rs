@@ -203,6 +203,108 @@ pub fn is_currently_locked(state: &LockoutState, now: chrono::DateTime<Utc>) -> 
     state.locked_until.map(|t| t > now).unwrap_or(false)
 }
 
+/// Added (TMAIL-385): Disposition the Classic UI login form picks AFTER an
+/// authentication attempt has resolved. Drives the choice between the
+/// generic "incorrect email or password" message, the friendlier
+/// "you have N attempts remaining" warning, and the locked-state banner
+/// with countdown copy.
+///
+/// The decision is intentionally a pure function so the unit tests can
+/// pin every threshold/edge without spinning up a database.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoginFailureDisposition {
+    /// Render only the generic credential error. Used when the email is
+    /// unknown OR the account is well below the warning window.
+    Generic,
+    /// Render the generic credential error AND the "Warning: N attempts
+    /// remaining" copy. Emitted when the rolling counter is inside the
+    /// warning window but the threshold hasn't yet been crossed.
+    AttemptsWarning { remaining: i32 },
+    /// Render the locked-state banner with a countdown to `locked_until`.
+    /// Emitted whenever the lookup finds `locked_until > now` — whether
+    /// the lockout was already in effect on entry OR the current attempt
+    /// is the one that just tripped the threshold.
+    Locked { locked_until: chrono::DateTime<Utc> },
+}
+
+/// Added (TMAIL-385): How many failed attempts before we start surfacing the
+/// "N attempts remaining" copy. Two-attempt window mirrors common Gmail /
+/// Office365 UX — enough warning to course-correct, but not so wide that
+/// every wrong password yells about lockout.
+pub const ATTEMPTS_WARNING_WINDOW: i32 = 2;
+
+/// Added (TMAIL-385): Pure classifier mapping the persisted lockout state
+/// of a mailbox to a Classic UI failure disposition.
+///
+/// Inputs:
+///   * `state`        — current row state (post-increment if this fired
+///     after `evaluate_password_login` ran).
+///   * `cfg`          — operator-tuned lockout policy.
+///   * `now`          — caller-supplied wall clock (so tests can pin time).
+///
+/// Decision tree (top-down — first match wins):
+///   1. `locked_until > now`        → `Locked { locked_until }`
+///   2. `failed_attempts` puts us inside the warning window, computed as
+///      `failed_attempts >= cfg.threshold - ATTEMPTS_WARNING_WINDOW` AND
+///      `failed_attempts < cfg.threshold` (so a row that's NOT locked but
+///      has tripped the threshold counter would still surface the warning
+///      copy — but in practice the threshold-tripping path goes through
+///      branch 1 above because it always sets `locked_until`).
+///   3. otherwise                    → `Generic`
+///
+/// `remaining` is `max(0, cfg.threshold - failed_attempts)`. Clamped so a
+/// misconfigured `threshold == 0` policy (which should never happen but
+/// defensive code is cheap) doesn't underflow.
+pub fn classify_login_failure(
+    state: &LockoutState,
+    cfg: &LockoutConfig,
+    now: chrono::DateTime<Utc>,
+) -> LoginFailureDisposition {
+    if let Some(locked_until) = state.locked_until {
+        if locked_until > now {
+            return LoginFailureDisposition::Locked { locked_until };
+        }
+    }
+    let warning_floor = cfg.threshold.saturating_sub(ATTEMPTS_WARNING_WINDOW);
+    if state.failed_attempts >= warning_floor && state.failed_attempts < cfg.threshold {
+        let remaining = (cfg.threshold - state.failed_attempts).max(0);
+        return LoginFailureDisposition::AttemptsWarning { remaining };
+    }
+    LoginFailureDisposition::Generic
+}
+
+/// Added (TMAIL-385): Lightweight lookup that returns ONLY the three lockout
+/// columns for a mailbox, by username. Used by the Classic UI login form to
+/// decide which disposition to render after `evaluate_password_login` has
+/// already incremented the counter.
+///
+/// Reads the row even when `active = false` — the audit story expects a
+/// disabled account to still surface the locked banner instead of leaking
+/// the disabled state via a different code path. The actual login is
+/// already rejected upstream by `Mailbox::find_by_username`.
+///
+/// Returns `Ok(None)` when the email doesn't resolve to any row. Errors
+/// only on a real DB failure.
+pub async fn lookup_lockout_state(
+    pool: &sqlx::PgPool,
+    username: &str,
+) -> Result<Option<LockoutState>, sqlx::Error> {
+    let row: Option<(i32, Option<chrono::DateTime<Utc>>, Option<chrono::DateTime<Utc>>)> =
+        sqlx::query_as(
+            "SELECT failed_login_attempts, last_failed_login_at, locked_until
+               FROM mailboxes
+              WHERE username = $1",
+        )
+        .bind(username)
+        .fetch_optional(pool)
+        .await?;
+    Ok(row.map(|(failed_attempts, last_failed_at, locked_until)| LockoutState {
+        failed_attempts,
+        last_failed_at,
+        locked_until,
+    }))
+}
+
 /// Added (TMAIL-359): Reusable password-evaluation step shared by the JWT
 /// login flow (`authenticate`) AND the Classic UI cookie-session login
 /// (`handlers::classic::auth`). Performs the same three operations:
@@ -872,5 +974,121 @@ mod tests {
         assert_eq!(cfg.threshold, 5);
         assert_eq!(cfg.window_secs, 900);
         assert_eq!(cfg.duration_secs, 900);
+    }
+
+    // -----------------------------------------------------------------------
+    // Added (TMAIL-385): classify_login_failure — pure dispatcher for the
+    // Classic UI login form's post-failure copy. Locks down every branch of
+    // the decision tree against the default (5 / 15min) policy + a tight
+    // (3 / 60s) policy so the warning window logic survives operator tuning.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn classify_login_failure_locked_state_wins_over_warning() {
+        // Even when `failed_attempts` is exactly at the threshold and would
+        // otherwise be inside the warning window, an active `locked_until`
+        // MUST render the Locked variant — that's the friendlier copy with
+        // the countdown that the user actually needs.
+        let cfg = test_lockout_cfg();
+        let now = Utc::now();
+        let lock_until = now + Duration::seconds(300);
+        let s = state(5, Some(now), Some(lock_until));
+        assert_eq!(
+            classify_login_failure(&s, &cfg, now),
+            LoginFailureDisposition::Locked { locked_until: lock_until }
+        );
+    }
+
+    #[test]
+    fn classify_login_failure_locked_state_ignored_when_past() {
+        // A stale `locked_until` in the past must NOT trigger the Locked
+        // variant — the auth flow has already rolled past the lockout
+        // window. Fall through to either Generic or Warning per the
+        // counter state.
+        let cfg = test_lockout_cfg();
+        let now = Utc::now();
+        let stale_lock = now - Duration::seconds(60);
+        let s = state(0, Some(now - Duration::seconds(1800)), Some(stale_lock));
+        assert_eq!(
+            classify_login_failure(&s, &cfg, now),
+            LoginFailureDisposition::Generic
+        );
+    }
+
+    #[test]
+    fn classify_login_failure_warning_inside_window() {
+        // Threshold=5, warning window of 2 attempts → values 3 and 4 inside
+        // the warning, values 0..=2 generic, value 5+ locked (by branch 1).
+        let cfg = test_lockout_cfg();
+        let now = Utc::now();
+
+        assert_eq!(
+            classify_login_failure(&state(3, Some(now), None), &cfg, now),
+            LoginFailureDisposition::AttemptsWarning { remaining: 2 }
+        );
+        assert_eq!(
+            classify_login_failure(&state(4, Some(now), None), &cfg, now),
+            LoginFailureDisposition::AttemptsWarning { remaining: 1 }
+        );
+    }
+
+    #[test]
+    fn classify_login_failure_generic_below_warning_window() {
+        // 0, 1, 2 failures: no warning. The "first wrong password" must
+        // not yell about lockout — that would over-warn legitimate users
+        // who mistyped their password once.
+        let cfg = test_lockout_cfg();
+        let now = Utc::now();
+        for attempts in 0..=2 {
+            assert_eq!(
+                classify_login_failure(&state(attempts, Some(now), None), &cfg, now),
+                LoginFailureDisposition::Generic,
+                "attempts={attempts} must produce Generic"
+            );
+        }
+    }
+
+    #[test]
+    fn classify_login_failure_tracks_tightened_policy() {
+        // A tighter policy (threshold=3) shrinks the warning floor to 1.
+        // attempts=0 → Generic, attempts=1 → Warning{2}, attempts=2 →
+        // Warning{1}, attempts=3 → would be Locked via branch 1 in practice.
+        let cfg = LockoutConfig { threshold: 3, window_secs: 60, duration_secs: 60 };
+        let now = Utc::now();
+        assert_eq!(
+            classify_login_failure(&state(0, None, None), &cfg, now),
+            LoginFailureDisposition::Generic
+        );
+        assert_eq!(
+            classify_login_failure(&state(1, Some(now), None), &cfg, now),
+            LoginFailureDisposition::AttemptsWarning { remaining: 2 }
+        );
+        assert_eq!(
+            classify_login_failure(&state(2, Some(now), None), &cfg, now),
+            LoginFailureDisposition::AttemptsWarning { remaining: 1 }
+        );
+    }
+
+    #[test]
+    fn classify_login_failure_handles_threshold_zero_gracefully() {
+        // Defensive: a misconfigured threshold=0 policy would underflow
+        // `threshold - ATTEMPTS_WARNING_WINDOW` if we used regular i32
+        // subtraction. `saturating_sub` keeps the floor at 0, so every
+        // unlocked state slides into Warning with `remaining` clamped to 0
+        // — never panics, never negative.
+        let cfg = LockoutConfig { threshold: 0, window_secs: 60, duration_secs: 60 };
+        let now = Utc::now();
+        let disposition = classify_login_failure(&state(0, None, None), &cfg, now);
+        // failed_attempts (0) < threshold (0) is false, so the warning
+        // window check fails — generic. The key assertion is "no panic".
+        assert_eq!(disposition, LoginFailureDisposition::Generic);
+    }
+
+    #[test]
+    fn attempts_warning_window_locked_constant() {
+        // The product wording in `templates/classic/login.html` references
+        // a fixed warning window. Pin the constant so a future tuning
+        // doesn't silently change the user-visible threshold.
+        assert_eq!(ATTEMPTS_WARNING_WINDOW, 2);
     }
 }

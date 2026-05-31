@@ -36,6 +36,7 @@
       --tm-link-visited: #6d28d9;     /* violet-700 — 6.7:1 vs white, AAA */
       --tm-danger: #b91c1c;           /* red-700 — 5.9:1 vs white, AA */
       --tm-success: #15803d;          /* green-700 — 4.6:1 vs white, AA */
+      --tm-warning: #b45309;          /* amber-700 — 4.9:1 vs white, AA — TMAIL-385 */
       --tm-focus-ring: #f59e0b;       /* amber-500 — visible on every bg */
     }
     *, *::before, *::after { box-sizing: border-box; }
@@ -314,6 +315,11 @@
     }
     .alert-error { border-color: var(--tm-danger); color: var(--tm-danger); }
     .alert-success { border-color: var(--tm-success); color: var(--tm-success); }
+    /* TMAIL-385 — amber "approaching lockout" warning tier. Sits between
+       success (green, calm) and error (red, urgent) so a screen reader's
+       role="status" announcement carries less alarm than a hard failure
+       while still standing out from body text. */
+    .alert-warning { border-color: var(--tm-warning); color: var(--tm-warning); }
     /* ===== Responsive tweaks (no JS / no media-query script) ===== */
     @media (max-width: 36em) {
       main { padding: 0.75rem; }

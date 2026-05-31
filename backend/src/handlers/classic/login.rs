@@ -49,7 +49,10 @@ use axum::{
 use crate::error::AppError;
 use crate::middleware::classic_csrf::validate_csrf_token;
 use crate::models::pending_2fa_token::PendingTwoFactorToken;
-use crate::services::auth_service::evaluate_password_login;
+use crate::services::auth_service::{
+    classify_login_failure, evaluate_password_login, lookup_lockout_state,
+    LoginFailureDisposition,
+};
 use crate::state::AppState;
 
 use super::auth::{create_session_and_cookie, generate_csrf_token, INBOX_PATH, LOGIN_PATH};
@@ -72,9 +75,13 @@ const LOGIN_CSRF_TTL_SECS: i64 = 900;
 
 /// Generic message rendered for ANY failure mode that shouldn't leak whether
 /// the email exists, whether the password was correct, or whether the
-/// account is currently in lockout. The P1 lockout-countdown work (#31)
-/// adds a separate friendlier branch for known-locked accounts; until then
-/// every failure looks the same.
+/// account is currently in lockout.
+///
+/// Changed (TMAIL-385): the friendlier locked-state / warning copy now lives
+/// behind the disposition dispatcher below. This constant is still the
+/// fallback used for the Generic disposition (unknown email + cold-start
+/// wrong-password) AND for the empty-fields / CSRF branches, so every
+/// "harmless bad attempt" surfaces the same string.
 const GENERIC_LOGIN_ERROR: &str = "Incorrect email or password.";
 
 /// Message rendered when the CSRF token cookie / form pairing fails. Kept
@@ -83,6 +90,76 @@ const GENERIC_LOGIN_ERROR: &str = "Incorrect email or password.";
 /// account-existence signal.
 const CSRF_ERROR_MESSAGE: &str =
     "Your session expired before you submitted the form. Please try again.";
+
+/// Added (TMAIL-385): Locked-state banner copy. Same text whether the
+/// lockout was already in effect on entry or the current attempt just
+/// tripped the threshold — the countdown numbers come from the
+/// per-render view-model, the prose is fixed so a future i18n pass
+/// (P1 #33) has a single source string to translate. Designed to be
+/// terse + scannable in lynx/w3m: short header + countdown + link.
+pub(crate) const LOCKOUT_HEADING: &str = "Account temporarily locked";
+pub(crate) const LOCKOUT_PASSWORD_RESET_HINT: &str =
+    "If this was you, you can reset your password to sign back in immediately.";
+
+/// Added (TMAIL-385): "N attempts remaining" wording stem. The template
+/// fills in the numeric `remaining` on render — keeping the stem here so
+/// the future i18n loader can swap the English copy for a Twi/Ewe/Ga/
+/// Hausa translation without touching the dispatcher.
+pub(crate) const ATTEMPTS_WARNING_PREFIX: &str = "Warning:";
+pub(crate) const ATTEMPTS_WARNING_SUFFIX: &str =
+    "attempts remaining before your account is locked for security.";
+
+/// Added (TMAIL-385): Per-render view-model surfacing the locked-state
+/// countdown copy. Built by the POST handler when `classify_login_failure`
+/// resolves to `Locked`. Pre-computed so the template stays arithmetic-free
+/// (Askama can't do dates / math without custom filters).
+///
+/// Fields:
+///   * `minutes_remaining` — rounded-up whole minutes until the lockout
+///     expires. We round UP so a "59 seconds left" countdown never
+///     renders as "0 minutes" (which would tell a confused user "wait 0
+///     minutes" and they'd retry instantly).
+///   * `seconds_remaining` — extra precision for the secondary line
+///     ("about 4 min 32 sec"). Always 0..=59 — the minute value carries
+///     the whole-minute part.
+///   * `minute_is_singular` — precomputed boolean so the template can
+///     pick between "minute" / "minutes" without doing an integer
+///     comparison (Askama's `==` against integer literals is fragile
+///     when the field is a borrowed reference — easier to compute the
+///     plural decision here once).
+///   * `iso_until` — RFC 3339 / ISO 8601 timestamp of `locked_until`, so
+///     a screen reader user gets a machine-readable hint and a future
+///     client-side script (if anyone ships one) can do a live countdown.
+#[derive(Debug, Clone)]
+pub struct LockoutDisplay {
+    pub minutes_remaining: i64,
+    pub seconds_remaining: i64,
+    pub minute_is_singular: bool,
+    pub iso_until: String,
+}
+
+impl LockoutDisplay {
+    /// Build a `LockoutDisplay` from the absolute `locked_until` timestamp
+    /// and the current wall clock. Saturates at 0 — `locked_until <= now`
+    /// would normally render Generic via the classifier above, but we
+    /// guard here too so a clock-skew edge case never renders negative.
+    pub fn build(
+        locked_until: chrono::DateTime<chrono::Utc>,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Self {
+        let remaining = (locked_until - now).num_seconds().max(0);
+        // Round-up whole minutes so "30 seconds left" renders as "1 minute"
+        // — never "0 minutes".
+        let minutes_remaining = (remaining + 59) / 60;
+        let seconds_remaining = remaining % 60;
+        Self {
+            minutes_remaining,
+            seconds_remaining,
+            minute_is_singular: minutes_remaining == 1,
+            iso_until: locked_until.to_rfc3339(),
+        }
+    }
+}
 
 /// Askama template struct backing `templates/classic/login.html`.
 ///
@@ -109,6 +186,43 @@ pub struct LoginTemplate {
     pub csrf_token: String,
     /// Per-request CSP nonce. Required by base.html (TMAIL-356).
     pub csp_nonce: String,
+    /// Added (TMAIL-385): when set, render the locked-state banner with a
+    /// countdown to `lockout.iso_until` + a password-reset CTA. The form
+    /// itself is still rendered (the disposition pre-check is "best
+    /// effort": a user whose lockout expired between page load and submit
+    /// must still be able to retry without a hard reload). `None` on
+    /// every non-locked render.
+    pub lockout: Option<LockoutDisplay>,
+    /// Added (TMAIL-385): when set, render the "Warning: N attempts
+    /// remaining" copy ABOVE the generic credential error. Always paired
+    /// with `error = Some(GENERIC_LOGIN_ERROR)` so the warning is
+    /// supplementary, not standalone.
+    pub attempts_remaining: Option<AttemptsWarning>,
+}
+
+/// Added (TMAIL-385): View-model for the attempts-remaining warning copy.
+///
+/// `remaining` carries the raw count for the visible "N attempts" string.
+/// `is_singular` is the precomputed boolean the template uses to pick
+/// between "attempt" / "attempts" — avoids fighting Askama's borrowed-
+/// integer-vs-literal comparison story.
+#[derive(Debug, Clone, Copy)]
+pub struct AttemptsWarning {
+    pub remaining: i32,
+    pub is_singular: bool,
+}
+
+impl AttemptsWarning {
+    /// Build an `AttemptsWarning` from the bare remaining count. Clamped
+    /// to >= 0 so a misconfigured (threshold-0) classifier can't render
+    /// "-2 attempts remaining" — defensive layer on top of the classifier.
+    pub fn new(remaining: i32) -> Self {
+        let clamped = remaining.max(0);
+        Self {
+            remaining: clamped,
+            is_singular: clamped == 1,
+        }
+    }
 }
 
 impl LoginTemplate {
@@ -135,6 +249,11 @@ impl LoginTemplate {
             info: None,
             csrf_token: csrf_token.into(),
             csp_nonce: csp_nonce.into(),
+            // Added (TMAIL-385): default to no lockout view-model + no
+            // warning copy. The POST handler sets these when the
+            // disposition resolves to `Locked` / `AttemptsWarning`.
+            lockout: None,
+            attempts_remaining: None,
         }
     }
 }
@@ -386,17 +505,64 @@ pub async fn post_login(
     }
 
     let (ip, ua) = extract_audit_fields(&headers);
+    let trimmed_email = form.email.trim();
 
-    // 3) Password evaluation + lockout bookkeeping. The reusable helper
+    // 3) Pre-evaluation lockout short-circuit (TMAIL-385).
+    //    Look up just the three lockout columns for this username — when
+    //    the row is currently locked, render the locked-state banner with
+    //    a countdown WITHOUT calling `evaluate_password_login` at all.
+    //    The acceptance criteria explicitly require "lockout-active → no
+    //    auth attempt is made server-side" so we MUST NOT touch the
+    //    password hash on a locked row. The lookup is the same SELECT
+    //    `evaluate_password_login` would do, minus the password column.
+    //
+    //    On a DB lookup error we log + fall through to the normal
+    //    path — surfacing a 500 here would be worse than letting the
+    //    next step's own DB lookup re-resolve (and a transient error
+    //    means the user retries one extra time, no security regression).
+    let now = chrono::Utc::now();
+    match lookup_lockout_state(&state.db, trimmed_email).await {
+        Ok(Some(state_row)) => {
+            let pre_disposition =
+                classify_login_failure(&state_row, &state.config.lockout, now);
+            if let LoginFailureDisposition::Locked { .. } = pre_disposition {
+                return render_disposition_failure(
+                    &form.email,
+                    pre_disposition,
+                    now,
+                    csp_nonce.as_str(),
+                );
+            }
+        }
+        Ok(None) => { /* Unknown email — fall through. evaluate_password_login
+                       will resolve the generic Unauthorized branch with
+                       constant-time-shaped behaviour. */ }
+        Err(e) => {
+            tracing::warn!(
+                error = ?e,
+                "classic login: lockout pre-check lookup failed — falling through"
+            );
+        }
+    }
+
+    // 4) Password evaluation + lockout bookkeeping. The reusable helper
     //    handles all three of:
     //      - unknown email           → AppError::Unauthorized
     //      - wrong password          → AppError::Unauthorized (+ increment)
     //      - active lockout window   → AppError::AccountLocked
-    //    Every branch surfaces the same generic error to avoid enumeration.
+    //
+    //    Changed (TMAIL-385): on a failure, look up the mailbox state
+    //    AGAIN and use the disposition classifier to decide whether the
+    //    user-visible copy is:
+    //      * Generic            — unknown email / cold-start wrong pw
+    //      * AttemptsWarning    — inside the warning window (3 or 4 of 5)
+    //      * Locked             — just tripped the threshold
+    //    Errors from the lookup degrade gracefully to Generic so a
+    //    transient DB blip never escalates to a 500 on the login page.
     let mailbox = match evaluate_password_login(
         &state.db,
         &state.config.lockout,
-        form.email.trim(),
+        trimmed_email,
         &form.password,
         ip.as_deref(),
         ua.as_deref(),
@@ -405,11 +571,23 @@ pub async fn post_login(
     {
         Ok(m) => m,
         Err(AppError::Unauthorized(_)) | Err(AppError::AccountLocked(_)) => {
-            return render_failure(
+            let disposition = match lookup_lockout_state(&state.db, trimmed_email).await {
+                Ok(Some(state_row)) => {
+                    classify_login_failure(&state_row, &state.config.lockout, chrono::Utc::now())
+                }
+                Ok(None) => LoginFailureDisposition::Generic,
+                Err(e) => {
+                    tracing::warn!(
+                        error = ?e,
+                        "classic login: post-failure lockout lookup failed — falling back to Generic"
+                    );
+                    LoginFailureDisposition::Generic
+                }
+            };
+            return render_disposition_failure(
                 &form.email,
-                GENERIC_LOGIN_ERROR,
-                StatusCode::UNAUTHORIZED,
-                true,
+                disposition,
+                chrono::Utc::now(),
                 csp_nonce.as_str(),
             );
         }
@@ -419,7 +597,7 @@ pub async fn post_login(
         Err(other) => return Err(other),
     };
 
-    // 4) 2FA short-circuit (TMAIL-361 / TMAIL-381). If the resolved mailbox
+    // 5) 2FA short-circuit (TMAIL-361 / TMAIL-381). If the resolved mailbox
     //    has either TOTP OR SMS-OTP enrolled we MUST NOT create the full
     //    `classic_sessions` row yet — that would defeat the 2FA gate. The
     //    common envelope (pending_2fa_tokens row + signed cookie) is shared
@@ -479,10 +657,10 @@ pub async fn post_login(
         return Ok(resp);
     }
 
-    // 5) Establish a real classic_sessions row + signed cookie.
+    // 6) Establish a real classic_sessions row + signed cookie.
     let established = create_session_and_cookie(&state, mailbox.id, ip.as_deref(), ua.as_deref()).await?;
 
-    // 6) 303 See Other so the browser switches to GET for the inbox load.
+    // 7) 303 See Other so the browser switches to GET for the inbox load.
     //    Attach BOTH the session cookie AND a cookie-clearing header for
     //    the one-shot pre-session CSRF cookie.
     let mut resp = Redirect::to(INBOX_PATH).into_response();
@@ -516,6 +694,57 @@ fn render_failure(
         generate_csrf_token()
     };
     let template = LoginTemplate::new(email, Some(error.to_string()), &token, csp_nonce);
+    render_login_response(status, template, Some(build_login_csrf_cookie(&token)))
+}
+
+/// Added (TMAIL-385): Render a credential-failure response shaped by the
+/// `LoginFailureDisposition` from `auth_service`.
+///
+/// Three branches, all of which surface the generic `GENERIC_LOGIN_ERROR`
+/// as the primary alert but differ in the supplementary copy:
+///   * `Generic`         → just the generic error.
+///   * `AttemptsWarning` → generic error + "Warning: N attempts
+///                         remaining…" prefix banner.
+///   * `Locked`          → 423 + locked-state banner (countdown +
+///                         password-reset hint). The form itself stays
+///                         rendered so a user whose lockout window
+///                         expired between page load and submit can
+///                         retry without a hard refresh.
+fn render_disposition_failure(
+    email: &str,
+    disposition: LoginFailureDisposition,
+    now: chrono::DateTime<chrono::Utc>,
+    csp_nonce: &str,
+) -> Result<Response, AppError> {
+    let token = generate_csrf_token();
+    let (status, template) = match disposition {
+        LoginFailureDisposition::Generic => {
+            let tpl = LoginTemplate::new(
+                email,
+                Some(GENERIC_LOGIN_ERROR.to_string()),
+                &token,
+                csp_nonce,
+            );
+            (StatusCode::UNAUTHORIZED, tpl)
+        }
+        LoginFailureDisposition::AttemptsWarning { remaining } => {
+            let mut tpl = LoginTemplate::new(
+                email,
+                Some(GENERIC_LOGIN_ERROR.to_string()),
+                &token,
+                csp_nonce,
+            );
+            tpl.attempts_remaining = Some(AttemptsWarning::new(remaining));
+            (StatusCode::UNAUTHORIZED, tpl)
+        }
+        LoginFailureDisposition::Locked { locked_until } => {
+            // 423 Locked matches the JWT path's `AccountLocked` mapping
+            // — keeps the two surfaces' status codes in lockstep.
+            let mut tpl = LoginTemplate::new(email, None, &token, csp_nonce);
+            tpl.lockout = Some(LockoutDisplay::build(locked_until, now));
+            (StatusCode::LOCKED, tpl)
+        }
+    };
     render_login_response(status, template, Some(build_login_csrf_cookie(&token)))
 }
 
@@ -554,6 +783,11 @@ mod tests {
             info: None,
             csrf_token: "fixed-csrf-token-for-tests".to_string(),
             csp_nonce: "fixed-nonce-for-tests".to_string(),
+            // Added (TMAIL-385): lockout view-model + warning copy
+            // default to None — existing tests don't touch them; new
+            // tests build their own structs with these fields set.
+            lockout: None,
+            attempts_remaining: None,
         }
     }
 
@@ -725,9 +959,11 @@ mod tests {
     #[test]
     fn generic_error_message_does_not_leak_account_existence() {
         // Lock down the copy so a future "helpful" tweak ("Account locked,
-        // try again in N minutes") doesn't accidentally turn the form into
-        // an account-enumeration oracle. P1 #31 ships the friendlier
-        // lockout-countdown copy as a separate task.
+        // try again in N minutes") doesn't accidentally turn the GENERIC
+        // branch into an account-enumeration oracle. The friendlier
+        // locked-state copy lands in its OWN template branch (TMAIL-385),
+        // not via this generic string — those branches are tested
+        // separately below.
         assert!(
             !GENERIC_LOGIN_ERROR.to_lowercase().contains("locked"),
             "generic login error must not mention lockout: {GENERIC_LOGIN_ERROR}"
@@ -836,6 +1072,397 @@ mod tests {
         assert!(
             body.to_lowercase().contains("forgot"),
             "link text must include the word 'Forgot' for findability"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // TMAIL-385 — Lockout countdown + attempts-remaining warning rendering.
+    //
+    // The pure classifier + lookup helpers live in `auth_service`. These
+    // tests pin the Classic UI side: the LockoutDisplay arithmetic, the
+    // template's locked-state + warning blocks, and the dispatcher's
+    // status-code + view-model assignments.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn lockout_display_rounds_seconds_up_to_next_minute() {
+        // 30 seconds remaining must surface as "1 minute" so a confused
+        // user doesn't see "0 minutes" and retry instantly.
+        let now = chrono::Utc::now();
+        let until = now + chrono::Duration::seconds(30);
+        let display = LockoutDisplay::build(until, now);
+        assert_eq!(display.minutes_remaining, 1);
+        assert_eq!(display.seconds_remaining, 30);
+        assert!(
+            display.iso_until.contains('T'),
+            "iso_until must be an RFC3339 timestamp, got: {}",
+            display.iso_until
+        );
+    }
+
+    #[test]
+    fn lockout_display_handles_exact_minutes() {
+        // Exactly 120 seconds → 2 minutes, 0 seconds. Round-up logic
+        // must not push 120s into 3 minutes.
+        let now = chrono::Utc::now();
+        let until = now + chrono::Duration::seconds(120);
+        let display = LockoutDisplay::build(until, now);
+        assert_eq!(display.minutes_remaining, 2);
+        assert_eq!(display.seconds_remaining, 0);
+    }
+
+    #[test]
+    fn lockout_display_saturates_to_zero_in_past() {
+        // Clock skew defensive: if the caller hands in a `locked_until`
+        // already in the past, surface 0/0 instead of negative numbers.
+        let now = chrono::Utc::now();
+        let until = now - chrono::Duration::seconds(60);
+        let display = LockoutDisplay::build(until, now);
+        assert_eq!(display.minutes_remaining, 0);
+        assert_eq!(display.seconds_remaining, 0);
+    }
+
+    #[test]
+    fn login_template_renders_locked_banner_with_countdown() {
+        // Locked state must surface the heading, the minute count, AND
+        // the password-reset CTA — every legitimate user's escape hatch.
+        let now = chrono::Utc::now();
+        let until = now + chrono::Duration::seconds(7 * 60 + 30); // 7m30s
+        let mut t = fresh_template();
+        t.lockout = Some(LockoutDisplay::build(until, now));
+        let body = t.render().expect("template renders");
+
+        assert!(
+            body.contains("Account temporarily locked"),
+            "locked banner heading missing: {body}"
+        );
+        // Round-up "8 minutes" for 7m30s.
+        assert!(
+            body.contains("<strong>8</strong>"),
+            "locked banner must show rounded-up minute count: {body}"
+        );
+        assert!(
+            body.contains("/classic/password-reset/request"),
+            "locked banner must link to password reset: {body}"
+        );
+        // role=alert + assertive live region so a screen reader announces
+        // the lockout immediately on render.
+        assert!(
+            body.contains("role=\"alert\""),
+            "locked banner must use role=alert: {body}"
+        );
+        assert!(
+            body.contains("aria-live=\"assertive\""),
+            "locked banner must use aria-live=assertive: {body}"
+        );
+        // Machine-readable expiry timestamp for assistive tech.
+        assert!(
+            body.contains("<time datetime="),
+            "locked banner must surface a <time datetime=...> stamp: {body}"
+        );
+    }
+
+    #[test]
+    fn login_template_locked_banner_uses_singular_minute_when_one() {
+        // Plural-handling: "1 minute" not "1 minutes". Lock the
+        // `{% if == 1 %}minute{% else %}minutes{% endif %}` branch
+        // down so a refactor can't silently swap them.
+        let now = chrono::Utc::now();
+        let until = now + chrono::Duration::seconds(1);
+        let mut t = fresh_template();
+        t.lockout = Some(LockoutDisplay::build(until, now));
+        let body = t.render().expect("template renders");
+        // 1 second → minutes_remaining=1 via round-up.
+        assert!(
+            body.contains("<strong>1</strong>\n        minute\n"),
+            "1-minute lockout must render singular 'minute': {body}"
+        );
+        assert!(
+            !body.contains("<strong>1</strong>\n        minutes\n"),
+            "must not render plural 'minutes' for 1-minute lockout: {body}"
+        );
+    }
+
+    #[test]
+    fn login_template_renders_attempts_remaining_warning() {
+        // Warning banner must surface the prefix "Warning:", the
+        // exact remaining count, AND announce as role=status (not
+        // role=alert — see template comment). The two sub-strings
+        // "N attempts" and "remaining before your account is locked"
+        // are validated separately because the template line-wraps
+        // between them in the rendered HTML.
+        let mut t = fresh_template();
+        t.attempts_remaining = Some(AttemptsWarning::new(2));
+        t.error = Some(GENERIC_LOGIN_ERROR.to_string());
+        let body = t.render().expect("template renders");
+        assert!(
+            body.contains("Warning:"),
+            "warning banner missing 'Warning:' prefix: {body}"
+        );
+        assert!(
+            body.contains("2 attempts"),
+            "warning banner must show '2 attempts' substring: {body}"
+        );
+        assert!(
+            body.contains("remaining before your account is locked"),
+            "warning banner must use the full 'remaining before…is locked' wording: {body}"
+        );
+        // Supplementary copy — role=status, NOT role=alert.
+        let warning_at = body
+            .find("Warning:")
+            .expect("warning banner present");
+        let banner_start = body[..warning_at]
+            .rfind("<div class=\"alert")
+            .expect("warning banner div present");
+        let banner_end = banner_at_close_offset(&body, banner_start);
+        let banner_html = &body[banner_start..banner_end];
+        assert!(
+            banner_html.contains("role=\"status\""),
+            "warning banner must use role=status (not role=alert): {banner_html}"
+        );
+        assert!(
+            banner_html.contains("alert-warning"),
+            "warning banner must use alert-warning class: {banner_html}"
+        );
+    }
+
+    /// Local helper: find the `</div>` that closes a banner div opened at
+    /// `start`. We can't just use `body[start..].find("</div>")` because
+    /// the next sibling div might come first in a malformed render — but
+    /// for our well-formed templates the first `</div>` after the
+    /// opening tag is the right one.
+    fn banner_at_close_offset(body: &str, start: usize) -> usize {
+        let close = body[start..]
+            .find("</div>")
+            .expect("banner must have a closing tag");
+        start + close + "</div>".len()
+    }
+
+    #[test]
+    fn login_template_warning_singular_when_one_attempt_left() {
+        // Plural-handling on the warning copy too: "1 attempt" not
+        // "1 attempts".
+        let mut t = fresh_template();
+        t.attempts_remaining = Some(AttemptsWarning::new(1));
+        t.error = Some(GENERIC_LOGIN_ERROR.to_string());
+        let body = t.render().expect("template renders");
+        assert!(
+            body.contains(" 1 attempt\n"),
+            "1-remaining warning must render singular 'attempt': {body}"
+        );
+        assert!(
+            !body.contains(" 1 attempts\n"),
+            "must not render plural 'attempts' for 1-remaining: {body}"
+        );
+    }
+
+    #[test]
+    fn login_template_locked_banner_replaces_generic_error_position() {
+        // When both `lockout` and `error` are set (defensive: shouldn't
+        // happen in production but we want a sane render), the lockout
+        // banner must render BEFORE the generic error so a screen-reader
+        // user hears the lockout first.
+        let now = chrono::Utc::now();
+        let until = now + chrono::Duration::seconds(300);
+        let mut t = fresh_template();
+        t.lockout = Some(LockoutDisplay::build(until, now));
+        t.error = Some("Some other failure".to_string());
+        let body = t.render().expect("template renders");
+        let locked_at = body
+            .find("Account temporarily locked")
+            .expect("locked banner present");
+        let error_at = body.find("Some other failure").expect("error present");
+        assert!(
+            locked_at < error_at,
+            "locked banner must render before error: locked@{locked_at} error@{error_at}"
+        );
+    }
+
+    #[test]
+    fn login_template_attempts_warning_renders_above_error() {
+        // Warning + error: warning is supplementary; error is the
+        // primary failure announcement — but the reading order goes
+        // top-down. Warning above error so the user reads "Warning: N
+        // remaining" THEN "Incorrect email or password."
+        let mut t = fresh_template();
+        t.attempts_remaining = Some(AttemptsWarning::new(2));
+        t.error = Some(GENERIC_LOGIN_ERROR.to_string());
+        let body = t.render().expect("template renders");
+        let warning_at = body.find("Warning:").expect("warning present");
+        let error_at = body
+            .find(GENERIC_LOGIN_ERROR)
+            .expect("generic error present");
+        assert!(
+            warning_at < error_at,
+            "warning must render before error: warning@{warning_at} error@{error_at}"
+        );
+    }
+
+    #[test]
+    fn login_template_omits_lockout_banner_on_fresh_render() {
+        // Fresh GET / unrelated failure — NO lockout banner copy
+        // should leak into the page.
+        let body = fresh_template().render().expect("template renders");
+        assert!(
+            !body.contains("Account temporarily locked"),
+            "fresh render must NOT contain locked banner copy: {body}"
+        );
+        assert!(
+            !body.contains("attempts remaining"),
+            "fresh render must NOT contain warning copy: {body}"
+        );
+    }
+
+    #[test]
+    fn login_template_form_stays_renderable_in_locked_state() {
+        // The form MUST still render even when locked — a user whose
+        // window expires between page load and retry submit needs to
+        // type their password again without a hard reload.
+        let now = chrono::Utc::now();
+        let until = now + chrono::Duration::seconds(120);
+        let mut t = fresh_template();
+        t.lockout = Some(LockoutDisplay::build(until, now));
+        let body = t.render().expect("template renders");
+        assert!(
+            body.contains("name=\"email\"") && body.contains("name=\"password\""),
+            "locked render must still expose the email + password inputs: {body}"
+        );
+        assert!(
+            body.contains("type=\"submit\""),
+            "locked render must still expose the submit button: {body}"
+        );
+    }
+
+    #[test]
+    fn lockout_heading_constant_locked_down() {
+        // The product wording is testable via the template; locking
+        // the constant down prevents a future "Sign-in locked" /
+        // "Account suspended" rewrite from silently changing the
+        // user-visible copy without explicit review.
+        assert_eq!(LOCKOUT_HEADING, "Account temporarily locked");
+    }
+
+    #[test]
+    fn attempts_warning_wording_constants_locked_down() {
+        // Lock the prefix + suffix wording so future tuning doesn't
+        // silently drop "for security" or "Warning:" — the gap analysis
+        // P1 #31 acceptance criteria call out the exact wording.
+        assert!(ATTEMPTS_WARNING_PREFIX.contains("Warning"));
+        assert!(
+            ATTEMPTS_WARNING_SUFFIX
+                .to_lowercase()
+                .contains("attempts remaining before your account is locked")
+        );
+        assert!(
+            ATTEMPTS_WARNING_SUFFIX
+                .to_lowercase()
+                .contains("for security")
+        );
+    }
+
+    #[test]
+    fn render_disposition_failure_locked_returns_423() {
+        // The dispatcher must map the Locked disposition to a 423 status
+        // code so any future caller (e.g. a CLI client) sees the same
+        // signal as the JWT path's AccountLocked branch.
+        use axum::http::StatusCode;
+        let now = chrono::Utc::now();
+        let until = now + chrono::Duration::seconds(180);
+        let resp = render_disposition_failure(
+            "user@example.com",
+            LoginFailureDisposition::Locked { locked_until: until },
+            now,
+            "test-nonce",
+        )
+        .expect("response builds");
+        assert_eq!(resp.status(), StatusCode::LOCKED);
+    }
+
+    #[test]
+    fn render_disposition_failure_warning_returns_401() {
+        // The warning copy is supplementary — the underlying outcome is
+        // still "bad credentials", so 401 is the right status to keep
+        // tooling / log aggregators producing consistent counters.
+        use axum::http::StatusCode;
+        let resp = render_disposition_failure(
+            "user@example.com",
+            LoginFailureDisposition::AttemptsWarning { remaining: 2 },
+            chrono::Utc::now(),
+            "test-nonce",
+        )
+        .expect("response builds");
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn render_disposition_failure_generic_returns_401() {
+        use axum::http::StatusCode;
+        let resp = render_disposition_failure(
+            "user@example.com",
+            LoginFailureDisposition::Generic,
+            chrono::Utc::now(),
+            "test-nonce",
+        )
+        .expect("response builds");
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn render_disposition_failure_locked_response_includes_set_cookie() {
+        // Every failure render MUST rotate the pre-session CSRF cookie
+        // so the next submission can include a fresh matching token.
+        // A locked response that didn't rotate would leave the user
+        // unable to retry after the window expired without a hard
+        // refresh.
+        use axum::http::header;
+        let now = chrono::Utc::now();
+        let until = now + chrono::Duration::seconds(60);
+        let resp = render_disposition_failure(
+            "user@example.com",
+            LoginFailureDisposition::Locked { locked_until: until },
+            now,
+            "test-nonce",
+        )
+        .expect("response builds");
+        let cookies: Vec<_> = resp
+            .headers()
+            .get_all(header::SET_COOKIE)
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .collect();
+        assert!(
+            cookies
+                .iter()
+                .any(|c| c.contains(LOGIN_CSRF_COOKIE) && !c.contains("Max-Age=0")),
+            "locked response must rotate the pre-session CSRF cookie, found: {cookies:?}"
+        );
+    }
+
+    #[test]
+    fn lockout_password_reset_hint_links_to_reset_flow() {
+        // The locked banner's only escape hatch is the password reset
+        // link — every user must be able to recover without waiting
+        // out the window. Pin both the hint text intent + the link.
+        let now = chrono::Utc::now();
+        let until = now + chrono::Duration::seconds(900);
+        let mut t = fresh_template();
+        t.lockout = Some(LockoutDisplay::build(until, now));
+        let body = t.render().expect("template renders");
+        assert!(
+            body.contains("reset your password"),
+            "locked banner must offer the reset-your-password escape hatch: {body}"
+        );
+        // Pin the link target separately so a copy-only refactor
+        // (e.g. "change your password") still gets caught here.
+        assert!(
+            body.contains("href=\"/classic/password-reset/request\""),
+            "locked banner reset link must point at /classic/password-reset/request: {body}"
+        );
+        assert!(
+            LOCKOUT_PASSWORD_RESET_HINT
+                .to_lowercase()
+                .contains("reset your password"),
+            "password-reset hint constant should mention the recovery action"
         );
     }
 }

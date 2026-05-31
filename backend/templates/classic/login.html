@@ -3,21 +3,42 @@
 {# TMAIL-359 — Login form for the `/classic` no-JS surface.
 
    Model:
-     * `email`      — value the user previously submitted (preserved across
-                      failed POSTs so they don't have to retype the address).
-                      Empty string on a fresh GET. Always HTML-escaped by
-                      Askama auto-escape for the .html extension.
-     * `error`      — Some("incorrect email or password") on a failed login
-                      OR a generic lockout / CSRF rejection sentence. None on
-                      a fresh GET. Always rendered inside a role="alert" block
-                      so screen readers announce it.
-     * `csrf_token` — pre-session CSRF token also written to the
-                      `tasmail_classic_login_csrf` cookie. Validated by
-                      POST /classic/login via a double-submit-cookie check
-                      since the canonical csrf middleware needs a
-                      `ClassicSession` row that doesn't exist until AFTER a
-                      successful login.
-     * `csp_nonce`  — per-request CSP nonce required by base.html.
+     * `email`              — value the user previously submitted (preserved
+                              across failed POSTs so they don't have to
+                              retype the address). Empty string on a fresh
+                              GET. Always HTML-escaped by Askama auto-escape
+                              for the .html extension.
+     * `error`              — Some("incorrect email or password") on a
+                              failed login OR a CSRF rejection sentence.
+                              None on a fresh GET / on the locked-state
+                              render (the locked banner replaces it).
+                              Always rendered inside a role="alert" block
+                              so screen readers announce it.
+     * `info`               — TMAIL-375 success-flash slot for post-
+                              password-reset landing. Rendered ABOVE the
+                              error block.
+     * `lockout`            — TMAIL-385: Some(LockoutDisplay) when the
+                              account is currently locked. Renders a
+                              role="alert" banner with minute / second
+                              countdown + password-reset CTA. The form
+                              itself stays rendered so a user whose
+                              lockout window expired between page load
+                              and submit can still retry.
+     * `attempts_remaining` — TMAIL-385: Some(N) when the account is
+                              inside the warning window (3 or 4 of 5
+                              by default). Rendered as a separate
+                              `role="status"` warning banner ABOVE the
+                              generic error so a screen reader announces
+                              both. Always paired with `error =
+                              Some(GENERIC_LOGIN_ERROR)`.
+     * `csrf_token`         — pre-session CSRF token also written to the
+                              `tasmail_classic_login_csrf` cookie.
+                              Validated by POST /classic/login via a
+                              double-submit-cookie check since the
+                              canonical csrf middleware needs a
+                              `ClassicSession` row that doesn't exist
+                              until AFTER a successful login.
+     * `csp_nonce`          — per-request CSP nonce required by base.html.
 
    The form deliberately uses the same `_csrf` field name as the post-login
    surface (CSRF_FIELD_NAME constant) so a future migration to a unified
@@ -34,6 +55,42 @@
   {% if let Some(msg) = info %}
     <div class="alert alert-success" role="status">
       <strong>{{ msg }}</strong>
+    </div>
+  {% endif %}
+
+  {# TMAIL-385 — locked-state banner with countdown + password-reset CTA.
+     Rendered ABOVE the form so a screen-reader user hears the lockout
+     announcement before tabbing into the inputs. The `<time>` element
+     surfaces the machine-readable expiry timestamp for assistive tech
+     AND any future tiny progressive-enhancement script that wants to
+     do a live tick-down — the no-JS surface still works without it. #}
+  {% if let Some(lock) = lockout %}
+    <div class="alert alert-error" role="alert" aria-live="assertive">
+      <strong>Account temporarily locked</strong>
+      <p>
+        Too many failed sign-in attempts. Try again in
+        <strong>{{ lock.minutes_remaining }}</strong>
+        {% if lock.minute_is_singular %}minute{% else %}minutes{% endif %}
+        (<time datetime="{{ lock.iso_until }}">{{ lock.minutes_remaining }} min {{ lock.seconds_remaining }} sec</time>).
+      </p>
+      <p>
+        If this was you, you can
+        <a href="/classic/password-reset/request">reset your password</a>
+        to sign back in immediately.
+      </p>
+    </div>
+  {% endif %}
+
+  {# TMAIL-385 — attempts-remaining warning. Surfaces ONLY when the
+     classifier returned `AttemptsWarning` — i.e. the user is inside the
+     warning window (default: 3 or 4 of 5). role="status" (not "alert")
+     because the primary failure announcement is the generic error
+     below; this is supplementary context. #}
+  {% if let Some(warn) = attempts_remaining %}
+    <div class="alert alert-warning" role="status" aria-live="polite">
+      <strong>Warning:</strong>
+      {{ warn.remaining }} {% if warn.is_singular %}attempt{% else %}attempts{% endif %}
+      remaining before your account is locked for security.
     </div>
   {% endif %}
 
