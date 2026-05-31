@@ -43,6 +43,13 @@ pub use nonce::CspNonce;
 // and will register themselves in the router via this module.
 pub mod auth;
 
+// Added (TMAIL-358): CSRF rejection page template + render helpers shared
+// by `middleware::classic_csrf` and any handler that needs a one-off CSRF
+// rejection (e.g. login pre-session). The `_csrf` form-field constant lives
+// here too so every Classic UI template imports one source of truth.
+pub mod csrf;
+pub use csrf::{render_csrf_error_response, CsrfErrorTemplate, CSRF_FIELD_NAME};
+
 // NAME: Session cookie name shared with the Classic UI auth handler that
 // lands in TMAIL-357 (P0 #3). The scaffold only needs to *detect* presence;
 // the cookie value is opaque here and validated later by the dedicated

@@ -1,0 +1,43 @@
+{% extends "classic/base.html" %}
+
+{# TMAIL-358 — 403 page rendered when the CSRF middleware rejects a POST/PUT/
+   PATCH/DELETE. The model:
+
+     * `reason`     — single short sentence describing WHY the request was
+                      rejected (missing token, mismatched token, expired
+                      session, unsupported content type). Surfaced to the user
+                      so a tester / curl operator can self-diagnose.
+     * `retry_path` — the original request URI path (e.g. `/classic/compose`)
+                      so we can offer a "Go back to <page>" link instead of
+                      dumping the user on the inbox.
+     * `csp_nonce`  — same per-request CSP nonce every Classic UI template
+                      carries; required by base.html (TMAIL-356). #}
+
+{% block title %}Form rejected — please try again{% endblock %}
+
+{% block content %}
+  <h1>We couldn't accept that submission</h1>
+
+  <div class="alert alert-error" role="alert">
+    <strong>{{ reason }}</strong>
+  </div>
+
+  <p>
+    This usually happens when a form is left open for a long time, when a tab
+    is reloaded from cache, or when a stale browser session sends a request
+    after you've signed in elsewhere. No data was changed on the server.
+  </p>
+
+  <h2>What to do</h2>
+  <ol>
+    <li>Go back to the page you were on.</li>
+    <li>Reload the form so you get a fresh security token.</li>
+    <li>Fill in your details again and resubmit.</li>
+  </ol>
+
+  <p>
+    <a href="{{ retry_path }}">Reload <code>{{ retry_path }}</code> and try again</a>
+    &nbsp;·&nbsp;
+    <a href="/classic/">Return to TASMail Classic</a>
+  </p>
+{% endblock %}

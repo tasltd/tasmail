@@ -9,3 +9,7 @@ pub mod rls_context;
 pub mod security_headers;
 // Added (TMAIL-357): Cookie-based session middleware for the /classic no-JS surface.
 pub mod classic_session;
+// Added (TMAIL-358): Per-session CSRF synchroniser-token validator for the
+// /classic no-JS surface. Layers AFTER classic_session_middleware so the
+// session row (carrying the expected token) is available in extensions.
+pub mod classic_csrf;
