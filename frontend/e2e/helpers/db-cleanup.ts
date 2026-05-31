@@ -39,3 +39,29 @@ export function deleteMailboxByUsername(username: string): number {
     );
   }
 }
+
+/**
+ * Flips a mailbox's `is_admin` flag so the user picks up the `is_admin: true`
+ * claim on their next login. Used by TMAIL-402 to prove the Admin sidebar
+ * entry only renders for admins.
+ *
+ * Returns the number of rows updated (0 if no mailbox with that username
+ * exists). The caller must re-login (or re-issue the JWT) to refresh the
+ * decoded claim — existing tokens are not retroactively elevated.
+ */
+export function setMailboxAdmin(username: string, isAdmin: boolean): number {
+  const sql = `UPDATE mailboxes SET is_admin = ${isAdmin ? 'true' : 'false'} WHERE username = $$${username}$$ RETURNING id;`;
+  try {
+    const out = execFileSync('psql', [dbUrl(), '-At', '-c', sql], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const rows = out.trim().split('\n').filter((line) => line && !line.startsWith('UPDATE '));
+    return rows.length;
+  } catch (err) {
+    throw new Error(
+      `setMailboxAdmin(${username}, ${isAdmin}) failed — is psql installed and TASMAIL_DB_URL reachable? ` +
+        `Original error: ${(err as Error).message}`,
+    );
+  }
+}

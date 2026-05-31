@@ -101,6 +101,36 @@ describe('MessageList', () => {
     expect(screen.queryByText('No messages in this folder')).not.toBeInTheDocument();
   });
 
+  // TMAIL-402: A brand-new BYOK user whose IMAP isn't yet reachable should
+  // see the welcoming EmptyInboxState on INBOX (with their configured
+  // user@host), not the raw "Failed to load messages" string. Non-INBOX
+  // folders keep the error message — see the next test.
+  it('shows EmptyInboxState on INBOX even when the messages query errors', () => {
+    mockSelectedFolder.mockReturnValue('INBOX');
+    mockUseCurrentMessages.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      error: new Error('IMAP unreachable'),
+    });
+    render(<MessageList />, { wrapper });
+    expect(screen.getByTestId('empty-inbox-state-stub')).toBeInTheDocument();
+    expect(screen.queryByText('Failed to load messages')).not.toBeInTheDocument();
+  });
+
+  // TMAIL-402: Non-INBOX folders still surface the error message — only the
+  // INBOX gets the welcoming-empty-state fallback.
+  it('still shows "Failed to load messages" for non-INBOX folders on error', () => {
+    mockSelectedFolder.mockReturnValue('Sent');
+    mockUseCurrentMessages.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      error: new Error('IMAP unreachable'),
+    });
+    render(<MessageList />, { wrapper });
+    expect(screen.getByText('Failed to load messages')).toBeInTheDocument();
+    expect(screen.queryByTestId('empty-inbox-state-stub')).not.toBeInTheDocument();
+  });
+
   it('renders message rows with from, subject, date', () => {
     mockUseCurrentMessages.mockReturnValue({
       data: {

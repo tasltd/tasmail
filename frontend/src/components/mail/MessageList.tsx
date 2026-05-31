@@ -166,8 +166,15 @@ export function MessageList() {
   }, [data?.messages]);
 
   if (isLoading) return <LoadingSkeleton rows={10} />;
-  if (error) return <div className="message-list__error">Failed to load messages</div>;
-  if (!data?.messages.length) {
+  // Changed (TMAIL-402): INBOX falls through to EmptyInboxState on error too —
+  // a brand-new BYOK user whose IMAP isn't yet reachable should see the
+  // welcoming "Messages sent to user@host will appear here" copy, not the
+  // raw "Failed to load messages" string. Non-INBOX folders keep the
+  // error message since the user is already deep in the app.
+  if (error && selectedFolder !== 'INBOX') {
+    return <div className="message-list__error">Failed to load messages</div>;
+  }
+  if (error || !data?.messages.length) {
     // TMAIL-401: INBOX gets the rich empty state with the user's configured
     // IMAP address; other folders keep the bare copy.
     if (selectedFolder === 'INBOX') {
