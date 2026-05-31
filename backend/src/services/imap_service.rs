@@ -720,6 +720,71 @@ impl ImapService {
         }
     }
 
+    /// Added (TMAIL-383): Permanent-delete a batch of UIDs from one folder in
+    /// a single IMAP session. Companion to `move_message_batch` for the
+    /// Classic UI bulk-delete flow's "already in Trash" branch — issues one
+    /// `UID STORE u1,u2,u3 +FLAGS (\Deleted)` + one `EXPUNGE` instead of
+    /// opening N sessions, so a 25-row Empty-Trash selection costs one round
+    /// trip rather than 25.
+    ///
+    /// Caller is responsible for confirming this is the right operation
+    /// (i.e. that `folder` is the user's resolved trash folder); the bulk
+    /// handler renders a confirm page first, mirroring the single-message
+    /// `delete_message` confirm flow. From-anywhere-else bulk delete uses
+    /// `move_message_batch` to the trash folder instead.
+    ///
+    /// `uids` may be empty — the method short-circuits to `Ok(())` so a
+    /// stray "Delete" click with no checkboxes is a no-op rather than an
+    /// error.
+    pub async fn delete_message_batch(
+        &self,
+        username: &str,
+        password: &str,
+        folder: &str,
+        uids: &[u32],
+    ) -> Result<(), AppError> {
+        if uids.is_empty() {
+            return Ok(());
+        }
+
+        let mut session = self.connect(username, password).await?;
+
+        session
+            .select(folder)
+            .await
+            .map_err(|e| AppError::Imap(format!("SELECT failed: {}", e)))?;
+
+        // RFC 3501 §9 message-set: comma-separated UID list. Same wire form
+        // used by `move_message_batch` / `set_flag_batch` — accepted by every
+        // BYOK target (Gmail, Dovecot, Stalwart, FastMail, Outlook).
+        let uid_set = uids
+            .iter()
+            .map(u32::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+
+        // Mark every UID `\Deleted` in one STORE round-trip.
+        let _: Vec<_> = session
+            .uid_store(&uid_set, "+FLAGS (\\Deleted)")
+            .await
+            .map_err(|e| AppError::Imap(format!("Batch store failed: {}", e)))?
+            .try_collect()
+            .await
+            .unwrap_or_default();
+
+        // One EXPUNGE finalises every queued deletion at once.
+        session
+            .expunge()
+            .await
+            .map_err(|e| AppError::Imap(format!("EXPUNGE failed: {}", e)))?
+            .try_collect::<Vec<_>>()
+            .await
+            .ok();
+
+        let _ = session.logout().await;
+        Ok(())
+    }
+
     /// Toggle a flag on a message
     pub async fn set_flag(
         &self,

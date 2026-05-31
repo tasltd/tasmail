@@ -1,0 +1,128 @@
+{% extends "classic/base.html" %}
+
+{# TMAIL-383 — Permanent-delete confirmation page for the bulk-action bar
+   on the /classic no-JS surface. Rendered ONLY when the user clicks the
+   bulk Delete button from inside their resolved trash folder
+   (`ImapService::trash_folder()`); from any other folder the bulk handler
+   moves to Trash directly without a confirm step (matches the single-
+   message delete flow). The confirm form below POSTs back to the same
+   /bulk endpoint with `confirm=1` + every selected `uid` so the handler
+   branches into the IMAP EXPUNGE path.
+
+   Required template context (set by `handlers::classic::delete::handle_bulk_delete`):
+     * `current_folder`       — display name (e.g. Trash, Deleted Items)
+     * `current_folder_href`  — URL-encoded segment for the form action +
+                                cancel/back-to-folder hrefs
+     * `count`                — number of UIDs about to be expunged
+     * `uids`                 — Vec<u32>; rendered as hidden inputs so the
+                                confirm POST carries the exact same selection
+     * `form_action`          — POST endpoint (same /bulk path)
+     * `cancel_href`          — back-to-folder href
+     * `csrf_token`           — threaded into confirm form + logout partial
+     * `csp_nonce`            — required by base.html #}
+
+{% block title %}Delete {{ count }} message{% if count != 1 %}s{% endif %} permanently{% endblock %}
+
+{% block logout_form %}{% include "classic/_logout_form.html" %}{% endblock %}
+
+{% block content %}
+  <style nonce="{{ csp_nonce }}">
+    /* Bulk-delete confirm shares the same visual language as the single
+       delete_confirm.html. Pulled in inline rather than via a shared
+       partial because the Classic UI's "no JS, no external CSS" constraint
+       means every page has to carry its own inlined nonce'd styles. */
+    .confirm-back {
+      display: inline-block;
+      margin: 0 0 0.75rem;
+      font-size: 0.875rem;
+    }
+    .confirm-summary {
+      margin: 0 0 1rem;
+      padding: 0.75rem 1rem;
+      background: var(--tm-bg-light);
+      border: 1px solid var(--tm-border);
+      border-radius: 4px;
+    }
+    .confirm-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      align-items: center;
+      margin: 1.5rem 0 0;
+      padding-top: 1rem;
+      border-top: 1px solid var(--tm-border);
+    }
+    .confirm-actions form {
+      display: inline;
+      margin: 0;
+    }
+    .confirm-actions button {
+      display: inline-block;
+      padding: 0.4rem 0.85rem;
+      font-size: 0.9375rem;
+      border-radius: 3px;
+      cursor: pointer;
+    }
+    .confirm-actions button.danger {
+      background: var(--tm-danger);
+      color: #ffffff;
+      border: 1px solid var(--tm-danger);
+    }
+    .confirm-actions a.cancel-link {
+      display: inline-block;
+      padding: 0.4rem 0.85rem;
+      font-size: 0.9375rem;
+      border-radius: 3px;
+      text-decoration: none;
+      background: var(--tm-surface);
+      color: var(--tm-link);
+      border: 1px solid var(--tm-border);
+    }
+    .confirm-actions a.cancel-link:hover {
+      background: var(--tm-bg-light);
+      text-decoration: underline;
+    }
+  </style>
+
+  <p class="confirm-back">
+    <a href="{{ cancel_href }}">&larr; Back to {{ current_folder }}</a>
+  </p>
+
+  <h1>Delete {{ count }} message{% if count != 1 %}s{% endif %} permanently?</h1>
+
+  {# Destructive-action warning. Same alert pattern as the single-message
+     delete_confirm.html so the visual weight matches the gravity of the
+     action; role="alert" so assistive tech announces on page load. #}
+  <div class="alert alert-error" role="alert">
+    <strong>This action is permanent and cannot be undone.</strong>
+    {{ count }} message{% if count != 1 %}s{% endif %} will be removed from the
+    {{ current_folder }} folder via an IMAP EXPUNGE and will not appear in any
+    other folder.
+  </div>
+
+  <section class="confirm-summary" aria-label="Messages about to be deleted">
+    <p>
+      You selected <strong>{{ count }} message{% if count != 1 %}s{% endif %}</strong>
+      for permanent deletion from <strong>{{ current_folder }}</strong>.
+    </p>
+  </section>
+
+  {# Confirm + Cancel row. Mirrors the single-message delete_confirm shape:
+     - destructive button gets the .danger styling so it's visually distinct
+     - NO autofocus / default-submit so Enter on this page won't expunge
+     - every selected `uid` round-trips as a hidden input so the confirm POST
+       hits the same UIDs the user originally selected #}
+  <div class="confirm-actions" role="group" aria-label="Confirm bulk deletion">
+    <form method="post" action="{{ form_action }}">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <input type="hidden" name="action" value="delete">
+      <input type="hidden" name="confirm" value="1">
+      {% for u in uids %}
+        <input type="hidden" name="uid" value="{{ u }}">
+      {% endfor %}
+      <button type="submit" class="danger">Delete {{ count }} permanently</button>
+    </form>
+
+    <a class="cancel-link" href="{{ cancel_href }}">Cancel</a>
+  </div>
+{% endblock %}

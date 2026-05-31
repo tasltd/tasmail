@@ -158,10 +158,39 @@
       padding: 0.25rem 0.75rem;
       font-size: 0.875rem;
     }
-    .bulk-actions .stub-note {
+    /* TMAIL-383 — "Select all on this page" master checkbox sits in the
+       THEAD's check column. The pure-CSS sibling-combinator pattern
+       (#select-all-page:checked ~ table ...) styles the table to surface
+       the "every row picked" state visually so a JS-disabled user can
+       still see what the master toggle does. The accompanying
+       `<label for="select-all-page">` is what a no-JS user clicks to
+       set the checkbox; the per-row checkboxes remain the source of truth
+       for what actually submits (browsers do not propagate a master-
+       checkbox state to siblings without JS, so the form submission still
+       only carries the rows the user ticked individually).
+
+       The selector is scoped to the master `<input>` + adjacent siblings
+       inside the .folder-main column so a future second checkbox elsewhere
+       on the page can't accidentally match. */
+    .select-all-master {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.25rem;
+      font-size: 0.875rem;
       color: var(--tm-muted);
-      font-size: 0.75rem;
-      margin-left: auto;
+    }
+    .select-all-master label { cursor: pointer; }
+    /* When the master is checked, badge every row check column with a
+       teal outline so the user can see the "I want all of these" intent
+       even though browser CSS cannot actually flip the per-row
+       :checked state. A follow-up could surface a "Tick each row to
+       confirm" hint here for true no-JS users. */
+    #select-all-page:checked ~ table .col-check input[type="checkbox"] {
+      outline: 2px solid var(--tm-teal-400);
+      outline-offset: 1px;
+    }
+    #select-all-page:checked ~ table tbody tr {
+      background: rgba(var(--tm-teal-rgb, 80 180 200), 0.08);
     }
     /* Stack columns on narrow viewports so the sidebar collapses above
        the message table rather than squashing both columns. */
@@ -213,14 +242,19 @@
       {% endif %}
 
       {# TMAIL-367 — Success banner after the delete POST-Redirect-Get
-         flow. The delete handler redirects to `?deleted=1` on both
-         branches (move-to-Trash from a regular folder AND permanent
+         flow. The delete handler redirects to `?deleted=1[&count=N]` on
+         both branches (move-to-Trash from a regular folder AND permanent
          EXPUNGE from inside Trash) so the user always gets a visible
-         confirmation that their action actually completed. Same shape
-         as the sent banner above. #}
+         confirmation that their action actually completed.
+
+         TMAIL-383 — Banner is now count-aware. The single-message handler
+         emits `count=1` so the banner reads "Deleted 1 message."; the bulk
+         handler emits `count=N` so it reads "Deleted N messages.". Legacy
+         bookmarks without `count` fall through to `deleted_count = 1` so a
+         user who refreshes a `?deleted=1` URL still sees the singular copy. #}
       {% if deleted_banner %}
         <div class="alert alert-success" role="status">
-          <strong>Message deleted.</strong>
+          <strong>Deleted {{ deleted_count }} message{% if deleted_count != 1 %}s{% endif %}.</strong>
         </div>
       {% endif %}
 
@@ -310,9 +344,37 @@
           </select>
           <button type="submit" name="action" value="move">Move</button>
         {% endif %}
-        <button type="submit" name="action" value="delete" disabled>Delete</button>
-        <span class="stub-note">Bulk-delete arrives in a follow-up release.</span>
+        {# TMAIL-383 — Bulk Delete is now LIVE. Same dispatcher as the other
+           bulk actions: `flag::post_bulk` routes `action=delete` to
+           `delete::handle_bulk_delete`. From a non-trash folder the handler
+           batch-moves to Trash and redirects with `?deleted=1&count=N`;
+           from inside the resolved trash folder it renders a confirm page
+           first, and only EXPUNGEs after a follow-up `confirm=1` POST. #}
+        <button type="submit" name="action" value="delete">Delete</button>
       </form>
+
+      {# TMAIL-383 — "Select all on this page" master checkbox + label.
+
+         This MUST sit as a direct previous-sibling of the <table> so the
+         pure-CSS `#select-all-page:checked ~ table ...` rule in the
+         <style> block above can light up the row checkboxes when the
+         master is ticked. Bound to the bulk-actions form via `form=`,
+         with `name=select_all_marker` (NOT `uid`) so it never accidentally
+         carries through as a UID submission — `extract_uids` only harvests
+         `uid` keys.
+
+         Hidden visually in old text-mode browsers (lynx) is fine —
+         lynx users continue to tick each row individually. JS-enabled
+         browsers can use the CSS outline as a visual cue and follow up
+         with per-row clicks; a future polish task may layer a tiny
+         JS enhancer on top (master.click() → forEach row.checked=true)
+         but the Classic UI hard rule is no JS by default. #}
+      <span class="select-all-master">
+        <input type="checkbox" id="select-all-page" form="classic-bulk-actions"
+               name="select_all_marker" value="1"
+               aria-label="Select all messages on this page">
+        <label for="select-all-page">Select all on this page</label>
+      </span>
 
       <table class="msg-table" aria-describedby="folder-heading">
         <thead>

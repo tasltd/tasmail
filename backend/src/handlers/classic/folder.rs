@@ -184,6 +184,31 @@ impl FolderQuery {
         }
     }
 
+    /// Added (TMAIL-383): Number of messages affected by the most recent
+    /// delete action. Drives the count-aware banner copy ("Deleted N
+    /// messages.") so the bulk-delete handler can surface a precise count
+    /// instead of the generic "Message deleted." wording.
+    ///
+    /// Defaults to 1 when:
+    ///   * `?deleted=1` is set but `?count=` is missing (single-message
+    ///     handler before TMAIL-383 ever appended a count — preserves the
+    ///     legacy copy semantics).
+    ///   * `?count=0` arrives (zero deletions shouldn't surface as a
+    ///     banner; the handler short-circuits on `uids.is_empty()` so this
+    ///     is purely defence-in-depth).
+    ///
+    /// Clamped to `MAX_BULK_UIDS` so a forged URL like `?count=999999` can't
+    /// produce a misleading "Deleted 999999 messages." banner.
+    fn deleted_count(&self) -> u32 {
+        let raw = self.count.unwrap_or(1);
+        let clamped = raw.min(super::flag::MAX_BULK_UIDS as u32);
+        if clamped == 0 {
+            1
+        } else {
+            clamped
+        }
+    }
+
     /// Added (TMAIL-372): Resolve `?moved=1&target=<name>&count=N` into a
     /// `MovedBanner` for the template. Returns `None` when `moved` is
     /// missing / falsy so the banner stays hidden on stale bookmarks. The
@@ -392,6 +417,12 @@ pub struct FolderTemplate {
     /// that their delete action actually completed (either moved to Trash
     /// or permanently expunged when already in Trash).
     pub deleted_banner: bool,
+    /// Added (TMAIL-383): Number of messages the most recent delete action
+    /// touched. Bulk-delete (TMAIL-383) emits `?deleted=1&count=N`; the
+    /// single-message handler emits `?deleted=1&count=1`. Defaults to 1 when
+    /// `count` is missing so legacy bookmarks still render. Only read when
+    /// `deleted_banner` is true.
+    pub deleted_count: u32,
     /// Added (TMAIL-370): present when the user landed here via the flag
     /// POST-Redirect-Get with `?marked=read|unread&count=N`. Drives the
     /// one-time confirmation banner above the message table. `None` means
@@ -616,6 +647,7 @@ pub async fn get_folder(
         csrf_token: session.csrf_token.clone(),
         sent_banner: query.sent_banner(),
         deleted_banner: query.deleted_banner(),
+        deleted_count: query.deleted_count(),
         marked_banner: query.marked_banner(),
         moved_banner: query.moved_banner(),
         move_targets,
@@ -680,6 +712,7 @@ mod tests {
             csrf_token: "test-csrf-token".to_string(),
             sent_banner: false,
             deleted_banner: false,
+            deleted_count: 1,
             marked_banner: None,
             moved_banner: None,
             // Fixture surfaces a realistic 3-folder dropdown so the
@@ -961,6 +994,63 @@ mod tests {
         }
     }
 
+    // ----- deleted_count (TMAIL-383) -----
+
+    #[test]
+    fn folder_query_deleted_count_defaults_to_one_when_count_missing() {
+        // Legacy bookmark of `?deleted=1` without `count` must still
+        // render a sensible banner. The single-message delete handler
+        // shipped before TMAIL-383 emitted only `?deleted=1`, so the
+        // count-aware banner has to surface "Deleted 1 message" for
+        // that URL or a refreshing user gets a broken-looking banner.
+        let q = FolderQuery {
+            deleted: Some("1".to_string()),
+            count: None,
+            ..empty_query()
+        };
+        assert_eq!(q.deleted_count(), 1);
+    }
+
+    #[test]
+    fn folder_query_deleted_count_passes_through_explicit_count() {
+        // Bulk-delete emits `?deleted=1&count=N` — the resolver returns N.
+        let q = FolderQuery {
+            deleted: Some("1".to_string()),
+            count: Some(7),
+            ..empty_query()
+        };
+        assert_eq!(q.deleted_count(), 7);
+    }
+
+    #[test]
+    fn folder_query_deleted_count_clamps_to_max_bulk_uids() {
+        // A forged `?count=999999` must NOT render "Deleted 999999
+        // messages" — clamp to the same bulk cap the move + marked
+        // banners use.
+        let q = FolderQuery {
+            deleted: Some("1".to_string()),
+            count: Some(999_999),
+            ..empty_query()
+        };
+        assert_eq!(
+            q.deleted_count(),
+            super::super::flag::MAX_BULK_UIDS as u32
+        );
+    }
+
+    #[test]
+    fn folder_query_deleted_count_replaces_zero_with_one() {
+        // `?count=0` would render "Deleted 0 messages" which is nonsense
+        // when the banner only shows after a non-empty submission. Defence
+        // in depth: clamp to 1 so the banner copy still reads sensibly.
+        let q = FolderQuery {
+            deleted: Some("1".to_string()),
+            count: Some(0),
+            ..empty_query()
+        };
+        assert_eq!(q.deleted_count(), 1);
+    }
+
     // ----- marked_banner (TMAIL-370) -----
 
     #[test]
@@ -1092,30 +1182,55 @@ mod tests {
         );
     }
 
-    // ----- TMAIL-367: deleted banner -----
+    // ----- TMAIL-367 / TMAIL-383: deleted banner -----
 
     #[test]
     fn folder_template_renders_deleted_success_banner_when_flag_set() {
+        // Single-message delete defaults to count=1, which the count-aware
+        // banner copy (TMAIL-383) renders as "Deleted 1 message." (singular).
         let mut t = fresh_template();
         t.deleted_banner = true;
+        t.deleted_count = 1;
         let body = t.render().expect("template renders");
         assert!(
             body.contains("alert-success"),
             "success alert class missing when deleted_banner = true: {body}"
         );
         assert!(
-            body.contains("Message deleted"),
-            "deleted banner copy missing: {body}"
+            body.contains("Deleted 1 message"),
+            "deleted banner copy missing or not singular for count=1: {body}"
+        );
+        // Singular form — no trailing "s" on the singular case. A
+        // regression here would surface as "Deleted 1 messages." which
+        // reads like a bug to the user.
+        assert!(
+            !body.contains("Deleted 1 messages"),
+            "deleted banner must NOT pluralise for count=1: {body}"
+        );
+    }
+
+    #[test]
+    fn folder_template_renders_deleted_banner_with_count_for_bulk() {
+        // TMAIL-383: the bulk handler emits `?deleted=1&count=N` and the
+        // template must surface the count + plural wording. Lock the copy
+        // down so a future refactor can't silently drop the count.
+        let mut t = fresh_template();
+        t.deleted_banner = true;
+        t.deleted_count = 12;
+        let body = t.render().expect("template renders");
+        assert!(
+            body.contains("Deleted 12 messages"),
+            "bulk-delete banner must render count + plural wording: {body}"
         );
     }
 
     #[test]
     fn folder_template_omits_deleted_success_banner_by_default() {
-        // fresh_template() has deleted_banner = false. A green "Message
-        // deleted" on a regular folder open would be misleading.
+        // fresh_template() has deleted_banner = false. A green "Deleted"
+        // banner on a regular folder open would be misleading.
         let body = fresh_template().render().expect("template renders");
         assert!(
-            !body.contains("Message deleted"),
+            !body.contains("Deleted ") || !body.contains("alert-success"),
             "deleted copy must NOT render when deleted_banner = false: {body}"
         );
     }
@@ -1252,11 +1367,86 @@ mod tests {
             !move_tag.contains("disabled"),
             "Move button must NOT be disabled when targets exist: {move_tag}"
         );
-        // Delete remains a placeholder until P1 #29 lands.
+        // Added (TMAIL-383): Bulk Delete is now LIVE on the bulk-action bar.
+        // From a non-trash folder it batch-moves to Trash; from inside trash
+        // it renders the confirm page. Same dispatch shape as Move.
         let delete_tag = extract_button_tag(&body, "delete");
         assert!(
-            delete_tag.contains("disabled"),
-            "Bulk Delete button must remain disabled until P1 #29 lands: {delete_tag}"
+            !delete_tag.contains("disabled"),
+            "Bulk Delete button must NOT be disabled after TMAIL-383: {delete_tag}"
+        );
+    }
+
+    // (bulk_delete_confirm_template tests live in their own module at the
+    // end of this file so they can pin a separate `fresh_template()`
+    // fixture for `BulkDeleteConfirmTemplate` without colliding with the
+    // `FolderTemplate` fixture above.)
+
+    // ----- TMAIL-383: select-all master checkbox -----
+
+    #[test]
+    fn folder_template_renders_select_all_master_checkbox() {
+        // The master checkbox + label must render so a JS-enabled user
+        // sees the visual select-all hint. Lock the id + name + label so a
+        // future refactor can't silently drop them — the pure-CSS
+        // `#select-all-page:checked ~ table …` rule depends on the exact
+        // id, and the form binding lets the master sit OUTSIDE the
+        // <form> while still posting as part of the bulk submission.
+        let body = fresh_template().render().expect("template renders");
+        assert!(
+            body.contains("id=\"select-all-page\""),
+            "select-all master checkbox must use id=\"select-all-page\" (the \
+             CSS sibling rule depends on this id): {body}"
+        );
+        // Bound to the bulk form via `form=` so it ships in the same POST.
+        assert!(
+            body.contains("form=\"classic-bulk-actions\""),
+            "select-all master must bind to the bulk-actions form: {body}"
+        );
+        // CRITICAL: master MUST NOT use `name=\"uid\"` — that would smuggle
+        // a literal "1" into the UID set and corrupt every bulk action.
+        // Lock the marker name down so a future template edit can't
+        // accidentally rename it to uid.
+        assert!(
+            body.contains("name=\"select_all_marker\""),
+            "select-all master must use name=\"select_all_marker\" so it does \
+             NOT pollute the uid set: {body}"
+        );
+        // Visible label so no-JS users can see what the toggle does.
+        assert!(
+            body.contains("Select all on this page"),
+            "select-all label copy must render: {body}"
+        );
+    }
+
+    #[test]
+    fn folder_template_renders_select_all_css_sibling_rule() {
+        // The pure-CSS visual cue depends on the `#select-all-page:checked
+        // ~ table …` sibling combinator. Lock the rule down so a future
+        // stylesheet refactor can't strip it. The actual outline / tint
+        // tokens can drift, but the selector pattern must survive.
+        let body = fresh_template().render().expect("template renders");
+        assert!(
+            body.contains("#select-all-page:checked ~ table"),
+            "CSS sibling rule that lights up rows on master-check must \
+             render: {body}"
+        );
+    }
+
+    // ----- TMAIL-383: bulk-delete button + form action -----
+
+    #[test]
+    fn folder_template_bulk_delete_button_carries_action_value() {
+        // The Delete button must POST with `action=delete` so
+        // `flag::post_bulk` routes the submission through
+        // `delete::handle_bulk_delete`. Lock the value down so a renamed
+        // button can't silently fall through to the friendly error page.
+        let body = fresh_template().render().expect("template renders");
+        let delete_tag = extract_button_tag(&body, "delete");
+        assert!(
+            delete_tag.contains("name=\"action\"") && delete_tag.contains("value=\"delete\""),
+            "Bulk Delete must POST action=delete to dispatch the bulk delete \
+             handler: {delete_tag}"
         );
     }
 
@@ -1957,6 +2147,172 @@ mod tests {
         assert!(
             body.contains("&#60;script&#62;") || body.contains("&lt;script&gt;"),
             "move-target name must be HTML-escaped in <option>: {body}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod bulk_delete_confirm_template_tests {
+    // Added (TMAIL-383): Confirm-page rendering tests for the bulk-delete
+    // permanent-expunge flow. The template lives in
+    // `templates/classic/bulk_delete_confirm.html` and is rendered ONLY
+    // when the user clicks bulk Delete from inside the resolved trash
+    // folder. These tests pin the destructive-action UX (no autofocus, no
+    // default-submit gimmick, every uid round-trips as a hidden input).
+    //
+    // Lives in its own module so the BulkDeleteConfirmTemplate fixture
+    // doesn't collide with the FolderTemplate fixture in the main `tests`
+    // module above. Both modules sit as siblings under `folder` so they're
+    // discovered by `cargo test --package tasmail`.
+
+    use super::super::delete::BulkDeleteConfirmTemplate;
+    use askama::Template;
+
+    fn fresh_template() -> BulkDeleteConfirmTemplate {
+        BulkDeleteConfirmTemplate {
+            current_folder: "Trash".to_string(),
+            current_folder_href: "Trash".to_string(),
+            count: 3,
+            uids: vec![10, 11, 12],
+            form_action: "/classic/folders/Trash/bulk".to_string(),
+            cancel_href: "/classic/folders/Trash".to_string(),
+            csrf_token: "test-csrf-token".to_string(),
+            csp_nonce: "test-nonce-fixed".to_string(),
+        }
+    }
+
+    #[test]
+    fn confirm_template_extends_base_layout() {
+        let body = fresh_template().render().expect("template renders");
+        assert!(body.contains("<!DOCTYPE html>"), "missing HTML5 doctype");
+        assert!(
+            body.contains("<style nonce=\"test-nonce-fixed\">"),
+            "inline <style> must carry the per-request CSP nonce: {body}"
+        );
+    }
+
+    #[test]
+    fn confirm_template_has_zero_script_tags() {
+        // Classic UI is no-JS — hard rule.
+        let body = fresh_template().render().expect("template renders");
+        assert!(
+            !body.contains("<script"),
+            "bulk-delete confirm template must contain ZERO <script> tags: {body}"
+        );
+    }
+
+    #[test]
+    fn confirm_template_renders_count_and_plural() {
+        // The page title, the alert banner, and the destructive button
+        // label all surface the count so the user can't miss it.
+        let body = fresh_template().render().expect("template renders");
+        assert!(
+            body.contains("Delete 3 messages permanently"),
+            "title + heading must surface count with plural wording: {body}"
+        );
+        assert!(
+            body.contains("3 messages will be removed"),
+            "alert banner must surface count: {body}"
+        );
+        assert!(
+            body.contains("Delete 3 permanently"),
+            "destructive button must surface count: {body}"
+        );
+    }
+
+    #[test]
+    fn confirm_template_singularises_count_one() {
+        // count=1 (e.g. the user ticked one row and clicked Delete) must
+        // read "Delete 1 message permanently" — NOT "Delete 1 messages
+        // permanently" — so the copy doesn't look broken.
+        let mut t = fresh_template();
+        t.count = 1;
+        t.uids = vec![10];
+        let body = t.render().expect("template renders");
+        assert!(
+            body.contains("Delete 1 message permanently"),
+            "title must singularise for count=1: {body}"
+        );
+        assert!(
+            !body.contains("Delete 1 messages permanently"),
+            "title must NOT pluralise for count=1: {body}"
+        );
+    }
+
+    #[test]
+    fn confirm_template_renders_one_hidden_uid_input_per_selection() {
+        // Every selected UID must round-trip as a hidden input so the
+        // confirm POST hits the exact same selection. A regression here
+        // would either silently shrink the set OR (if the loop dropped
+        // entirely) cause the handler's `uids.is_empty()` branch to
+        // render the "no rows selected" error from inside the confirm
+        // step — confusing UX.
+        let body = fresh_template().render().expect("template renders");
+        for uid in [10u32, 11, 12] {
+            let needle = format!(r#"name="uid" value="{uid}""#);
+            assert!(
+                body.contains(&needle),
+                "missing hidden input for uid={uid}: {body}"
+            );
+        }
+    }
+
+    #[test]
+    fn confirm_template_renders_action_delete_and_confirm_hidden_fields() {
+        // The confirm POST must carry BOTH `action=delete` (so
+        // `flag::post_bulk` routes back to the delete handler) AND
+        // `confirm=1` (so the delete handler takes the EXPUNGE branch
+        // instead of re-rendering this same confirm page).
+        let body = fresh_template().render().expect("template renders");
+        assert!(
+            body.contains(r#"name="action" value="delete""#),
+            "confirm form must carry action=delete: {body}"
+        );
+        assert!(
+            body.contains(r#"name="confirm" value="1""#),
+            "confirm form must carry confirm=1: {body}"
+        );
+        assert!(
+            body.contains(r#"name="_csrf" value="test-csrf-token""#),
+            "confirm form must carry the session CSRF token: {body}"
+        );
+    }
+
+    #[test]
+    fn confirm_template_renders_destructive_warning_copy() {
+        let body = fresh_template().render().expect("template renders");
+        // The confirm page exists specifically to make the user pause
+        // before a destructive bulk action. Lock the warning copy down
+        // so a refactor doesn't quietly remove it.
+        assert!(
+            body.contains("permanent") || body.contains("cannot be undone"),
+            "confirm page must surface destructive-action warning copy: {body}"
+        );
+    }
+
+    #[test]
+    fn confirm_template_renders_cancel_link_back_to_folder() {
+        let body = fresh_template().render().expect("template renders");
+        // Cancel is a plain GET <a> back to the folder view (the
+        // selection is dropped — the user has to re-tick if they want
+        // to retry). Lock the href down so a future refactor can't
+        // accidentally drop the user on the message-read view.
+        assert!(
+            body.contains(r#"href="/classic/folders/Trash""#),
+            "cancel link must point back at the folder view: {body}"
+        );
+        assert!(body.contains(">Cancel<"));
+    }
+
+    #[test]
+    fn confirm_template_posts_to_bulk_endpoint() {
+        let body = fresh_template().render().expect("template renders");
+        // The form action MUST be the same /bulk endpoint — that's the
+        // contract that lets `flag::post_bulk` dispatch back to
+        // `delete::handle_bulk_delete` with the same UID set.
+        assert!(
+            body.contains(r#"action="/classic/folders/Trash/bulk""#),
+            "confirm form must POST to the /bulk endpoint: {body}"
         );
     }
 }

@@ -353,15 +353,33 @@ pub async fn post_bulk(
         .await;
     }
 
+    // Added (TMAIL-383): `action=delete` is dispatched out to the delete
+    // handler. From a non-trash source folder it batch-moves to the
+    // resolved trash; from inside trash it renders a confirm page first and
+    // only EXPUNGEs after a follow-up `confirm=1` POST. Same shape as the
+    // single-message delete handler so the trash-vs-not branching logic
+    // stays co-located.
+    if action_raw == "delete" {
+        return super::delete::handle_bulk_delete(
+            state,
+            claims,
+            session,
+            csp_nonce,
+            folder,
+            pairs,
+        )
+        .await;
+    }
+
     let Some(action) = MarkAction::from_bulk(&action_raw) else {
-        // Delete bulk action lives on this same endpoint but ships under a
-        // separate task (P1 #29). Today it 400s via the friendly page so
-        // the user gets a hint instead of silence.
+        // Move and Delete land in their own dispatch branches above. Any
+        // other action value falls through here and renders the friendly
+        // error page so a renamed button can't silently become a no-op.
         return render_flag_error(
             &format!(
-                "The bulk action {action_raw:?} isn't wired up yet. Mark read, \
-                 Mark unread, Star, Unstar and Move are the only actions \
-                 available right now."
+                "The bulk action {action_raw:?} isn't recognised. Mark read, \
+                 Mark unread, Star, Unstar, Move and Delete are the only \
+                 actions available."
             ),
             &folder_href,
             &session.csrf_token,

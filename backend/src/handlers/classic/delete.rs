@@ -30,7 +30,6 @@
 //
 // What this does NOT do (deferred)
 // --------------------------------
-//   * Bulk delete (multi-select on the folder view) is P1 #29.
 //   * "Empty Trash" (delete every message in Trash with one click) is a P1
 //     follow-up — the data-model + UX for it lives in the bulk-delete task.
 //   * Hard-coded "Trash" — the trash folder name is resolved via
@@ -38,6 +37,15 @@
 //     `imap_configurations.trash_folder` (Gmail "[Gmail]/Trash", Stalwart
 //     "Deleted Items", iCloud "Deleted Messages", ...). Comparing against a
 //     literal "Trash" would break BYOK on every non-Dovecot provider.
+//
+// Added (TMAIL-383): the bulk-delete branch on POST /classic/folders/{folder}/bulk
+// is dispatched from `flag::post_bulk` when `action=delete` is submitted. It
+// mirrors the single-message flow exactly: move-to-Trash from any source
+// folder, OR (when source == trash) render a confirm page, and only on a
+// follow-up POST with `confirm=1` does it permanent-expunge via IMAP. Lives
+// in this file (not its own) because the trash-vs-not branching is identical
+// to the single-message handler — keeping both pathways co-located avoids
+// the trash-resolution + folder-comparison logic drifting apart.
 
 use askama::Template;
 use axum::{
@@ -77,6 +85,43 @@ impl DeleteForm {
     pub fn is_confirmed(&self) -> bool {
         matches!(self.confirm.as_deref(), Some("1" | "true" | "yes"))
     }
+}
+
+/// Added (TMAIL-383): Askama template for the bulk-delete permanent-expunge
+/// confirmation page. Rendered ONLY when the user clicks the bulk Delete
+/// button from inside the resolved trash folder. The confirm form POSTs to
+/// the same `/classic/folders/{folder}/bulk` endpoint with
+/// `action=delete&confirm=1` + the same `uid` set so the handler can branch
+/// straight into `imap_service::delete_message_batch`.
+///
+/// Source-folder != trash never lands here — bulk-delete from anywhere else
+/// is a plain batch move-to-trash, mirroring the single-message flow.
+#[derive(Template)]
+#[template(path = "classic/bulk_delete_confirm.html")]
+pub struct BulkDeleteConfirmTemplate {
+    /// Display name of the folder (always the user's trash folder when this
+    /// template renders).
+    pub current_folder: String,
+    /// URL-encoded path segment for the form action + cancel/back hrefs.
+    pub current_folder_href: String,
+    /// Number of UIDs about to be expunged. Rendered into the page title +
+    /// alert banner + button label so the user gets a count-aware signal.
+    pub count: u32,
+    /// Every selected UID; rendered as a `<input type="hidden" name="uid">`
+    /// per element so the confirm POST hits the same selection the user
+    /// originally made. NOT trusted server-side — `flag::extract_uids` re-
+    /// parses on the confirm POST so a forged hidden field can't sneak past.
+    pub uids: Vec<u32>,
+    /// POST action for the confirm form (the /bulk endpoint).
+    pub form_action: String,
+    /// Cancel href: back to the folder view (drops the selection — the user
+    /// has to re-tick if they want to retry).
+    pub cancel_href: String,
+    /// Session CSRF token threaded into the confirm form AND the logout
+    /// partial. Mandatory; an empty value would 403 the confirm.
+    pub csrf_token: String,
+    /// Per-request CSP nonce. Required by base.html.
+    pub csp_nonce: String,
 }
 
 /// Askama template for the Trash-folder permanent-delete confirmation page.
@@ -172,7 +217,7 @@ pub async fn post_delete(
         imap_service
             .move_message(&username, &password, &folder, uid, &trash_folder)
             .await?;
-        let target = format!("/classic/folders/{folder_href}?deleted=1");
+        let target = deleted_redirect(&folder_href, 1);
         return Ok((StatusCode::SEE_OTHER, [(axum::http::header::LOCATION, target)]).into_response());
     }
 
@@ -187,7 +232,7 @@ pub async fn post_delete(
         imap_service
             .delete_message(&username, &password, &folder, uid)
             .await?;
-        let target = format!("/classic/folders/{folder_href}?deleted=1");
+        let target = deleted_redirect(&folder_href, 1);
         return Ok((StatusCode::SEE_OTHER, [(axum::http::header::LOCATION, target)]).into_response());
     }
 
@@ -226,6 +271,159 @@ pub async fn post_delete(
     let html = template
         .render()
         .map_err(|e| AppError::Internal(anyhow::anyhow!("classic delete-confirm template render failed: {e}")))?;
+
+    Ok((
+        StatusCode::OK,
+        [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        html,
+    )
+        .into_response())
+}
+
+/// Added (TMAIL-383): Build the 303 redirect target for the "Deleted N
+/// messages" folder-view banner. Shared between the single-message handler
+/// (count=1, fired from `post_delete` after a successful move/expunge) and
+/// the bulk handler (count=N). Keeps the folder template down to one banner
+/// branch even though two distinct endpoints emit it.
+pub fn deleted_redirect(folder_href: &str, count: usize) -> String {
+    format!("/classic/folders/{folder_href}?deleted=1&count={count}")
+}
+
+/// Added (TMAIL-383): Handle the `action=delete` branch from `flag::post_bulk`.
+///
+/// Two source-folder branches that mirror the single-message `post_delete`:
+///
+///   * `folder != trash` — bulk move-to-Trash. Calls
+///     `imap_service::move_message_batch` to COPY+EXPUNGE every UID into the
+///     resolved trash folder in one round trip. 303-redirects back to the
+///     SOURCE folder with `?deleted=1&count=N` so the folder banner reads
+///     "Deleted N messages."
+///
+///   * `folder == trash` AND `confirm != 1` — render the bulk-confirm page
+///     (`BulkDeleteConfirmTemplate`) which POSTs back to the same /bulk
+///     endpoint with `action=delete&confirm=1` + the same `uid` set as
+///     hidden inputs.
+///
+///   * `folder == trash` AND `confirm == 1` — bulk permanent-delete via
+///     `imap_service::delete_message_batch`. 303-redirects to the trash
+///     folder with `?deleted=1&count=N`.
+///
+/// CSRF + auth are enforced upstream by `classic_csrf_middleware` +
+/// `classic_session_middleware`, so this handler only worries about target
+/// resolution + the IMAP call sequence.
+pub async fn handle_bulk_delete(
+    state: AppState,
+    claims: Claims,
+    session: ClassicSession,
+    csp_nonce: CspNonce,
+    folder: String,
+    pairs: Vec<(String, String)>,
+) -> Result<Response, AppError> {
+    let mailbox_id: Uuid = claims
+        .sub
+        .parse()
+        .map_err(|_| AppError::Internal(anyhow::anyhow!("Invalid mailbox ID in classic claims")))?;
+
+    let folder_href = urlencoding::encode(&folder).into_owned();
+
+    // Re-parse the UID set off the form pairs every time — same shape as the
+    // move handler, same trust boundary. A forged `confirm=1` POST with a
+    // different uid set than the original confirm-page render still has to
+    // pass `extract_uids` (which caps at MAX_BULK_UIDS) so the user can't
+    // smuggle 10k UIDs into the EXPUNGE branch.
+    let uids = super::flag::extract_uids(&pairs)?;
+    if uids.is_empty() {
+        return super::flag::FlagErrorTemplate {
+            message: "No messages were selected. Tick the checkbox on at least one row \
+                      before clicking Delete."
+                .to_string(),
+            back_href: format!("/classic/folders/{folder_href}"),
+            csrf_token: session.csrf_token.clone(),
+            csp_nonce: csp_nonce.into_string(),
+        }
+        .render()
+        .map_err(|e| {
+            AppError::Internal(anyhow::anyhow!(
+                "classic flag-error template render failed: {e}"
+            ))
+        })
+        .map(|html| {
+            (
+                StatusCode::BAD_REQUEST,
+                [(
+                    axum::http::header::CONTENT_TYPE,
+                    "text/html; charset=utf-8",
+                )],
+                html,
+            )
+                .into_response()
+        });
+    }
+
+    let imap_service = ImapService::for_user(&state, mailbox_id).await?;
+    let (username, password) = imap_service
+        .user_creds()
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("BYOK creds missing on ImapService")))?;
+    let username = username.to_string();
+    let password = password.to_string();
+
+    let trash_folder = imap_service.trash_folder().to_string();
+    let in_trash = folder == trash_folder;
+
+    // Confirmation flag — `serde_urlencoded` doesn't help us here since the
+    // surrounding handler already buffered the body into `Vec<(String, String)>`
+    // for the move dispatcher. Match the same positive-value set the single
+    // delete handler accepts so the two endpoints stay in lockstep.
+    let confirmed = pairs
+        .iter()
+        .find(|(k, _)| k == "confirm")
+        .map(|(_, v)| matches!(v.as_str(), "1" | "true" | "yes"))
+        .unwrap_or(false);
+
+    if !in_trash {
+        // ── Branch 1 — Bulk move-to-Trash ─────────────────────────────────
+        // Matches the single-message flow exactly: from any source folder
+        // other than the resolved trash, "Delete" means "move to Trash".
+        // No confirm step — the messages remain recoverable via Trash.
+        imap_service
+            .move_message_batch(&username, &password, &folder, &uids, &trash_folder)
+            .await?;
+        let target = deleted_redirect(&folder_href, uids.len());
+        return Ok((StatusCode::SEE_OTHER, [(axum::http::header::LOCATION, target)]).into_response());
+    }
+
+    // ── Branch 2 — Already in Trash; needs explicit confirmation ──────────
+    if confirmed {
+        imap_service
+            .delete_message_batch(&username, &password, &folder, &uids)
+            .await?;
+        let target = deleted_redirect(&folder_href, uids.len());
+        return Ok((StatusCode::SEE_OTHER, [(axum::http::header::LOCATION, target)]).into_response());
+    }
+
+    // Render the confirm page. The user can still cancel out (back to folder
+    // drops the selection). Same destructive-action UX as the single-message
+    // confirm page — no autofocus / default-submit, explicit button click
+    // required to permanent-expunge.
+    let form_action = format!("/classic/folders/{folder_href}/bulk");
+    let cancel_href = format!("/classic/folders/{folder_href}");
+
+    let template = BulkDeleteConfirmTemplate {
+        current_folder: folder.clone(),
+        current_folder_href: folder_href,
+        count: uids.len() as u32,
+        uids,
+        form_action,
+        cancel_href,
+        csrf_token: session.csrf_token.clone(),
+        csp_nonce: csp_nonce.into_string(),
+    };
+
+    let html = template.render().map_err(|e| {
+        AppError::Internal(anyhow::anyhow!(
+            "classic bulk-delete-confirm template render failed: {e}"
+        ))
+    })?;
 
     Ok((
         StatusCode::OK,
