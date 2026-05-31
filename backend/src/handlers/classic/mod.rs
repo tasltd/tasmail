@@ -126,6 +126,13 @@ pub mod flag;
 // COPY+EXPUNGE runs.
 pub mod move_to;
 
+// Added (TMAIL-373): GET /classic/search?q=…&folder=…&page=N — server-
+// rendered search form + paginated results page for the Classic UI
+// (P1 #19). The same form is mirrored in the base.html nav so it's
+// reachable from every page; this handler also renders the primary
+// version with a folder selector. Read-only GET — no CSRF needed.
+pub mod search;
+
 // NAME: Session cookie name shared with the Classic UI auth handler that
 // lands in TMAIL-357 (P0 #3). The scaffold only needs to *detect* presence;
 // the cookie value is opaque here and validated later by the dedicated
@@ -310,6 +317,12 @@ fn authenticated_router(state: AppState) -> Router<AppState> {
             "/classic/folders/{folder}/messages/{uid}/move",
             post(move_to::post_message_move),
         )
+        // Added (TMAIL-373): GET-only search endpoint. Renders the form
+        // + paginated results page. Read-only — the CSRF middleware
+        // below is a no-op on GET, and the session middleware injects
+        // the ClassicSession so the logout form partial can render the
+        // session-scoped CSRF token in its hidden input.
+        .route("/classic/search", get(search::get_search))
         // Inner layer: CSRF check on state-changing methods. Runs AFTER
         // the session middleware on the request side, so the session row
         // (carrying the expected token) is in extensions when it executes.

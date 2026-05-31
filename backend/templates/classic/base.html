@@ -140,6 +140,38 @@
     }
     .site-nav-end button:hover { text-decoration-thickness: 2px; }
     .site-nav-end button:focus { outline: 3px solid var(--tm-focus-ring); outline-offset: 1px; }
+    /* TMAIL-373 — Inline search form in the primary nav. Sits between the
+       nav links and the right-aligned logout button so it's reachable from
+       every authenticated page. The form is GET (search is idempotent +
+       safe to bookmark / browser-back) and the input width is capped so
+       it doesn't blow out the nav on wide viewports. The whole strip
+       collapses to wrap onto a second line on narrow viewports — the
+       existing `.site-nav ul` `flex-wrap: wrap` rule already handles that. */
+    .site-nav-search {
+      display: flex;
+      gap: 0.25rem;
+      align-items: center;
+      margin: 0;
+    }
+    .site-nav-search input[type=search] {
+      display: inline-block;
+      width: 14rem;
+      max-width: 100%;
+      margin: 0;
+      padding: 0.25rem 0.5rem;
+      border: 1px solid var(--tm-border);
+      border-radius: 3px;
+      background: var(--tm-surface);
+      font-size: 0.875rem;
+    }
+    .site-nav-search button {
+      margin: 0;
+      padding: 0.25rem 0.75rem;
+      font-size: 0.875rem;
+    }
+    @media (max-width: 36em) {
+      .site-nav-search input[type=search] { width: 9rem; }
+    }
     main {
       display: block;                 /* IE11 floor */
       max-width: 60rem;
@@ -273,8 +305,22 @@
     <ul>
       <li><a href="/classic/folders/INBOX">Inbox</a></li>
       <li><a href="/classic/compose">Compose</a></li>
-      <li><a href="/classic/search">Search</a></li>
       <li><a href="/classic/settings/signature">Settings</a></li>
+      {# TMAIL-373 — Inline search form lives in the primary nav so it's
+         reachable from every page (Inbox, message read view, compose,
+         settings). GET method since search is idempotent + bookmarkable.
+         The `nav_search_q` field on every child template threads the
+         current search query back into the input so the value survives
+         a page change. Defaults to empty on every non-search page. #}
+      <li>
+        <form class="site-nav-search" method="get" action="/classic/search" role="search">
+          <label class="visually-hidden" for="nav-search-q">Search messages</label>
+          <input id="nav-search-q" type="search" name="q" maxlength="500"
+                 value="{% block nav_search_q %}{% endblock %}"
+                 placeholder="Search mail" autocomplete="off">
+          <button type="submit">Search</button>
+        </form>
+      </li>
       {# TMAIL-360 — Logout form. Lives in the primary nav so it travels
          every page that extends base.html. The block is empty by default
          so unauthenticated pages (login, csrf_error, 404) render no

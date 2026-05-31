@@ -1,0 +1,237 @@
+{% extends "classic/base.html" %}
+
+{# TMAIL-373 — Search form + paginated results for the no-JS Classic UI.
+
+   Required template context (set by `handlers::classic::search::get_search`):
+     * `query`           — echoed back into the search input (empty when
+                            no `?q=` was submitted)
+     * `folder`          — current folder being searched (always non-empty;
+                            defaulted to INBOX server-side)
+     * `has_query`       — true when the user submitted a query;
+                            branches the empty-state vs results render
+     * `ai_configured`   — true when the user has an active AI config;
+                            shows a small hint pointing at NLP search
+     * `total_results`   — total matches (across all pages; cap = 100)
+     * `current_page`    — 0-based page index being shown
+     * `total_pages`     — `>= 1` so the "Page 1 of 1" footer never
+                            shows "of 0"
+     * `first_index` / `last_index` — 1-based row numbers on this page
+                            (both `0` when the page is empty)
+     * `has_prev`, `prev_href`, `has_next`, `next_href` — pagination links
+     * `results: Vec<SearchResultRow>` — flattened rows for this page
+     * `csrf_token`      — threaded through the logout form partial in nav
+     * `csp_nonce`       — required by base.html #}
+
+{% block title %}{% if has_query %}Search: {{ query }}{% else %}Search{% endif %}{% endblock %}
+
+{# Echo the query back into the nav-level search box too so it survives a
+   page change. The base layout reads `nav_search_q` and renders it as the
+   input's `value`. The folder selector below in this view stays in sync
+   via its own form. #}
+{% block nav_search_q %}{{ query }}{% endblock %}
+
+{% block logout_form %}{% include "classic/_logout_form.html" %}{% endblock %}
+
+{% block content %}
+  <style nonce="{{ csp_nonce }}">
+    /* TMAIL-373 — search-view-specific layout. Inherits the base palette
+       tokens; nothing here overrides them. */
+    .search-form {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      align-items: flex-end;
+      margin: 0 0 1rem;
+      padding: 1rem;
+      background: var(--tm-bg-light);
+      border: 1px solid var(--tm-border);
+      border-radius: 4px;
+    }
+    .search-form .field {
+      flex: 1 1 14rem;
+      min-width: 12rem;
+    }
+    .search-form .field-folder { flex-basis: 10rem; }
+    .search-form label {
+      display: block;
+      font-weight: 600;
+      font-size: 0.875rem;
+      margin: 0 0 0.25rem;
+    }
+    .search-form input[type=search],
+    .search-form input[type=text] {
+      display: block;
+      width: 100%;
+      margin: 0;
+    }
+    .search-form button {
+      margin: 0;
+    }
+    .search-ai-hint {
+      margin: 0 0 1rem;
+      padding: 0.5rem 0.75rem;
+      font-size: 0.875rem;
+      background: var(--tm-bg-light);
+      border-left: 3px solid var(--tm-teal-400);
+      color: var(--tm-charcoal-700);
+    }
+    .search-meta {
+      margin: 0.5rem 0 1rem;
+      color: var(--tm-muted);
+      font-size: 0.875rem;
+    }
+    .search-meta strong { color: var(--tm-charcoal-900); }
+    /* Reuse the same table styling shape as folder.html so the two
+       surfaces look like siblings rather than two unrelated lists. */
+    .msg-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9375rem;
+    }
+    .msg-table th,
+    .msg-table td {
+      text-align: left;
+      padding: 0.4rem 0.5rem;
+      border-bottom: 1px solid var(--tm-border);
+      vertical-align: top;
+    }
+    .msg-table th { background: var(--tm-bg-light); color: var(--tm-muted); }
+    .msg-table .col-folder { width: 10rem; color: var(--tm-muted); }
+    .msg-table .col-date { width: 11rem; white-space: nowrap; color: var(--tm-muted); }
+    .msg-table .col-sender { width: 12rem; }
+    .msg-row-unread { background: var(--tm-bg-light); }
+    .msg-row-unread .col-sender,
+    .msg-row-unread .col-subject a { font-weight: 700; }
+    .msg-empty {
+      padding: 2rem 1rem;
+      text-align: center;
+      color: var(--tm-muted);
+      background: var(--tm-bg-light);
+      border: 1px dashed var(--tm-border);
+      border-radius: 4px;
+    }
+    .pagination {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem 1.5rem;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 1rem;
+      padding: 0.5rem 0;
+      border-top: 1px solid var(--tm-border);
+      color: var(--tm-muted);
+      font-size: 0.875rem;
+    }
+    .pagination a { text-decoration: underline; }
+    @media (max-width: 48em) {
+      .msg-table .col-folder,
+      .msg-table .col-sender { width: auto; }
+      .msg-table .col-date { width: auto; white-space: normal; }
+    }
+  </style>
+
+  <h1 id="search-heading">Search</h1>
+
+  {# Primary search form. GET so the URL is bookmarkable and the browser
+     back button replays the same search. The `q` and `folder` inputs are
+     pre-populated so a user can refine without retyping the whole query. #}
+  <form class="search-form" method="get" action="/classic/search" role="search" aria-labelledby="search-heading">
+    <div class="field">
+      <label for="search-q">Search for</label>
+      <input id="search-q" type="search" name="q" maxlength="500"
+             value="{{ query }}" autocomplete="off" autofocus
+             placeholder="Subject, sender, or body text">
+    </div>
+    <div class="field field-folder">
+      <label for="search-folder">In folder</label>
+      <input id="search-folder" type="text" name="folder" maxlength="200"
+             value="{{ folder }}" placeholder="INBOX">
+    </div>
+    <div>
+      <button type="submit">Search</button>
+    </div>
+  </form>
+
+  {% if ai_configured %}
+    {# TMAIL-373 — small hint pointing at NLP search. The NLP execution
+       path isn't fully wired yet (handler returns empty results), so this
+       is a forward-looking signal rather than a CTA. Copy stays vague
+       so a future commit that wires up real NLP search can flip this to
+       a real link without touching this template again. #}
+    <p class="search-ai-hint" role="note">
+      <strong>AI search is available.</strong>
+      Natural language queries (e.g. &ldquo;invoices from last month&rdquo;)
+      can be set up in <a href="/classic/settings/signature">Settings &rsaquo; AI</a>.
+    </p>
+  {% endif %}
+
+  {% if !has_query %}
+    {# Empty landing page: no query submitted yet. Show the form (above)
+       + a prompt to encourage the user to type something. No IMAP work
+       was done; nothing else to render. #}
+    <div class="msg-empty">
+      <p><strong>Search your mailbox.</strong></p>
+      <p>Type a search term above to find messages by subject, sender, or body content.</p>
+    </div>
+
+  {% else if results.is_empty() %}
+    {# Query was submitted but no matches. Distinct copy from the bare
+       landing page so the user knows the search ran. #}
+    <div class="msg-empty">
+      <p><strong>No messages match &ldquo;{{ query }}&rdquo; in {{ folder }}.</strong></p>
+      <p>Try a shorter term, a different folder, or check for typos.</p>
+    </div>
+
+  {% else %}
+    <p class="search-meta">
+      <strong>{{ total_results }}</strong>
+      result{% if total_results != 1 %}s{% endif %}
+      for &ldquo;{{ query }}&rdquo; in {{ folder }}.
+    </p>
+
+    <table class="msg-table" aria-describedby="search-heading">
+      <thead>
+        <tr>
+          <th scope="col" class="col-folder">Folder</th>
+          <th scope="col" class="col-sender">Sender</th>
+          <th scope="col" class="col-subject">Subject</th>
+          <th scope="col" class="col-date">Date</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for m in results %}
+          <tr class="msg-row{% if !m.is_read %} msg-row-unread{% endif %}">
+            <td class="col-folder">{{ m.folder }}</td>
+            <td class="col-sender">{{ m.from }}</td>
+            <td class="col-subject">
+              <a href="{{ m.message_href }}">
+                {% if m.is_read %}{{ m.subject }}{% else %}<strong>{{ m.subject }}</strong>{% endif %}
+              </a>
+            </td>
+            <td class="col-date">{{ m.date }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <nav class="pagination" aria-label="Search pagination">
+      <span>
+        {% if total_results == 0 %}
+          No results.
+        {% else %}
+          Showing {{ first_index }}&ndash;{{ last_index }} of {{ total_results }}.
+        {% endif %}
+      </span>
+      <span>
+        {% if has_prev %}
+          <a rel="prev" href="{{ prev_href }}">&larr; Newer</a>
+        {% endif %}
+        {% if has_prev && has_next %} &middot; {% endif %}
+        {% if has_next %}
+          <a rel="next" href="{{ next_href }}">Older &rarr;</a>
+        {% endif %}
+      </span>
+      <span>Page {{ current_page + 1 }} of {{ total_pages }}</span>
+    </nav>
+  {% endif %}
+{% endblock %}
