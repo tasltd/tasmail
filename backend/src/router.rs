@@ -1107,7 +1107,14 @@ pub fn create_router(state: AppState) -> Router {
     // or `rls_context_middleware`: those expect Bearer JWTs in the
     // Authorization header, which is unreachable without JavaScript. Its
     // own session middleware ships in TMAIL-357.
-    let classic_routes = handlers::classic::router();
+    // Changed (TMAIL-360): handlers::classic::router now takes AppState so
+    // its authenticated sub-router can wire `classic_session_middleware`
+    // (which needs state to look up sessions / mailboxes) AND the
+    // `classic_csrf_middleware` that reads the resolved session from
+    // request extensions. The public sub-router (login GET/POST, 404)
+    // still needs no state — it lives in the same Router for the merge
+    // ergonomics.
+    let classic_routes = handlers::classic::router(state.clone());
 
     // Added: Multi-algorithm compression for low-bandwidth mobile clients (TMAIL-52).
     // CompressionLayer::new() negotiates gzip, brotli, and deflate based on the

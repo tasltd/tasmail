@@ -13,7 +13,12 @@ mod common;
 
 use axum::body::Body;
 use axum::http::{header, Method, Request, StatusCode};
-use chrono::{Duration, Utc};
+// Fix (TMAIL-360): `SubsecRound` is needed to truncate the test anchor to
+// whole-second precision so the inclusive `from` filter doesn't lose a row
+// to nanosecond rounding mismatches between the DateTime<Utc> binary bind
+// path (insert) and the text-to-timestamptz cast path (filter SQL). See
+// commit body for the trace.
+use chrono::{Duration, SubsecRound, Utc};
 use http_body_util::BodyExt;
 use jsonwebtoken::{encode, EncodingKey, Header};
 use serde_json::Value;
@@ -236,7 +241,28 @@ async fn audit_log_filter_pagination_and_total_count() {
 
     let unique_action = format!("test.tmail352.{}", Uuid::new_v4().simple());
     // 10 rows, 1 minute apart, starting at a known anchor.
-    let anchor = Utc::now() - Duration::hours(1);
+    //
+    // Fix (TMAIL-360 follow-up): truncate the anchor to whole-second
+    // precision before seeding. Without this, `Utc::now()` carries
+    // nanosecond precision, and the inclusive `from` filter would
+    // lose the boundary row to a sub-microsecond rounding mismatch:
+    //   * `sqlx::query(...).bind(DateTime<Utc>)` (insert path) encodes
+    //     the value in Postgres's binary protocol with microsecond
+    //     precision — nanoseconds are TRUNCATED.
+    //   * `from.to_rfc3339()` → `$N::timestamptz` (filter path) goes
+    //     through Postgres's text-to-timestamptz parser which ROUNDS
+    //     fractional seconds half-away-from-zero.
+    //   So `anchor = 04:50:00.123456789` becomes stored as `04:50:00.123456`
+    //   but `from = anchor + 5min` becomes `04:55:00.123457` after the
+    //   text cast — and the row at exactly `+5min` (stored as
+    //   `04:55:00.123456`) fails the `>= 04:55:00.123457` filter.
+    //   That's the 5-vs-4 discrepancy the test was catching.
+    //
+    //   Truncating to whole seconds removes the ambiguity without
+    //   touching the audit-log filter logic, which is correct: both
+    //   the insert and the filter agree on the boundary value to the
+    //   microsecond, so `>=` does the right thing.
+    let anchor = (Utc::now() - Duration::hours(1)).trunc_subsecs(0);
     seed_audit_rows(&pool, admin_id, &unique_action, 10, anchor).await;
 
     // 1. List ALL with action filter — expect 10 rows, X-Total-Count=10.

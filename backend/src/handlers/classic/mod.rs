@@ -18,8 +18,9 @@ use askama::Template;
 use axum::{
     extract::Request,
     http::{header, HeaderMap, StatusCode},
+    middleware as axum_middleware,
     response::{Html, IntoResponse, Redirect, Response},
-    routing::get,
+    routing::{get, post},
     Router,
 };
 
@@ -56,6 +57,13 @@ pub use csrf::{render_csrf_error_response, CsrfErrorTemplate, CSRF_FIELD_NAME};
 // exist before login completes.
 pub mod login;
 
+// Added (TMAIL-360): POST /classic/logout handler. Mounts on the
+// authenticated sub-router below (so it inherits classic_session_middleware
+// + classic_csrf_middleware automatically) — never as a GET route, since
+// that would let an attacker sign the user out via an `<img src=...>` tag
+// in a hostile email or pre-fetched link.
+pub mod logout;
+
 // NAME: Session cookie name shared with the Classic UI auth handler that
 // lands in TMAIL-357 (P0 #3). The scaffold only needs to *detect* presence;
 // the cookie value is opaque here and validated later by the dedicated
@@ -91,7 +99,18 @@ struct NotFoundTemplate {
 /// the Classic surface uses its own cookie-based session middleware (added
 /// in TMAIL-357), since JWT-in-Authorization-header auth is useless without
 /// JavaScript to attach the header.
-pub fn router() -> Router<AppState> {
+///
+/// Two sub-routers are merged here:
+///   * Public routes (login GET/POST, index redirect, 404 catch-all) — no
+///     middleware, since the user has no session yet.
+///   * Authenticated routes (logout, future inbox/compose/settings...) —
+///     wrapped in `authenticated_router(state)` which stacks
+///     `classic_session_middleware` (cookie → ClassicSession) followed by
+///     `classic_csrf_middleware` (validates _csrf form field against the
+///     row's csrf_token). Both layers MUST be wired together — the CSRF
+///     middleware depends on the session middleware having injected the
+///     `ClassicSession` into request extensions.
+pub fn router(state: AppState) -> Router<AppState> {
     Router::new()
         .route("/classic", get(index_redirect))
         .route("/classic/", get(index_redirect))
@@ -102,12 +121,57 @@ pub fn router() -> Router<AppState> {
         // a ClassicSession); the POST handler does its own double-submit-
         // cookie CSRF check.
         .route("/classic/login", get(login::get_login).post(login::post_login))
+        // Added (TMAIL-360): authenticated sub-router for state-changing
+        // POST endpoints that need a verified session AND CSRF protection.
+        // Logout is the first inhabitant; inbox/compose/settings join in
+        // follow-up tasks under driver TMAIL-299.
+        .merge(authenticated_router(state))
         // PURPOSE: explicit catch-all so the 404 page only fires for paths
         // under `/classic/...`. The `{*rest}` wildcard captures any remaining
         // path segments — child tasks (login, folder, message, compose) will
         // add specific routes ABOVE this one and axum's most-specific-match
         // semantics route correctly.
         .route("/classic/{*rest}", get(not_found))
+}
+
+/// Authenticated `/classic/*` sub-router. Every route mounted here inherits:
+///
+///   1. `classic_session_middleware` — validates the `tasmail_classic_sid`
+///      cookie's HMAC signature, resolves it to a live `classic_sessions`
+///      row, loads the owning `Mailbox`, and injects both the row and a
+///      `Claims` struct into request extensions. Bounces to `/classic/login`
+///      on any failure.
+///   2. `classic_csrf_middleware` — for state-changing methods (POST / PUT /
+///      PATCH / DELETE), pulls the `_csrf` form field out of the body and
+///      constant-time-compares it against the row's `csrf_token`. Renders
+///      the 403 HTML retry page on mismatch.
+///
+/// Layer order matters: tower layers run bottom-up on the request, so we
+/// add the CSRF middleware FIRST (inner) and the session middleware SECOND
+/// (outer/runs first). That guarantees the session is in extensions before
+/// the CSRF middleware needs to read it — the same pattern `auth_middleware`
+/// → `rls_context_middleware` uses on the `/api` side.
+fn authenticated_router(state: AppState) -> Router<AppState> {
+    Router::new()
+        // Added (TMAIL-360): logout is intentionally POST-only — see the
+        // module-level comment on `handlers::classic::logout` for the CSRF
+        // rationale. The route 405s on GET, which is the right behaviour
+        // (no GET handler means an `<img src="/classic/logout">` exploit
+        // can't even kick off the chain).
+        .route("/classic/logout", post(logout::post_logout))
+        // Inner layer: CSRF check on state-changing methods. Runs AFTER
+        // the session middleware on the request side, so the session row
+        // (carrying the expected token) is in extensions when it executes.
+        .layer(axum_middleware::from_fn(
+            crate::middleware::classic_csrf::classic_csrf_middleware,
+        ))
+        // Outer layer: cookie → session resolution. Bounces to login on
+        // any failure so downstream layers + handlers never have to
+        // worry about an unauthenticated request.
+        .layer(axum_middleware::from_fn_with_state(
+            state,
+            crate::middleware::classic_session::classic_session_middleware,
+        ))
 }
 
 /// GET `/classic/` — redirect based on session presence.
@@ -397,6 +461,82 @@ mod tests {
             body.contains("class=\"brand-at\""),
             "wordmark @-glyph must carry the brand-at class so it picks up \
              the teal token from the inline stylesheet"
+        );
+    }
+
+    // ----- TMAIL-360: logout_form block contract -----
+    //
+    // base.html declares `{% block logout_form %}{% endblock %}` so
+    // authenticated child templates (inbox, compose, settings...) can fill
+    // it without touching base.html. The block sits inside the primary nav
+    // so the logout button travels every page that extends base.html.
+    // These tests lock down two invariants:
+    //   1. Unauthenticated pages (login, csrf_error, 404) MUST NOT render
+    //      a logout form — they don't override the block, so it stays empty.
+    //   2. The nav structure includes the slot at the right position so a
+    //      future override actually places the form inside the nav, not
+    //      adrift in the page.
+
+    #[test]
+    fn base_layout_renders_no_logout_form_when_block_not_overridden() {
+        // NotFoundTemplate (and login + csrf_error) don't override
+        // logout_form. The rendered output MUST therefore contain no
+        // POST form pointing at /classic/logout. A regression here would
+        // mean an unauthenticated user sees a Sign-out button on the
+        // login page, which is at best confusing and at worst a way to
+        // spam invalid logout submissions.
+        let body = render_404("/classic/x");
+        assert!(
+            !body.contains("action=\"/classic/logout\""),
+            "unauthenticated template MUST NOT render a logout form: {body}"
+        );
+        assert!(
+            !body.contains(">Sign out<"),
+            "unauthenticated template MUST NOT render a Sign-out button: {body}"
+        );
+    }
+
+    #[test]
+    fn base_layout_nav_carries_a_logout_form_slot() {
+        // The slot itself is invisible in the rendered HTML (Askama
+        // template blocks compile to nothing when not overridden), but
+        // the CSS class `site-nav-end` we attached to the surrounding
+        // <li> MUST be present so the future override lands inside the
+        // nav at the right position. If a refactor accidentally drops
+        // the <li class="site-nav-end">, child templates will start
+        // rendering the form outside the nav landmark.
+        let body = render_404("/classic/x");
+        assert!(
+            body.contains("class=\"site-nav-end\""),
+            "logout-form slot wrapper <li class=\"site-nav-end\"> missing \
+             from base.html nav: {body}"
+        );
+        // Pin the slot inside the nav element, not floating outside it.
+        let nav_open = body.find("<nav").expect("nav landmark present");
+        let nav_close = body[nav_open..]
+            .find("</nav>")
+            .map(|rel| nav_open + rel)
+            .expect("nav closing tag present");
+        let slot_at = body
+            .find("class=\"site-nav-end\"")
+            .expect("slot wrapper present");
+        assert!(
+            slot_at > nav_open && slot_at < nav_close,
+            "logout-form slot must sit INSIDE the <nav> element, not outside it"
+        );
+    }
+
+    #[test]
+    fn base_layout_styles_include_logout_button_rules() {
+        // The Sign-out button uses `.site-nav-end button` to match the
+        // visual weight of nav links (not a primary action). If the
+        // styles get dropped, the rendered button looks like a primary
+        // CTA on every page, which over-weights a destructive action.
+        let body = render_404("/classic/x");
+        assert!(
+            body.contains(".site-nav-end button"),
+            "base layout must declare the .site-nav-end button styling so \
+             the logout form blends with surrounding nav links: {body}"
         );
     }
 

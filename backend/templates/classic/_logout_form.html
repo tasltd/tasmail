@@ -1,0 +1,26 @@
+{# TMAIL-360 — Reusable logout form partial.
+
+   Authenticated child templates extend base.html and override the
+   `logout_form` block by `include`-ing this file. Doing it via include
+   (rather than duplicating the markup) means a future change to the form
+   layout — translation, additional hidden field, alternative copy —
+   fans out from one place.
+
+   Required template context:
+     * `csrf_token: String` — the per-session token from
+       `ClassicSession::csrf_token`, validated by classic_csrf_middleware
+       on POST. Mandatory; an empty value would 403 every logout.
+
+   Usage in an authenticated template:
+
+       {% extends "classic/base.html" %}
+       {% block logout_form %}{% include "classic/_logout_form.html" %}{% endblock %}
+       {% block content %} ... {% endblock %}
+
+   The form deliberately uses the same `_csrf` field name as the rest of
+   the Classic UI (the canonical `CSRF_FIELD_NAME` constant) so adding a
+   new form anywhere doesn't introduce a naming variation. #}
+<form method="post" action="/classic/logout">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <button type="submit" aria-label="Sign out of TASMail Classic">Sign out</button>
+</form>

@@ -99,6 +99,31 @@
       color: var(--tm-link);
       text-decoration: underline;
     }
+    /* TMAIL-360: logout form lives inside the primary nav (right-aligned)
+       so it travels everywhere base.html does. The button mimics the same
+       visual weight as a nav link so it doesn't look like a primary action
+       on every page — logout is destructive but routine, not loud. */
+    .site-nav-end {
+      margin-left: auto;
+    }
+    .site-nav-end form {
+      display: inline;
+      margin: 0;
+    }
+    .site-nav-end button {
+      display: inline-block;
+      padding: 0.25rem 0.5rem;
+      margin: 0;
+      background: transparent;
+      color: var(--tm-link);
+      border: 1px solid transparent;
+      border-radius: 3px;
+      text-decoration: underline;
+      cursor: pointer;
+      font: inherit;
+    }
+    .site-nav-end button:hover { text-decoration-thickness: 2px; }
+    .site-nav-end button:focus { outline: 3px solid var(--tm-focus-ring); outline-offset: 1px; }
     main {
       display: block;                 /* IE11 floor */
       max-width: 60rem;
@@ -234,6 +259,18 @@
       <li><a href="/classic/compose">Compose</a></li>
       <li><a href="/classic/search">Search</a></li>
       <li><a href="/classic/settings/signature">Settings</a></li>
+      {# TMAIL-360 — Logout form. Lives in the primary nav so it travels
+         every page that extends base.html. The block is empty by default
+         so unauthenticated pages (login, csrf_error, 404) render no
+         button. Authenticated child templates (inbox/compose/settings —
+         arriving in TMAIL-362+) override `logout_form` to render the
+         actual POST form, passing the session's csrf_token through.
+
+         The form is intentionally NOT a GET link — a GET endpoint would
+         let a hostile email's <img src> tag silently sign the user out.
+         POST + the session-scoped `_csrf` token (validated by
+         classic_csrf_middleware) is the OWASP-recommended shape. #}
+      <li class="site-nav-end">{% block logout_form %}{% endblock %}</li>
     </ul>
   </nav>
 

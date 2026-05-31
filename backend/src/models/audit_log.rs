@@ -73,7 +73,18 @@ impl AuditLog {
 
         if let Some(mid) = filter.mailbox_id {
             params.push(mid.to_string());
-            query.push_str(&format!(" AND mailbox_id = ${}", params.len()));
+            // Fix (TMAIL-360 follow-up): explicit `::uuid` cast on the
+            // bound parameter. The `params: Vec<String>` bind path sends
+            // every value as text — without the cast, the planner has to
+            // resolve a TEXT-vs-UUID comparison against the typed
+            // `mailbox_id` column and sqlx-postgres rejects the prepared
+            // statement with `column "mailbox_id" is of type uuid but
+            // expression is of type text`. The `::timestamptz` casts on
+            // the date params below are there for the same reason; this
+            // change extends the same defensive pattern to the UUID
+            // filter so the Modern UI's mailbox-id-scoped queries don't
+            // 500 against a strict driver.
+            query.push_str(&format!(" AND mailbox_id = ${}::uuid", params.len()));
         }
         if let Some(act) = filter.action.as_deref() {
             if act.ends_with('.') {
@@ -114,7 +125,10 @@ impl AuditLog {
 
         if let Some(mid) = filter.mailbox_id {
             params.push(mid.to_string());
-            query.push_str(&format!(" AND mailbox_id = ${}", params.len()));
+            // Fix (TMAIL-360 follow-up): same `::uuid` cast as
+            // `build_filtered_query` for the same reason — text-binding
+            // path needs an explicit cast to satisfy the typed column.
+            query.push_str(&format!(" AND mailbox_id = ${}::uuid", params.len()));
         }
         if let Some(act) = filter.action.as_deref() {
             if act.ends_with('.') {
