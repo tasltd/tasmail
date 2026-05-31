@@ -337,14 +337,31 @@ pub async fn post_bulk(
         );
     };
 
+    // Added (TMAIL-372): `action=move` is dispatched out to the move
+    // handler so the bulk-action bar's Move… button hits the same /bulk
+    // endpoint as Mark read / Mark unread / Star / Unstar. The move handler
+    // owns target validation + the IMAP COPY+STORE+EXPUNGE call.
+    if action_raw == "move" {
+        return super::move_to::handle_bulk_move(
+            state,
+            claims,
+            session,
+            csp_nonce,
+            folder,
+            pairs,
+        )
+        .await;
+    }
+
     let Some(action) = MarkAction::from_bulk(&action_raw) else {
-        // Move / Delete bulk actions live on this same endpoint but ship
-        // under separate tasks (P1 #18 / #29). Today they 400 via the
-        // friendly page so the user gets a hint instead of silence.
+        // Delete bulk action lives on this same endpoint but ships under a
+        // separate task (P1 #29). Today it 400s via the friendly page so
+        // the user gets a hint instead of silence.
         return render_flag_error(
             &format!(
                 "The bulk action {action_raw:?} isn't wired up yet. Mark read, \
-                 Mark unread, Star and Unstar are the only actions available right now."
+                 Mark unread, Star, Unstar and Move are the only actions \
+                 available right now."
             ),
             &folder_href,
             &session.csrf_token,

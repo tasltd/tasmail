@@ -147,6 +147,17 @@ pub struct FolderQuery {
     /// if missing or unparsable so a malformed bookmark still renders.
     #[serde(default)]
     pub count: Option<u32>,
+    /// Added (TMAIL-372): `?moved=1&target=<name>` set by the move handler
+    /// after a successful single OR bulk move. Drives the "Moved N
+    /// message(s) to <target>" confirmation banner. Uses the same
+    /// truthy-value match as `sent` so `?moved=true` would also light it.
+    #[serde(default)]
+    pub moved: Option<String>,
+    /// Added (TMAIL-372): destination folder name echoed in the moved
+    /// banner. Optional — defaults to a generic "another folder" wording
+    /// when missing so a forged URL still renders sensibly.
+    #[serde(default)]
+    pub target: Option<String>,
 }
 
 impl FolderQuery {
@@ -171,6 +182,36 @@ impl FolderQuery {
             Some(v) => matches!(v, "1" | "true" | "yes"),
             None => false,
         }
+    }
+
+    /// Added (TMAIL-372): Resolve `?moved=1&target=<name>&count=N` into a
+    /// `MovedBanner` for the template. Returns `None` when `moved` is
+    /// missing / falsy so the banner stays hidden on stale bookmarks. The
+    /// `target` name is taken verbatim from the query string — the move
+    /// handler already validated it was a real folder before issuing the
+    /// redirect, and Askama auto-escaping on the .html extension HTML-
+    /// escapes the value at render time so a forged `?target=<script>`
+    /// can't XSS the banner. `count` is clamped to MAX_BULK_UIDS for the
+    /// same reason the `marked` banner clamps its count.
+    fn moved_banner(&self) -> Option<MovedBanner> {
+        let truthy = match self.moved.as_deref() {
+            Some(v) => matches!(v, "1" | "true" | "yes"),
+            None => false,
+        };
+        if !truthy {
+            return None;
+        }
+        let count = self
+            .count
+            .unwrap_or(0)
+            .min(super::flag::MAX_BULK_UIDS as u32);
+        let target = self
+            .target
+            .as_deref()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "another folder".to_string());
+        Some(MovedBanner { target, count })
     }
 
     /// Added (TMAIL-370): Resolve the `?marked=…` value to a (key, count)
@@ -221,6 +262,14 @@ pub enum MarkedDirection {
 /// distinguish the direction AND surface a count.
 pub struct MarkedBanner {
     pub action: MarkedDirection,
+    pub count: u32,
+}
+
+/// Added (TMAIL-372): "Moved N message(s) to <target>" banner view-model.
+/// `target` is the destination folder name as the user-visible string —
+/// auto-escaped by Askama at render time so it's safe to surface verbatim.
+pub struct MovedBanner {
+    pub target: String,
     pub count: u32,
 }
 
@@ -348,6 +397,16 @@ pub struct FolderTemplate {
     /// one-time confirmation banner above the message table. `None` means
     /// no banner — the standard case on a fresh folder open.
     pub marked_banner: Option<MarkedBanner>,
+    /// Added (TMAIL-372): present when the user landed here via the move
+    /// POST-Redirect-Get with `?moved=1&target=<name>&count=N`. Drives the
+    /// "Moved N message(s) to <target>" confirmation banner.
+    pub moved_banner: Option<MovedBanner>,
+    /// Added (TMAIL-372): pre-filtered list of folder names the bulk-action
+    /// bar's Move… dropdown renders as `<option>` entries. Excludes the
+    /// current folder + every forbidden virtual mailbox so the dropdown
+    /// can't even surface an invalid option. Empty = disable the Move…
+    /// button (no valid targets to move INTO from this folder).
+    pub move_targets: Vec<String>,
     /// Per-request CSP nonce. Required by base.html (TMAIL-356).
     pub csp_nonce: String,
 }
@@ -510,6 +569,15 @@ pub async fn get_folder(
 
     // 3) Build template fields.
     let folder_href = encode_folder_segment(&folder);
+    // Added (TMAIL-372): pre-filter the bulk-action Move… dropdown options
+    // from the same `folders_list` the sidebar uses. Dropping the current
+    // folder + every forbidden virtual mailbox here keeps the form free of
+    // options the move handler would reject anyway. Clone the names since
+    // `build_sidebar` consumes the Vec.
+    let move_targets = super::move_to::build_target_options(
+        &folders_list.iter().map(|f| f.name.clone()).collect::<Vec<_>>(),
+        &folder,
+    );
     let sidebar = build_sidebar(folders_list, &folder);
     let rows_on_page = envelopes.len() as u32;
     let (total_pages, first_index, last_index) = pagination_window(total, page, rows_on_page);
@@ -549,6 +617,8 @@ pub async fn get_folder(
         sent_banner: query.sent_banner(),
         deleted_banner: query.deleted_banner(),
         marked_banner: query.marked_banner(),
+        moved_banner: query.moved_banner(),
+        move_targets,
         csp_nonce: csp_nonce.into_string(),
     };
 
@@ -611,6 +681,15 @@ mod tests {
             sent_banner: false,
             deleted_banner: false,
             marked_banner: None,
+            moved_banner: None,
+            // Fixture surfaces a realistic 3-folder dropdown so the
+            // template's render-options branch is the exercised path; the
+            // empty-targets branch is covered by its own dedicated test.
+            move_targets: vec![
+                "Drafts".to_string(),
+                "Archive".to_string(),
+                "Trash".to_string(),
+            ],
             csp_nonce: "test-nonce-fixed".to_string(),
         }
     }
@@ -794,6 +873,10 @@ mod tests {
             deleted: None,
             marked: None,
             count: None,
+            // Added (TMAIL-372): both default to None so the moved banner
+            // stays hidden by default. Tests opt in by overriding.
+            moved: None,
+            target: None,
         }
     }
 
@@ -1160,12 +1243,16 @@ mod tests {
             !unstar_tag.contains("disabled"),
             "Unstar button must NOT be disabled: {unstar_tag}"
         );
-        // Move + Delete remain placeholders, must STILL be disabled.
+        // Added (TMAIL-372): Move is now live when at least one move target
+        // exists (the fresh_template fixture populates a 3-folder dropdown).
+        // The button + the sibling <select id="bulk-move-target"> must both
+        // render WITHOUT a `disabled` attribute.
         let move_tag = extract_button_tag(&body, "move");
         assert!(
-            move_tag.contains("disabled"),
-            "Move button must remain disabled until P1 #18 lands: {move_tag}"
+            !move_tag.contains("disabled"),
+            "Move button must NOT be disabled when targets exist: {move_tag}"
         );
+        // Delete remains a placeholder until P1 #29 lands.
         let delete_tag = extract_button_tag(&body, "delete");
         assert!(
             delete_tag.contains("disabled"),
@@ -1644,5 +1731,232 @@ mod tests {
         // Sender/Subject/Date column headers are real <th scope="col">.
         let th_count = body.matches("<th scope=\"col\"").count();
         assert!(th_count >= 3, "expected at least 3 <th scope=col>: {body}");
+    }
+
+    // ----- TMAIL-372: moved banner -----
+
+    #[test]
+    fn folder_query_moved_banner_off_by_default() {
+        // No `?moved=` in URL → no banner. The standard case on a fresh
+        // folder open.
+        assert!(empty_query().moved_banner().is_none());
+    }
+
+    #[test]
+    fn folder_query_moved_banner_on_for_truthy_values() {
+        for truthy in ["1", "true", "yes"] {
+            let q = FolderQuery {
+                moved: Some(truthy.to_string()),
+                target: Some("Archive".to_string()),
+                count: Some(3),
+                ..empty_query()
+            };
+            let banner = q
+                .moved_banner()
+                .unwrap_or_else(|| panic!("moved={truthy:?} should produce a banner"));
+            assert_eq!(banner.target, "Archive");
+            assert_eq!(banner.count, 3);
+        }
+    }
+
+    #[test]
+    fn folder_query_moved_banner_off_for_other_values() {
+        // Non-truthy values should leave the banner hidden so a forged
+        // `?moved=garbage` doesn't accidentally render a confirmation.
+        for falsy in ["", "0", "false", "no", "off", "garbage"] {
+            let q = FolderQuery {
+                moved: Some(falsy.to_string()),
+                ..empty_query()
+            };
+            assert!(
+                q.moved_banner().is_none(),
+                "moved={falsy:?} should NOT produce a banner"
+            );
+        }
+    }
+
+    #[test]
+    fn folder_query_moved_banner_defaults_target_when_missing() {
+        // A successful move always emits ?target=… but a forged URL might
+        // omit it. The banner should still render with generic wording
+        // rather than a confusing empty "Moved 3 messages to ." sentence.
+        let q = FolderQuery {
+            moved: Some("1".to_string()),
+            target: None,
+            count: Some(3),
+            ..empty_query()
+        };
+        let banner = q.moved_banner().expect("banner present");
+        assert_eq!(banner.target, "another folder");
+        assert_eq!(banner.count, 3);
+    }
+
+    #[test]
+    fn folder_query_moved_banner_clamps_inflated_count() {
+        // A forged URL like ?moved=1&target=Archive&count=999999 should
+        // produce a sensible banner — clamped at MAX_BULK_UIDS so the
+        // wording doesn't say "Moved 999999 messages".
+        let q = FolderQuery {
+            moved: Some("1".to_string()),
+            target: Some("Archive".to_string()),
+            count: Some(super::super::flag::MAX_BULK_UIDS as u32 + 50),
+            ..empty_query()
+        };
+        let banner = q.moved_banner().expect("banner present");
+        assert_eq!(banner.count, super::super::flag::MAX_BULK_UIDS as u32);
+    }
+
+    #[test]
+    fn folder_query_moved_banner_treats_whitespace_only_target_as_missing() {
+        // A `?moved=1&target=%20%20` (whitespace only) should fall back to
+        // the generic wording rather than rendering "Moved 1 message to  ."
+        let q = FolderQuery {
+            moved: Some("1".to_string()),
+            target: Some("   ".to_string()),
+            ..empty_query()
+        };
+        let banner = q.moved_banner().expect("banner present");
+        assert_eq!(banner.target, "another folder");
+    }
+
+    #[test]
+    fn folder_template_renders_moved_banner_when_set() {
+        // After a successful move-to-folder POST the handler 303s with
+        // ?moved=1&target=Archive&count=N; the banner must surface the
+        // count + the target so the user can confirm where the messages
+        // went without clicking back into the destination folder.
+        let mut t = fresh_template();
+        t.moved_banner = Some(MovedBanner {
+            target: "Archive".to_string(),
+            count: 3,
+        });
+        let body = t.render().expect("template renders");
+        assert!(
+            body.contains("alert-success"),
+            "moved banner must use the success alert class: {body}"
+        );
+        assert!(
+            body.contains("Moved 3 messages to Archive"),
+            "moved banner copy missing: {body}"
+        );
+    }
+
+    #[test]
+    fn folder_template_singularises_moved_banner_for_one_message() {
+        // "Moved 1 messages" reads weirdly — the template's `{% if count !=
+        // 1 %}s{% endif %}` must drop the trailing s for the single case.
+        let mut t = fresh_template();
+        t.moved_banner = Some(MovedBanner {
+            target: "Archive".to_string(),
+            count: 1,
+        });
+        let body = t.render().expect("template renders");
+        assert!(
+            body.contains("Moved 1 message to Archive"),
+            "moved banner must use singular wording for count = 1: {body}"
+        );
+        assert!(
+            !body.contains("Moved 1 messages to Archive"),
+            "moved banner must NOT pluralise for count = 1: {body}"
+        );
+    }
+
+    #[test]
+    fn folder_template_omits_moved_banner_when_none() {
+        // fresh_template() has moved_banner = None. The banner must NOT
+        // render on a regular folder open — a stray "Moved 0 messages" on
+        // a clean load would be misleading.
+        let body = fresh_template().render().expect("template renders");
+        assert!(
+            !body.contains("Moved "),
+            "moved banner must NOT render when moved_banner is None: {body}"
+        );
+    }
+
+    #[test]
+    fn folder_template_html_escapes_moved_banner_target() {
+        // Defence in depth — the target comes off the query string. Even
+        // though the move handler validated it as a real folder before
+        // redirecting, a forged URL could still surface a hostile string
+        // here. Askama auto-escapes for `.html` by default; lock that
+        // behaviour in.
+        let mut t = fresh_template();
+        t.moved_banner = Some(MovedBanner {
+            target: "<script>alert(1)</script>".to_string(),
+            count: 1,
+        });
+        let body = t.render().expect("template renders");
+        assert!(!body.contains("<script>alert(1)</script>"));
+        assert!(
+            body.contains("&#60;script&#62;") || body.contains("&lt;script&gt;"),
+            "moved banner target must be HTML-escaped: {body}"
+        );
+    }
+
+    // ----- TMAIL-372: bulk-action Move dropdown -----
+
+    #[test]
+    fn folder_template_renders_move_dropdown_when_targets_populated() {
+        // The fresh_template fixture surfaces 3 targets (Drafts, Archive,
+        // Trash). The bulk-action form must render the <select> with
+        // those options + an active (non-disabled) Move button.
+        let body = fresh_template().render().expect("template renders");
+        assert!(
+            body.contains("id=\"bulk-move-target\""),
+            "bulk move <select> missing: {body}"
+        );
+        assert!(
+            body.contains("name=\"target\""),
+            "bulk move <select> must carry name=\"target\": {body}"
+        );
+        for name in ["Drafts", "Archive", "Trash"] {
+            assert!(
+                body.contains(&format!("<option value=\"{name}\">{name}</option>")),
+                "target {name:?} option missing from bulk dropdown: {body}"
+            );
+        }
+        // The Move button must NOT be disabled when targets exist.
+        let move_tag = extract_button_tag(&body, "move");
+        assert!(
+            !move_tag.contains("disabled"),
+            "Move button must NOT be disabled when targets exist: {move_tag}"
+        );
+    }
+
+    #[test]
+    fn folder_template_disables_move_dropdown_when_no_targets() {
+        // Edge case — a fresh account with only INBOX or a folder that's
+        // already in every other "real" folder. The dropdown + button
+        // render as disabled so the user has a visible signal that the
+        // option list isn't broken; it's genuinely empty.
+        let mut t = fresh_template();
+        t.move_targets = vec![];
+        let body = t.render().expect("template renders");
+        assert!(
+            body.contains("No folders to move to"),
+            "empty-state copy missing on bulk dropdown: {body}"
+        );
+        // Move button must be disabled when no targets are available.
+        let move_tag = extract_button_tag(&body, "move");
+        assert!(
+            move_tag.contains("disabled"),
+            "Move button must be disabled when no targets exist: {move_tag}"
+        );
+    }
+
+    #[test]
+    fn folder_template_html_escapes_move_dropdown_target_name() {
+        // Defence in depth — folder names ultimately come from the IMAP
+        // server's LIST response. A hostile server (or a folder a user
+        // managed to create with HTML-special chars in the name) must
+        // surface in the dropdown as escaped text, not as raw markup.
+        let mut t = fresh_template();
+        t.move_targets = vec!["<script>x</script>".to_string()];
+        let body = t.render().expect("template renders");
+        assert!(!body.contains("<script>x</script>"));
+        assert!(
+            body.contains("&#60;script&#62;") || body.contains("&lt;script&gt;"),
+            "move-target name must be HTML-escaped in <option>: {body}"
+        );
     }
 }

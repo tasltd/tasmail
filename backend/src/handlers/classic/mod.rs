@@ -118,6 +118,14 @@ pub mod delete;
 // rest of P1 #29 (Bulk delete) will add more action branches.
 pub mod flag;
 
+// Added (TMAIL-372): POST /classic/folders/{folder}/messages/{uid}/move and
+// the move branch dispatched from `flag::post_bulk` — server-rendered
+// move-to-folder action for the Classic UI surface (P1 #18). Targets are
+// validated against the user's live IMAP folder list and a conservative
+// forbidden-virtual-folder allowlist (e.g. [Gmail]/All Mail) before the
+// COPY+EXPUNGE runs.
+pub mod move_to;
+
 // NAME: Session cookie name shared with the Classic UI auth handler that
 // lands in TMAIL-357 (P0 #3). The scaffold only needs to *detect* presence;
 // the cookie value is opaque here and validated later by the dedicated
@@ -292,6 +300,15 @@ fn authenticated_router(state: AppState) -> Router<AppState> {
         .route(
             "/classic/folders/{folder}/bulk",
             post(flag::post_bulk),
+        )
+        // Added (TMAIL-372): single-message move-to-folder endpoint. Bulk
+        // move is dispatched by `flag::post_bulk` on `action=move` and lives
+        // on the existing /bulk endpoint above; this route covers the
+        // message-read-view dropdown. Same CSRF + session layering as
+        // every other state-changing /classic POST.
+        .route(
+            "/classic/folders/{folder}/messages/{uid}/move",
+            post(move_to::post_message_move),
         )
         // Inner layer: CSRF check on state-changing methods. Runs AFTER
         // the session middleware on the request side, so the session row

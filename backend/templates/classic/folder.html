@@ -224,6 +224,19 @@
         </div>
       {% endif %}
 
+      {# TMAIL-372 — Success banner after the move POST-Redirect-Get
+         flow. Both the single-message and bulk endpoints redirect back
+         here with `?moved=1&target=<name>&count=N` after a successful
+         IMAP COPY+EXPUNGE; the banner echoes the destination so the user
+         can confirm at a glance where their messages went. Auto-escaping
+         on the .html extension HTML-escapes `target` so even a forged
+         URL can't XSS via the banner. #}
+      {% if let Some(banner) = moved_banner %}
+        <div class="alert alert-success" role="status">
+          <strong>Moved {{ banner.count }} message{% if banner.count != 1 %}s{% endif %} to {{ banner.target }}.</strong>
+        </div>
+      {% endif %}
+
       {# TMAIL-370 — Success banner after the flag POST-Redirect-Get
          flow. Both the single-message and bulk endpoints redirect here
          with `?marked=read|unread&count=N`. The count is rendered into
@@ -253,9 +266,13 @@
          + every checked `uid` value. The handler dispatches on the
          `action` field and 303-redirects back here with `?marked=…`
          driving the confirmation banner above the table.
-         Move… (P1 #18 / TMAIL-380) and Delete (P1 #29 follow-up) remain
-         disabled placeholders for the same one-handler-multiple-actions
-         pattern.
+
+         TMAIL-372: Move is now LIVE. The dropdown options come from
+         `move_targets` which the handler pre-filters (drops the current
+         folder + every forbidden virtual mailbox). The Move button
+         submits the form with `action=move` + `target=<name>` + every
+         checked uid; the bulk handler validates the target server-side
+         before issuing the IMAP COPY+STORE+EXPUNGE.
 
          TMAIL-369: id="classic-bulk-actions" lets the per-row checkboxes
          below reference this form via the `form=` attribute even though
@@ -272,9 +289,29 @@
            toggles `\Flagged` instead of `\Seen`. #}
         <button type="submit" name="action" value="star">Star</button>
         <button type="submit" name="action" value="unstar">Unstar</button>
-        <button type="submit" name="action" value="move" disabled>Move…</button>
+        {# TMAIL-372 — Move bulk action. The select sits IN this form so
+           the same submission carries `target` alongside `action=move`
+           and the checked `uid` values. When `move_targets` is empty
+           (e.g. only INBOX exists), render the select + button as
+           disabled so the user gets a visible signal that there's no
+           folder to move into. #}
+        <label class="visually-hidden" for="bulk-move-target">Move to folder</label>
+        {% if move_targets.is_empty() %}
+          <select id="bulk-move-target" name="target" disabled>
+            <option value="">No folders to move to</option>
+          </select>
+          <button type="submit" name="action" value="move" disabled>Move</button>
+        {% else %}
+          <select id="bulk-move-target" name="target" aria-label="Move to folder">
+            <option value="" selected disabled>Move to&hellip;</option>
+            {% for name in move_targets %}
+              <option value="{{ name }}">{{ name }}</option>
+            {% endfor %}
+          </select>
+          <button type="submit" name="action" value="move">Move</button>
+        {% endif %}
         <button type="submit" name="action" value="delete" disabled>Delete</button>
-        <span class="stub-note">Move and bulk-delete arrive in a follow-up release.</span>
+        <span class="stub-note">Bulk-delete arrives in a follow-up release.</span>
       </form>
 
       <table class="msg-table" aria-describedby="folder-heading">

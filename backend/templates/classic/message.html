@@ -320,16 +320,31 @@
       <button type="submit" class="secondary">Mark unread</button>
     </form>
 
-    {# P1 #18 — Move-to-folder dropdown. Placeholder until TMAIL-380
-       hydrates the option list from list_folders. #}
-    <form method="post" action="">
+    {# TMAIL-372 — Move-to-folder dropdown. Live action.
+       Renders one <option> per entry in `move_targets`, which the handler
+       pre-filters to drop the source folder + every forbidden virtual
+       mailbox (e.g. [Gmail]/All Mail). When the list is empty (fresh
+       account with no extra folders yet), the entire form renders as a
+       single disabled placeholder + a hint so the user knows where the
+       option list normally lives. POSTs to /messages/{uid}/move with
+       `target=<name>`; the handler validates the target server-side
+       against the live folder list before issuing the IMAP COPY+EXPUNGE. #}
+    <form method="post" action="{{ move_action }}">
       <input type="hidden" name="_csrf" value="{{ csrf_token }}">
       <label class="visually-hidden" for="move-target">Move to folder</label>
-      <select id="move-target" name="target_folder" disabled>
-        <option value="">Move to&hellip;</option>
-      </select>
+      {% if move_targets.is_empty() %}
+        <select id="move-target" name="target" disabled>
+          <option value="">No folders to move to</option>
+        </select>
+      {% else %}
+        <select id="move-target" name="target" required aria-label="Move to folder">
+          <option value="" selected disabled>Move to&hellip;</option>
+          {% for name in move_targets %}
+            <option value="{{ name }}">{{ name }}</option>
+          {% endfor %}
+        </select>
+        <button type="submit" class="secondary">Move</button>
+      {% endif %}
     </form>
-
-    <span class="stub-note">Star / Move arrive in a follow-up release.</span>
   </div>
 {% endblock %}

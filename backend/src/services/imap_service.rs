@@ -600,6 +600,78 @@ impl ImapService {
         Ok(())
     }
 
+    /// Added (TMAIL-372): Move a batch of UIDs from one folder to another in
+    /// a single IMAP session. Same shape as `move_message` but issues one
+    /// `UID COPY u1,u2,u3 dest` + one `UID STORE u1,u2,u3 +FLAGS (\Deleted)` +
+    /// one `EXPUNGE` instead of opening N sessions. Used by the Classic UI
+    /// bulk-action bar's Move action so a 25-row selection costs one round
+    /// trip rather than 25.
+    ///
+    /// `uids` may be empty — the method short-circuits to `Ok(())` so a
+    /// stray "Move" click with no checkboxes is a no-op rather than an
+    /// error. Same `[TRYCREATE]` retry-after-CREATE recovery as the
+    /// single-UID `move_message` (TMAIL-317).
+    pub async fn move_message_batch(
+        &self,
+        username: &str,
+        password: &str,
+        from_folder: &str,
+        uids: &[u32],
+        to_folder: &str,
+    ) -> Result<(), AppError> {
+        if uids.is_empty() {
+            return Ok(());
+        }
+
+        let mut session = self.connect(username, password).await?;
+
+        session
+            .select(from_folder)
+            .await
+            .map_err(|e| AppError::Imap(format!("SELECT failed: {}", e)))?;
+
+        // RFC 3501 §9 message-set: comma-separated UID list. Gmail, Dovecot,
+        // Stalwart, FastMail and Outlook all accept this form on UID COPY /
+        // UID STORE — same parser path the set_flag_batch helper uses.
+        let uid_set = uids
+            .iter()
+            .map(u32::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+
+        // COPY first; retry once after CREATE if it fails (TMAIL-317 carries
+        // through to the bulk path because the same Archive-folder-doesn't-
+        // exist-yet condition kicks in identically for a multi-UID copy).
+        if session.uid_copy(&uid_set, to_folder).await.is_err() {
+            let _ = session.create(to_folder).await;
+            session
+                .uid_copy(&uid_set, to_folder)
+                .await
+                .map_err(|e| AppError::Imap(format!("Batch COPY failed: {}", e)))?;
+        }
+
+        // Mark every source UID `\Deleted` in one STORE round-trip.
+        let _: Vec<_> = session
+            .uid_store(&uid_set, "+FLAGS (\\Deleted)")
+            .await
+            .map_err(|e| AppError::Imap(format!("Batch store failed: {}", e)))?
+            .try_collect()
+            .await
+            .unwrap_or_default();
+
+        // One EXPUNGE finalises every queued deletion at once.
+        session
+            .expunge()
+            .await
+            .map_err(|e| AppError::Imap(format!("EXPUNGE failed: {}", e)))?
+            .try_collect::<Vec<_>>()
+            .await
+            .ok();
+
+        let _ = session.logout().await;
+        Ok(())
+    }
+
     /// Delete a message (move to Trash or permanent delete)
     ///
     /// TMAIL-283: trash folder name is resolved via `self.trash_folder()` which

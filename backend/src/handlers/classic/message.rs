@@ -251,6 +251,18 @@ pub struct MessageTemplate {
     /// it reads "Star" and POSTs `mark=star`. Both forms hit the same
     /// `flag_action` endpoint above.
     pub is_starred: bool,
+    /// Added (TMAIL-372): POST action for the Move-to-folder form. Same
+    /// `/messages/{uid}/move` endpoint the bulk handler dispatches to via
+    /// `flag::post_bulk`. The template renders the dropdown only when
+    /// `move_targets` is non-empty.
+    pub move_action: String,
+    /// Added (TMAIL-372): pre-filtered list of folder names the user can
+    /// move THIS message into. Excludes the source folder and any
+    /// forbidden virtual mailboxes (see `move_to::FORBIDDEN_TARGET_PATTERNS`)
+    /// so the dropdown can't surface an invalid option in the first place.
+    /// Empty = render a disabled placeholder (e.g. fresh account with no
+    /// extra folders yet).
+    pub move_targets: Vec<String>,
     /// Session CSRF token threaded into every action form (Delete today,
     /// Star / Mark-unread / Move when those flip from placeholder to
     /// real). Also into the logout form partial.
@@ -302,6 +314,21 @@ pub async fn get_message(
         .get_message(&username, &password, &folder, uid)
         .await?;
 
+    // Added (TMAIL-372): also fetch the user's folder list so the read view
+    // can render the Move-to-folder dropdown options server-side (no JS).
+    // A LIST failure here shouldn't block the message render — fall back to
+    // an empty list (the template renders the disabled placeholder in that
+    // case) so a transient IMAP hiccup doesn't 500 the read view.
+    let folder_names: Vec<String> = imap_service
+        .list_folders(&username, &password)
+        .await
+        .map(|fs| fs.into_iter().map(|f| f.name).collect())
+        .unwrap_or_else(|e| {
+            tracing::warn!(error = ?e, "list_folders failed during classic message render");
+            Vec::new()
+        });
+    let move_targets = super::move_to::build_target_options(&folder_names, &folder);
+
     // 3) Build template view-model.
     let folder_href = urlencoding::encode(&folder).into_owned();
     let subject = full
@@ -333,6 +360,9 @@ pub async fn get_message(
     // no-op. The folder view's bulk-action bar covers the "mark read"
     // direction.
     let flag_action = format!("{}/flag", base);
+    // Added (TMAIL-372): per-message move endpoint — sibling of `/delete`
+    // and `/flag` so the URL layout stays consistent.
+    let move_action = format!("{}/move", base);
 
     let template = MessageTemplate {
         current_folder: folder,
@@ -351,6 +381,8 @@ pub async fn get_message(
         delete_action,
         flag_action,
         is_starred,
+        move_action,
+        move_targets,
         csrf_token: session.csrf_token.clone(),
         csp_nonce: csp_nonce.into_string(),
     };
@@ -400,6 +432,15 @@ mod tests {
             delete_action: "/classic/folders/INBOX/messages/42/delete".to_string(),
             flag_action: "/classic/folders/INBOX/messages/42/flag".to_string(),
             is_starred: false,
+            move_action: "/classic/folders/INBOX/messages/42/move".to_string(),
+            // Default fixture surfaces a typical 3-folder dropdown so the
+            // template's "render options" branch is the exercised path; the
+            // empty-targets branch is locked down by its own dedicated test.
+            move_targets: vec![
+                "Drafts".to_string(),
+                "Sent".to_string(),
+                "Archive".to_string(),
+            ],
             csrf_token: "test-csrf-token".to_string(),
             csp_nonce: "test-nonce-fixed".to_string(),
         }
@@ -730,22 +771,48 @@ mod tests {
     }
 
     #[test]
-    fn message_template_renders_disabled_placeholders_for_deferred_actions() {
-        // P1 placeholders — Move-to-folder dropdown only. Star (TMAIL-371)
-        // and Mark unread (TMAIL-370) have both been flipped from
-        // placeholder to LIVE, so they no longer carry the `disabled`
-        // attribute. The Move dropdown remains a placeholder until
-        // TMAIL-380 lands.
+    fn message_template_no_longer_renders_disabled_action_controls() {
+        // Updated for TMAIL-372 — Move-to-folder is now LIVE alongside
+        // Star (TMAIL-371) and Mark unread (TMAIL-370). When the fresh
+        // template fixture surfaces 3 targets, every action <button> and
+        // <select> in the action row must render WITHOUT the `disabled`
+        // attribute. The only remaining `disabled` attribute is the
+        // `<option value="" selected disabled>Move to…</option>`
+        // placeholder INSIDE the live select — that's the standard
+        // pattern for a required-select-an-option dropdown, not a
+        // deferred-action placeholder.
         let body = fresh_template().render().expect("template renders");
-        assert!(
-            body.contains("<select"),
-            "Move-to-folder <select> missing: {body}"
+        // Slice out the action row `<div class="msg-actions" …>` — the
+        // template's <style> block also references `.msg-actions` selectors
+        // that include the `disabled` pseudo-class, so a naive substring
+        // find on `"msg-actions"` would land in the CSS and trip the
+        // assertion. Look for the opening `<div` tag explicitly.
+        let actions_at = body
+            .find("<div class=\"msg-actions\"")
+            .expect("action row <div> missing");
+        let actions_end = body[actions_at..]
+            .find("</div>")
+            .map(|i| actions_at + i)
+            .unwrap_or(body.len());
+        let actions = &body[actions_at..actions_end];
+        // The select-prompt option counts as one expected `disabled`
+        // attribute (it's the "select a value" placeholder pattern, not a
+        // deferred-action placeholder). Slice it out before counting.
+        // The template source uses the HTML entity `&hellip;`, which is
+        // what shows up in the rendered output — not the Unicode `…`.
+        let actions_without_prompt = actions.replace(
+            "<option value=\"\" selected disabled>Move to&hellip;</option>",
+            "",
         );
-        // At least the Move-to-folder <select> remains disabled.
-        let disabled_count = body.matches("disabled").count();
         assert!(
-            disabled_count >= 1,
-            "expected at least 1 disabled control (Move): {body}"
+            !actions_without_prompt.contains("disabled"),
+            "no action control in the row should be disabled after TMAIL-372: {actions}"
+        );
+        // Move <select> must still render so the layout matches the
+        // gap-analysis spec.
+        assert!(
+            actions.contains("id=\"move-target\""),
+            "Move-to-folder <select> missing from action row: {actions}"
         );
     }
 
@@ -913,6 +980,90 @@ mod tests {
         assert!(
             body.contains("<title>Test subject"),
             "<title> must lead with the subject: {body}"
+        );
+    }
+
+    // ----- TMAIL-372: Move-to-folder dropdown -----
+
+    #[test]
+    fn message_template_renders_move_dropdown_when_targets_populated() {
+        // fresh_template() ships 3 targets (Drafts, Sent, Archive). The
+        // read-view action row must render the form with all three as
+        // <option> entries AND a live Submit button.
+        let body = fresh_template().render().expect("template renders");
+        assert!(
+            body.contains("id=\"move-target\""),
+            "move <select> missing: {body}"
+        );
+        assert!(
+            body.contains("name=\"target\""),
+            "move <select> must carry name=\"target\": {body}"
+        );
+        assert!(
+            body.contains("action=\"/classic/folders/INBOX/messages/42/move\""),
+            "move form must POST to the /move endpoint: {body}"
+        );
+        for name in ["Drafts", "Sent", "Archive"] {
+            assert!(
+                body.contains(&format!("<option value=\"{name}\">{name}</option>")),
+                "target {name:?} option missing from dropdown: {body}"
+            );
+        }
+        // The <select> must NOT be disabled when targets exist.
+        // Slice out the <select> opening tag and assert.
+        let select_at = body.find("id=\"move-target\"").expect("select renders");
+        let tag_start = body[..select_at].rfind("<select").expect("opening tag");
+        let tag_end = body[tag_start..]
+            .find('>')
+            .map(|i| tag_start + i + 1)
+            .expect("closing >");
+        let select_tag = &body[tag_start..tag_end];
+        assert!(
+            !select_tag.contains("disabled"),
+            "<select> must NOT be disabled when targets exist: {select_tag}"
+        );
+        // The CSRF token must thread through the form so the canonical
+        // middleware accepts the submission.
+        assert!(
+            body.contains("name=\"_csrf\" value=\"test-csrf-token\""),
+            "move form must carry the session csrf_token: {body}"
+        );
+    }
+
+    #[test]
+    fn message_template_disables_move_dropdown_when_no_targets() {
+        // Edge case — a fresh account on a server with only INBOX. The
+        // form renders as disabled placeholder + a hint so the layout
+        // doesn't shift when the user lands here for the first time.
+        let mut t = fresh_template();
+        t.move_targets = vec![];
+        let body = t.render().expect("template renders");
+        assert!(
+            body.contains("No folders to move to"),
+            "empty-state copy missing on read-view move dropdown: {body}"
+        );
+        // The submit button must NOT render when there's nothing to move
+        // to — clicking a disabled select isn't intuitive, and rendering
+        // an enabled submit on an empty form would just lead to a 400.
+        // (The {% else %} branch is the only one that emits <button>.)
+        assert!(
+            !body.contains(">Move<"),
+            "Move submit button must NOT render when no targets: {body}"
+        );
+    }
+
+    #[test]
+    fn message_template_html_escapes_move_target_option() {
+        // Defence in depth — IMAP folder names ultimately come from the
+        // server. Lock auto-escape on so a hostile name can't escape into
+        // raw markup inside the dropdown options.
+        let mut t = fresh_template();
+        t.move_targets = vec!["<img onerror=alert(1) src=x>".to_string()];
+        let body = t.render().expect("template renders");
+        assert!(!body.contains("<img onerror=alert(1)"));
+        assert!(
+            body.contains("&#60;img") || body.contains("&lt;img"),
+            "move-target name must be HTML-escaped in <option>: {body}"
         );
     }
 }
