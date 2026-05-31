@@ -31,6 +31,10 @@ use tasmail::router::create_router;
 use tasmail::services::auth_service::Claims;
 use tasmail::services::cache_service::CacheService;
 use tasmail::services::encryption::EncryptionService;
+// TMAIL-352: keep this in lock-step with the AppState struct in src/state.rs
+// — the queue_heartbeat field was added (TMAIL-310) but the test
+// initializer here wasn't updated, so this test file stopped compiling.
+use tasmail::services::queue_heartbeat::QueueHeartbeat;
 use tasmail::state::AppState;
 
 const TEST_JWT_SECRET: &str = "integration-test-secret-key-do-not-use-in-prod";
@@ -95,6 +99,8 @@ async fn try_build_app() -> Option<(axum::Router, PgPool)> {
         cache: CacheService::disabled(),
         encryption: EncryptionService::from_jwt_secret(TEST_JWT_SECRET),
         inner_router: inner_router_holder.clone(),
+        // TMAIL-352: required since TMAIL-310 added the queue heartbeat.
+        queue_heartbeat: QueueHeartbeat::new(),
     };
     let router = create_router(state);
     let _ = inner_router_holder.set(router.clone());
@@ -132,6 +138,8 @@ fn test_config(db_url: String) -> Config {
         },
         storage: StorageConfig::default(),
         metrics_token: None,
+        // TMAIL-352: loopback-only fallback when None (TMAIL-314).
+        metrics_allowed_ips: None,
         rspamd_url: None,
         rspamd_password: None,
         billing: None,

@@ -2,8 +2,13 @@
 // /api/admin/domains, and /api/quota. The previous mocks (mockMailboxes /
 // mockStats / hardcoded mydomain.com block) are gone — every number on this
 // page now comes from the live PostgreSQL database via the Axum backend.
+//
+// TMAIL-352: split into two tabs — Overview (mailboxes + domains + stats,
+// the historical view) and Audit log (paginated, filterable viewer for
+// /api/admin/audit-log). Tabs are URL-synced via the `?tab=` query param
+// so deep links and reloads keep the active pane.
 import { useMemo, useState } from 'react';
-import { Link } from 'react-router';
+import { Link, useSearchParams } from 'react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowLeft, Plus, Trash2, Users, HardDrive, Mail, Globe,
@@ -12,10 +17,18 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card } from '@/components/ui/card';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { adminUsersApi, type UserInfo, type CreateUserRequest } from '@/api/admin-users';
 import { adminDomainsApi, type Domain } from '@/api/admin-domains';
 import { quotaApi } from '@/api/quota';
 import { isAdmin } from '@/lib/jwt';
+import { AuditLogTab } from './AuditLogTab';
+import {
+  ADMIN_TAB_AUDIT,
+  ADMIN_TAB_OVERVIEW,
+  parseAdminTab,
+  type AdminTab,
+} from './audit-log-helpers';
 
 function bytesToGB(bytes: number): number {
   return Math.round((bytes / (1024 ** 3)) * 100) / 100;
@@ -24,6 +37,19 @@ function bytesToGB(bytes: number): number {
 export function AdminDashboard() {
   const qc = useQueryClient();
   const admin = isAdmin();
+  // TMAIL-352: URL-synced active tab so reloading /modern/admin?tab=audit-log
+  // keeps the audit pane open and deep links work.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab: AdminTab = parseAdminTab(searchParams.get('tab'));
+  const setActiveTab = (next: AdminTab) => {
+    const params = new URLSearchParams(searchParams);
+    if (next === ADMIN_TAB_OVERVIEW) {
+      params.delete('tab');
+    } else {
+      params.set('tab', next);
+    }
+    setSearchParams(params, { replace: true });
+  };
 
   const usersQ = useQuery<UserInfo[]>({
     queryKey: ['admin', 'users'],
@@ -145,6 +171,20 @@ export function AdminDashboard() {
             <div className="text-sm text-red-700 dark:text-red-300">{actionError}</div>
           </Card>
         )}
+
+        {/* TMAIL-352: Tabs shell. Overview keeps the historical Mailboxes
+            + Domains + stat-cards layout; Audit log is the new pane. */}
+        <Tabs
+          value={activeTab}
+          onValueChange={(v) => setActiveTab(parseAdminTab(v))}
+          className="space-y-4"
+        >
+          <TabsList>
+            <TabsTrigger value={ADMIN_TAB_OVERVIEW} data-testid="admin-tab-overview">Overview</TabsTrigger>
+            <TabsTrigger value={ADMIN_TAB_AUDIT} data-testid="admin-tab-audit-log">Audit log</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value={ADMIN_TAB_OVERVIEW} className="space-y-6">
 
         {/* Stats Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -410,6 +450,13 @@ export function AdminDashboard() {
             )}
           </div>
         </Card>
+
+          </TabsContent>
+
+          <TabsContent value={ADMIN_TAB_AUDIT}>
+            <AuditLogTab />
+          </TabsContent>
+        </Tabs>
       </div>
     </div>
   );
