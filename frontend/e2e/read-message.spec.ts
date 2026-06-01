@@ -58,6 +58,10 @@ const MESSAGE_LIST = {
   total: 2,
 };
 
+// Fix (TMAIL-425): the FullMessage API contract uses html_body / text_body
+// (see backend/src/services/imap_service.rs and frontend/src/types/mail.ts).
+// MessageView reads message.html_body / message.text_body, so the previous
+// body_html / body_text mock left the rendered .message-view__body empty.
 const MESSAGE_BODY = {
   uid: 101,
   subject: 'Welcome to TASMail',
@@ -66,8 +70,8 @@ const MESSAGE_BODY = {
   cc: [],
   date: '2026-05-20T08:30:00Z',
   flags: [],
-  body_html: '<p>Hello and welcome — this is the TASMail onboarding email.</p>',
-  body_text: 'Hello and welcome — this is the TASMail onboarding email.',
+  html_body: '<p>Hello and welcome — this is the TASMail onboarding email.</p>',
+  text_body: 'Hello and welcome — this is the TASMail onboarding email.',
   attachments: [],
 };
 
@@ -159,9 +163,12 @@ test.describe('Read message', () => {
     await expect(messageView).toBeVisible();
     await expect(messageView.locator('.message-view__subject')).toContainText('Welcome to TASMail');
     await expect(messageView.locator('.message-view__from')).toContainText('team@techatscale.io');
-    await expect(messageView.locator('.message-view__html, .message-view__body')).toContainText(
-      'onboarding email',
-    );
+    // Fix (TMAIL-425): .message-view__html is nested inside .message-view__body,
+    // so the comma-selector matches 2 elements and trips Playwright's strict
+    // mode. Use .first() — both wrappers contain the same body text.
+    await expect(
+      messageView.locator('.message-view__html, .message-view__body').first(),
+    ).toContainText('onboarding email');
 
     await takeScreenshot(page, 'read/message-opened');
   });

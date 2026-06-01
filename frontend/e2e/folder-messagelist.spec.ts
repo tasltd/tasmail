@@ -293,7 +293,10 @@ test.describe('TMAIL-283 Folder tree + message list sweep', () => {
 
     await row.click();
     const messageView = page.locator('.message-view');
-    await expect(messageView).toBeVisible();
+    // Fix (TMAIL-425): MessageView only renders its .message-view root once
+    // useCurrentMessage() resolves the real IMAP body — under broader-batch
+    // load that fetch can comfortably exceed the default 5s expect timeout.
+    await expect(messageView).toBeVisible({ timeout: 15_000 });
     await takeScreenshot(page, 'folder-messagelist/message-opened');
 
     // API cross-check: this UID's flags now include \\Seen.
@@ -319,7 +322,8 @@ test.describe('TMAIL-283 Folder tree + message list sweep', () => {
     const subject = await firstRow.locator('.message-row__subject').innerText();
     await firstRow.click();
     const messageView = page.locator('.message-view');
-    await expect(messageView).toBeVisible();
+    // Fix (TMAIL-425): real IMAP body fetch can take >5s under batch load.
+    await expect(messageView).toBeVisible({ timeout: 15_000 });
 
     // API state before — pull the UID out of the listing then GET flags.
     const list = (await (await api.get('/api/folders/INBOX/messages?page=0&page_size=20', {
