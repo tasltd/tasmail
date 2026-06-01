@@ -77,6 +77,51 @@ test.beforeEach(async ({ page }) => {
       });
     }
   });
+
+  // Fix (TMAIL-406): mock the FirstLoginTour preference endpoint (TMAIL-401).
+  // AppShell mounts FirstLoginTour for every /app render and the component
+  // fires GET /api/me/preferences/first-login-tour-seen on mount. Without a
+  // mock the request hits the live backend with the fake mock-access-token,
+  // returns 401, apiClient's refresh chain also 401s (mock-refresh-token is
+  // invalid), and the SPA does window.location.href='/login' — which is what
+  // bounces the compose spec mid-test. Returning seen:true keeps the tour from
+  // rendering AND short-circuits the PATCH path.
+  await page.route('**/api/me/preferences/first-login-tour-seen', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ seen: true }),
+    });
+  });
+
+  // Fix (TMAIL-406): defensive mock for the token refresh endpoint. If any
+  // other unmocked endpoint 401s the apiClient will hit /api/auth/refresh
+  // before redirecting — stub it out so a missed mock degrades to a no-op
+  // instead of bouncing the whole test to /login.
+  await page.route('**/api/auth/refresh', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        access_token: 'mock-access-token',
+        refresh_token: 'mock-refresh-token',
+      }),
+    });
+  });
+
+  // Fix (TMAIL-406): mock contacts autocomplete. RecipientAutocomplete (used
+  // by the composer's To / Cc fields) fires GET /api/contacts?q=... once the
+  // user starts typing. Unmocked it 401s and feeds into the same bounce chain.
+  // NOTE: regex (not glob) so we don't also intercept Vite's dev-served source
+  // module at /src/api/contacts.ts — `**/api/contacts*` would match both and
+  // corrupt the dynamic import that lazy-loads the composer.
+  await page.route(/\/api\/contacts(\?|$)/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([]),
+    });
+  });
 });
 
 test.describe('Email Composer', () => {
@@ -246,30 +291,34 @@ test.describe('Email Composer', () => {
 
     // Added: Open composer via sidebar button
     await page.locator('.sidebar .btn--compose').click();
-    await page.waitForTimeout(500);
+
+    // Fix (TMAIL-406): wait for the Composer's lazy-loaded chunk to actually
+    // mount before interacting. Composer is React.lazy() in AppShell so the
+    // chunk download + module init takes longer than the previous 500ms
+    // sleep — the To input is the first DOM signal that Composer rendered.
+    const toInput = page.locator('input[placeholder*="recipient"], input[placeholder*="To"], input[placeholder*="to"]').first();
+    await expect(toInput).toBeVisible({ timeout: 15_000 });
 
     await takeScreenshot(page, 'compose/spa-validation-composer-open');
 
     // Added: Fill fields to trigger auto-save draft
-    const toInput = page.locator('input[placeholder*="To"], input[placeholder*="to"], input[placeholder*="recipient"]').first();
-    if (await toInput.isVisible()) {
-      await toInput.fill('test@example.com');
-    }
+    await toInput.fill('test@example.com');
 
     const subjectInput = page.locator('input[placeholder*="Subject"], input[placeholder*="subject"]').first();
-    if (await subjectInput.isVisible()) {
-      await subjectInput.fill('SPA Validation Test');
-    }
+    await expect(subjectInput).toBeVisible();
+    await subjectInput.fill('SPA Validation Test');
 
     await takeScreenshot(page, 'compose/spa-validation-fields-filled');
 
-    // Added: Click Send button to trigger the send API call
+    // Fix (TMAIL-406): explicitly wait for the Send button before clicking.
+    // The old `if (await sendBtn.isVisible())` was a no-wait check that raced
+    // against Suspense fallback and silently skipped the click — leaving
+    // sendCalled === false even when the composer was about to render.
     const sendBtn = page.locator('button', { hasText: /send/i }).first();
-    if (await sendBtn.isVisible()) {
-      await sendBtn.click();
-      // NOTE: Wait briefly for API call to complete
-      await page.waitForTimeout(1000);
-    }
+    await expect(sendBtn).toBeVisible();
+    await sendBtn.click();
+    // NOTE: Wait briefly for API call to complete
+    await page.waitForTimeout(1000);
 
     await takeScreenshot(page, 'compose/spa-validation-after-send');
 
