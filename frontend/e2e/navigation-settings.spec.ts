@@ -110,15 +110,17 @@ test.describe('Settings Navigation (SettingsHub — TMAIL-399/409)', () => {
     // AppShell. The button gets folder-item--active and the contacts pane
     // renders in-place (no route change).
     await expect(contactsEntry).toHaveClass(/folder-item--active/);
-    // ContactsApp renders the "Contacts" h3 heading + "All Contacts" button
-    // once /api/contacts resolves. Both are always-visible (the import
-    // textarea only appears after clicking Import — TMAIL-119).
-    await expect(
-      page.locator('.settings-panel h3', { hasText: /^Contacts$/ }),
-    ).toBeVisible({ timeout: 15_000 });
+    // Fix (TMAIL-410): ContactsApp renders an h3 of " Contacts" (leading
+    // whitespace next to the BookUser icon), so the previous /^Contacts$/
+    // anchored regex never matched. The "All Contacts (n)" folder-item
+    // button is a uniquely-ContactsApp marker (only rendered by
+    // ContactsApp.tsx, NOT by SettingsHub) and already proves the app
+    // mounted once /api/contacts resolves. The import textarea only
+    // appears after clicking Import — TMAIL-119 — so it isn't a useful
+    // visibility marker here.
     await expect(
       page.locator('button.folder-item', { hasText: /All Contacts/ }),
-    ).toBeVisible();
+    ).toBeVisible({ timeout: 15_000 });
     await takeScreenshot(page, 'navigation/contacts-view');
   });
 
