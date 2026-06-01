@@ -115,30 +115,35 @@ test.describe('Mail search', () => {
   }) => {
     await authenticate(page, apiSignup, 'results');
 
+    // Fix (TMAIL-418): mock must match SearchResponse shape — { messages, total,
+    // query, folder } — and each MessageEnvelope needs `flags`/`size` because
+    // the SearchRow component reads `message.flags.some(...)`.
     await page.route('**/api/search**', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({
-          results: [
+          messages: [
             {
               uid: 501,
-              folder: 'INBOX',
               subject: 'Quarterly report Q1 2026',
               from: 'reports@techatscale.io',
               date: '2026-04-02T10:00:00Z',
-              snippet: 'Attached is the Q1 2026 report …',
+              flags: [],
+              size: 1024,
             },
             {
               uid: 502,
-              folder: 'INBOX',
               subject: 'Q1 2026 budget review',
               from: 'finance@techatscale.io',
               date: '2026-04-04T11:30:00Z',
-              snippet: 'Please review the Q1 2026 budget …',
+              flags: ['\\Seen'],
+              size: 2048,
             },
           ],
           total: 2,
+          query: 'Q1 2026',
+          folder: 'INBOX',
         }),
       });
     });
@@ -149,10 +154,13 @@ test.describe('Mail search', () => {
     await searchInput.fill('Q1 2026');
     await searchInput.press('Enter');
 
-    const results = page.locator('.search-results');
+    // Fix (TMAIL-418): SearchResults renders as `.message-list` with `.message-row`
+    // children (consistent with the regular folder list) — the legacy
+    // `.search-results` markup was dropped during a refactor.
+    const results = page.locator('.message-list');
     await expect(results).toBeVisible();
-    await expect(results.locator('.search-results__item').first()).toContainText('Q1 2026');
-    await expect(results.locator('.search-results__item')).toHaveCount(2);
+    await expect(results.locator('.message-row').first()).toContainText('Q1 2026');
+    await expect(results.locator('.message-row')).toHaveCount(2);
 
     await takeScreenshot(page, 'search/results-populated');
   });
@@ -164,11 +172,17 @@ test.describe('Mail search', () => {
   }) => {
     await authenticate(page, apiSignup, 'empty');
 
+    // Fix (TMAIL-418): SearchResponse shape — { messages, total, query, folder }.
     await page.route('**/api/search**', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({ results: [], total: 0 }),
+        body: JSON.stringify({
+          messages: [],
+          total: 0,
+          query: 'xyzzy-no-match',
+          folder: 'INBOX',
+        }),
       });
     });
 
@@ -178,8 +192,12 @@ test.describe('Mail search', () => {
     await searchInput.fill('xyzzy-no-match');
     await searchInput.press('Enter');
 
-    const empty = page.locator('.search-results__empty, .search-results .empty-state').first();
+    // Fix (TMAIL-418): SearchResults renders "No messages match your search"
+    // inside `<div className="message-list__empty">` — the legacy
+    // `.search-results__empty` / `.empty-state` markup was dropped.
+    const empty = page.locator('.message-list__empty');
     await expect(empty).toBeVisible();
+    await expect(empty).toContainText('No messages match');
 
     await takeScreenshot(page, 'search/empty-state');
   });
@@ -191,11 +209,17 @@ test.describe('Mail search', () => {
   }) => {
     await authenticate(page, apiSignup, 'clear');
 
+    // Fix (TMAIL-418): SearchResponse shape — { messages, total, query, folder }.
     await page.route('**/api/search**', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({ results: [], total: 0 }),
+        body: JSON.stringify({
+          messages: [],
+          total: 0,
+          query: 'temporary query',
+          folder: 'INBOX',
+        }),
       });
     });
 
@@ -204,13 +228,29 @@ test.describe('Mail search', () => {
     );
     await searchInput.fill('temporary query');
     await searchInput.press('Enter');
-    await expect(page.locator('.search-results')).toBeVisible();
+
+    // Fix (TMAIL-418): SearchResults rendered list uses `.message-list` and the
+    // header line tells us we are looking at search ("N results for ...").
+    const resultsList = page.locator('.message-list');
+    await expect(resultsList).toBeVisible();
+    await expect(resultsList.locator('.message-list__header')).toContainText(
+      'results for "temporary query"',
+    );
     await takeScreenshot(page, 'search/before-clear');
 
-    await searchInput.fill('');
-    await searchInput.press('Enter');
+    // Fix (TMAIL-418): the explicit "Clear search" button in the SearchResults
+    // header is the user-facing way to restore the folder view (the TopBar
+    // `handleSearch` ignores empty submissions, so pressing Enter on an empty
+    // input is a no-op). Click the X to actually reset searchQuery + viewMode.
+    await page.locator('button[title="Clear search"]').click();
 
-    await expect(page.locator('.message-list, .empty-folder')).toBeVisible();
+    // After clearing, viewMode flips back to 'list' so MessageList renders.
+    // The `**/api/folders/*/messages*` route in beforeEach returns
+    // `{ messages: [], total: 0 }`, and INBOX with zero messages renders the
+    // EmptyInboxState (TMAIL-401) with data-testid="empty-inbox-state".
+    await expect(page.locator('[data-testid="empty-inbox-state"]')).toBeVisible();
+    // And the search header copy must be gone.
+    await expect(page.locator('.message-list__header')).toHaveCount(0);
     await takeScreenshot(page, 'search/after-clear');
   });
 });
