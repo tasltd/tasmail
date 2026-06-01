@@ -24,15 +24,17 @@ const SCREENSHOT_PREFIX = 'first-login-tour';
 test.describe('First-login tour (TMAIL-401)', () => {
   test('new BYOK user sees 3-step tour, dismisses, never sees it again', async ({
     page,
-    apiSignup,
+    apiSignupTourVisible,
     takeScreenshot,
     baseURL,
   }) => {
     test.setTimeout(90_000);
 
-    // 1. Bootstrap a fresh account.
+    // 1. Bootstrap a fresh account. Use the tour-visible variant so the
+    //    mailbox row keeps first_login_tour_seen=false (apiSignup auto-marks
+    //    it true to keep downstream specs clean — TMAIL-405 / TMAIL-407).
     const email = `tour-${Date.now()}@e2e.tasmail`;
-    const tokens = await apiSignup(email, ACCOUNT_PASSWORD);
+    const tokens = await apiSignupTourVisible(email, ACCOUNT_PASSWORD);
     const authHeader = { Authorization: `Bearer ${tokens.access_token}` };
 
     // 2. Attach the noreply BYOK IMAP server so the empty-inbox state has a
@@ -120,15 +122,16 @@ test.describe('First-login tour (TMAIL-401)', () => {
 
   test('empty INBOX renders the user\'s configured IMAP address', async ({
     page,
-    apiSignup,
+    apiSignupTourVisible,
     takeScreenshot,
     baseURL,
   }) => {
     test.setTimeout(60_000);
 
-    // 1. Fresh account.
+    // 1. Fresh account — tour-visible variant, this spec marks the tour
+    //    seen explicitly via PATCH below so it doesn't cover the empty state.
     const email = `empty-${Date.now()}@e2e.tasmail`;
-    const tokens = await apiSignup(email, ACCOUNT_PASSWORD);
+    const tokens = await apiSignupTourVisible(email, ACCOUNT_PASSWORD);
     const authHeader = { Authorization: `Bearer ${tokens.access_token}` };
 
     // 2. Attach a BYOK IMAP server with a distinctive username so we can
