@@ -367,6 +367,36 @@ test.describe('PendingSyncBanner (TMAIL-88)', () => {
     apiSignup,
     takeScreenshot,
   }) => {
+    // Fix (TMAIL-415): hang every /api/messages/schedule request while
+    // `allowRequests` is false. The on-mount auto-replay
+    // (useOnlineStatus → processPending) fires from PendingSyncBanner, TopBar,
+    // and every other useOnlineStatus consumer; each calls executeAction which
+    // awaits scheduledApi.scheduleSend → fetch. By never fulfilling/aborting
+    // we keep those awaited promises pending forever, so processPending never
+    // reaches incrementRetry. The queue stays at 2 deterministically, no
+    // matter how many useOnlineStatus instances mount.
+    //
+    // Returning 503 / aborting would still bump action.retries via the
+    // catch-block in processPending, and with N consumers × M replays the
+    // queue would race past MAX_RETRIES=3 and self-evict — exactly the
+    // detach-during-click symptom we hit. The hang-then-flip pattern avoids
+    // all that.
+    let allowRequests = false;
+    const pendingRoutes: Array<import('@playwright/test').Route> = [];
+    await page.unroute('**/api/messages/schedule');
+    await page.route('**/api/messages/schedule', async (route) => {
+      if (allowRequests) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ id: 'sched-1', cancel_token: 'tok' }),
+        });
+      } else {
+        // Park the route; it will be fulfilled when allowRequests flips true.
+        pendingRoutes.push(route);
+      }
+    });
+
     await authenticate(page, apiSignup, 'retry');
     await clearQueue(page);
     await seedQueue(page, 2);
@@ -382,11 +412,24 @@ test.describe('PendingSyncBanner (TMAIL-88)', () => {
     const pre = await countQueue(page);
     expect(pre).toBe(2);
 
-    await page.locator('[data-testid="pending-sync-retry"]').click();
+    // Flip the mock to 200 so the Retry-triggered processPending succeeds.
+    // Drain any parked requests so the in-flight on-mount replay can finish
+    // and trigger its remove() / emitChange. The Retry-click below kicks off
+    // a fresh processPending that, with the mock now returning 200, drains
+    // whatever is still queued.
+    allowRequests = true;
+    for (const route of pendingRoutes.splice(0)) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ id: 'sched-1', cancel_token: 'tok' }),
+      });
+    }
+
+    await page.locator('[data-testid="pending-sync-retry"]').click({ force: true });
     await takeScreenshot(page, `${SCREENSHOT_DIR}/retry-clicked`);
 
-    // Banner should disappear once queue drains (the mocked /api/messages/schedule
-    // returns 200, so both actions succeed and are removed).
+    // Banner should disappear once queue drains.
     await expect(banner).toBeHidden({ timeout: 10_000 });
 
     const post = await countQueue(page);
