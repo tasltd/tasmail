@@ -552,15 +552,20 @@ test.describe('TMAIL-284 Message view sweep', () => {
   }) => {
     test.setTimeout(PER_TEST_TIMEOUT_MS);
     const subject = `TMAIL-284 phishing ${RUN_TAG}`;
-    // Hand-craft a body the heuristic scanner will flag: spoofed display name +
-    // a deceptive link where the visible text differs from the href hostname.
+    // Hand-craft a body the heuristic scanner will flag: a deceptive link
+    // where the visible text differs from the href hostname.
+    //
+    // Fix (TMAIL-422): the anchor must sit on a SINGLE line. The backend
+    // scanner's ANCHOR_REGEX (backend/src/services/phishing_scanner.rs) uses
+    // `(.*?)` between `<a ...>` and `</a>` and Rust's `regex` crate does NOT
+    // let `.` cross `\n` by default — so a multi-line anchor produced zero
+    // suspicious links, a risk_score of 0, and no banner. Keeping the href +
+    // display text on one line still exercises the display-mismatch check
+    // (display domain `accounts.paypal.com` vs href domain
+    // `malicious-site-XXX.example`).
     const html = `
       <p>Dear customer,</p>
-      <p>Your account was suspended. Please re-verify immediately:
-        <a href="https://malicious-site-${RUN_TAG}.example/login">
-          https://accounts.paypal.com/secure
-        </a>
-      </p>
+      <p>Your account was suspended. Please re-verify immediately: <a href="https://malicious-site-${RUN_TAG}.example/login">https://accounts.paypal.com/secure</a></p>
       <p>Failure to act will result in permanent closure.</p>`;
     await importEmlIntoInbox(buildHtmlEml(subject, html));
 

@@ -40,6 +40,11 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { deleteMailboxByUsername } from './helpers/db-cleanup.js';
+// Added (TMAIL-422): centralised SettingsHub navigation so this spec doesn't
+// reach into stale `.folder-item:has-text("Security")` selectors (the entry
+// was removed when TMAIL-398/399 introduced the registry-driven sidebar +
+// Gmail-style SettingsHub).
+import { gotoSettingsSecurity } from './helpers/sidebar.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -139,6 +144,23 @@ async function signupAndStashToken(
   };
   CREATED_USERNAMES.push(email);
 
+  // Fix (TMAIL-422): TMAIL-401 introduced a FirstLoginTour modal that mounts
+  // on /app for any account that has not yet seen the tour. Its backdrop
+  // intercepts pointer events on the SettingsHub category tabs, so the spec
+  // can never click "Account & Security". Pre-mark the tour as seen the same
+  // way the shared `apiSignup` fixture does — this spec rolls its own signup
+  // helper so it has to call the PATCH explicitly.
+  const seenResp = await api.patch('/api/me/preferences/first-login-tour-seen', {
+    headers: { Authorization: `Bearer ${access_token}` },
+    data: {},
+  });
+  if (!seenResp.ok()) {
+    // Best-effort — older backends without the endpoint are still OK to test,
+    // they just won't have the tour rendering at all.
+    // eslint-disable-next-line no-console
+    console.warn(`first-login-tour-seen PATCH returned HTTP ${seenResp.status()}`);
+  }
+
   // Seed localStorage on the public landing first so subsequent navigation
   // already has a valid session. The landing page does no API calls itself
   // so this is cheap and reliable.
@@ -162,12 +184,14 @@ async function navigateToSecurityPanel(page: Page) {
   // brand-new BYOK users without an IMAP config can still reach the menu
   // — they just won't see any mail folders, which is fine for a Security
   // sweep.
+  //
+  // Changed (TMAIL-422): the pre-TMAIL-398 sidebar had a top-level "Security"
+  // folder-item; the registry-driven sidebar replaces it with a Settings entry
+  // that opens the SettingsHub. Security is now Account & Security → Two-Factor
+  // Auth, reached via menu clicks through `gotoSettingsSecurity` (one source of
+  // truth in e2e/helpers/sidebar.ts so future renames hit one file, not 50 specs).
   await page.goto('/app');
-  await page.waitForSelector('.sidebar', { timeout: 15_000 });
-  await page.locator('.folder-item:has-text("Security")').click();
-  await expect(page.locator('h2', { hasText: 'Two-Factor Authentication' })).toBeVisible({
-    timeout: 10_000,
-  });
+  await gotoSettingsSecurity(page);
 }
 
 // ─── 1) TOTP enrol → verify → status ─────────────────────────────────────
