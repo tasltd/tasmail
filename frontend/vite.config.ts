@@ -124,6 +124,13 @@ export default defineConfig({
     setupFiles: ['./src/test/setup.ts'],
     // Added: Exclude Playwright E2E specs from Vitest runner
     exclude: ['e2e/**', 'node_modules/**'],
+    // Added (TMAIL-419): Vitest 4.x default `threads` pool races with jsdom
+    // global setup — workers occasionally see an undefined `document`, which
+    // surfaces as 500+ tests failing in @testing-library/react's render()
+    // with "ReferenceError: document is not defined". `forks` gives each
+    // worker a clean Node process where jsdom installs into the global
+    // before test code imports React. Slightly slower wall-clock but stable.
+    pool: 'forks',
   },
   server: {
     // Changed: Non-default port (5173 occupied by Alleina dev server)
