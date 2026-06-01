@@ -48,8 +48,23 @@ test.describe('Offline draft composition (TMAIL-89)', () => {
     await page.route('**/api/oidc/providers/login', async (route) => {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([]) });
     });
+    // Fix (TMAIL-417): real QuotaStatus shape so QuotaBar doesn't render "NaN".
     await page.route('**/api/quota', async (route) => {
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ used: 0, limit: 1000 }) });
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          mailbox_id: 'e2e-mailbox',
+          quota_bytes: 1073741824,
+          used_bytes: 0,
+          message_count: 0,
+          usage_percent: 0,
+          quota_warn_percent: 80,
+          is_over_quota: false,
+          is_warning: false,
+          last_synced_at: null,
+        }),
+      });
     });
     await page.route('**/api/signatures', async (route) => {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([]) });

@@ -2,10 +2,15 @@ import { useQuery } from '@tanstack/react-query';
 import { quotaApi } from '../../api/quota';
 import type { QuotaStatus } from '../../api/quota';
 
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B';
+// Fix (TMAIL-417): hardened against missing / NaN inputs so an unexpected
+// /api/quota payload shape can't render "NaN undefined" in the sidebar.
+function formatBytes(bytes: number | null | undefined): string {
+  if (bytes == null || !Number.isFinite(bytes) || bytes <= 0) return '0 B';
   const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+  const i = Math.min(
+    units.length - 1,
+    Math.max(0, Math.floor(Math.log(bytes) / Math.log(1024))),
+  );
   return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
 }
 
@@ -19,19 +24,29 @@ export function QuotaBar() {
 
   if (!quota) return null;
 
+  // Fix (TMAIL-417): coerce nullable/missing numeric fields so the sidebar
+  // footer never renders "NaN undefined" when the backend (or an E2E mock)
+  // returns a partial payload. If quota_bytes is unknown/zero, hide the bar
+  // entirely rather than showing a meaningless 0-byte limit.
+  const usedBytes = Number.isFinite(quota.used_bytes) ? quota.used_bytes : 0;
+  const quotaBytes = Number.isFinite(quota.quota_bytes) ? quota.quota_bytes : 0;
+  if (quotaBytes <= 0) return null;
+
+  const usagePercent = Number.isFinite(quota.usage_percent) ? quota.usage_percent : 0;
+
   const barColor = quota.is_over_quota
     ? 'var(--color-error, #dc3545)'
     : quota.is_warning
       ? 'var(--color-warning, #ffc107)'
       : 'var(--color-primary, #4a90d9)';
 
-  const percent = Math.min(quota.usage_percent, 100);
+  const percent = Math.min(Math.max(usagePercent, 0), 100);
 
   return (
     <div className="quota-bar" style={{ padding: '8px 12px', fontSize: '12px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px', color: 'var(--color-text-secondary)' }}>
-        <span>{formatBytes(quota.used_bytes)} used</span>
-        <span>{formatBytes(quota.quota_bytes)}</span>
+        <span>{formatBytes(usedBytes)} used</span>
+        <span>{formatBytes(quotaBytes)}</span>
       </div>
       <div
         style={{
@@ -58,7 +73,7 @@ export function QuotaBar() {
       )}
       {quota.is_warning && !quota.is_over_quota && (
         <div style={{ color: 'var(--color-warning, #ffc107)', marginTop: '4px' }}>
-          {quota.usage_percent.toFixed(0)}% of storage used
+          {usagePercent.toFixed(0)}% of storage used
         </div>
       )}
     </div>

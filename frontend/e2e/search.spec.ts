@@ -65,10 +65,21 @@ test.beforeEach(async ({ page }) => {
   });
 
   await page.route('**/api/quota', async (route) => {
+    // Fix (TMAIL-417): real QuotaStatus shape so QuotaBar doesn't render "NaN".
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ used: 100, limit: 1000 }),
+      body: JSON.stringify({
+        mailbox_id: 'e2e-mailbox',
+        quota_bytes: 1073741824,
+        used_bytes: 104857600,
+        message_count: 0,
+        usage_percent: 10,
+        quota_warn_percent: 80,
+        is_over_quota: false,
+        is_warning: false,
+        last_synced_at: null,
+      }),
     });
   });
 

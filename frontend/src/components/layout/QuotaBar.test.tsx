@@ -108,4 +108,57 @@ describe('QuotaBar', () => {
       expect(quotaBar).toBeInTheDocument();
     });
   });
+
+  // Fix (TMAIL-417): regression tests for the "NaN undefined used / NaN undefined"
+  // rendering bug. When /api/quota returns an unexpected shape (legacy mocks
+  // returning { used, limit }, partial payloads, or null fields) the sidebar
+  // must never render NaN — it should hide the bar or fall back to safe zeros.
+  it('does not render NaN when API returns the legacy { used, limit } shape', async () => {
+    mockGetQuota.mockResolvedValue({ used: 0, limit: 1000 } as never);
+    const { container } = render(<QuotaBar />, { wrapper: createWrapper() });
+    // quota_bytes is missing → bar should hide entirely rather than show NaN
+    await vi.waitFor(() => {
+      expect(container.querySelector('.quota-bar')).not.toBeInTheDocument();
+    });
+    expect(container.textContent ?? '').not.toMatch(/NaN/);
+    expect(container.textContent ?? '').not.toMatch(/undefined/);
+  });
+
+  it('falls back to 0 B when used_bytes is missing but quota_bytes is present', async () => {
+    mockGetQuota.mockResolvedValue(
+      makeQuota({ used_bytes: undefined as unknown as number, usage_percent: 0 }),
+    );
+    const { container } = render(<QuotaBar />, { wrapper: createWrapper() });
+    await vi.waitFor(() => {
+      expect(screen.getByText('0 B used')).toBeInTheDocument();
+      expect(screen.getByText('1.0 GB')).toBeInTheDocument();
+    });
+    expect(container.textContent ?? '').not.toMatch(/NaN/);
+    expect(container.textContent ?? '').not.toMatch(/undefined/);
+  });
+
+  it('hides the bar when quota_bytes is 0 (unknown limit)', async () => {
+    mockGetQuota.mockResolvedValue(
+      makeQuota({ quota_bytes: 0, used_bytes: 100, usage_percent: 0 }),
+    );
+    const { container } = render(<QuotaBar />, { wrapper: createWrapper() });
+    await vi.waitFor(() => {
+      expect(container.querySelector('.quota-bar')).not.toBeInTheDocument();
+    });
+  });
+
+  it('coerces NaN usage_percent to 0 in warning message', async () => {
+    mockGetQuota.mockResolvedValue(
+      makeQuota({
+        is_warning: true,
+        is_over_quota: false,
+        usage_percent: Number.NaN,
+      }),
+    );
+    const { container } = render(<QuotaBar />, { wrapper: createWrapper() });
+    await vi.waitFor(() => {
+      expect(screen.getByText('0% of storage used')).toBeInTheDocument();
+    });
+    expect(container.textContent ?? '').not.toMatch(/NaN/);
+  });
 });
