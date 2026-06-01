@@ -89,3 +89,68 @@ describe('apiClient empty-body handling', () => {
     globalThis.fetch = original;
   });
 });
+
+// Added (TMAIL-413): 401 from /auth/login is "wrong credentials" — the client
+// must surface an ApiError(401, ...) so LoginPage renders an inline error.
+// It MUST NOT try to refresh the token or redirect to /login (which would wipe
+// the page's error state before React could render `.login-card__error`).
+describe('apiClient 401 handling on auth endpoints', () => {
+  let clientModule: typeof import('./client');
+  beforeEach(async () => {
+    vi.resetModules();
+    clientModule = await import('./client');
+  });
+
+  it('throws ApiError(401) from POST /auth/login without refresh or redirect', async () => {
+    const original = globalThis.fetch;
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ error: 'Invalid credentials' }), { status: 401 }),
+    );
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    // Avoid jsdom navigation error if the bug regressed
+    const originalLocation = window.location;
+    let redirected = false;
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: new Proxy({ href: '/login' } as Location, {
+        set: (_t, prop, value) => {
+          if (prop === 'href' && value !== '/login') redirected = true;
+          return true;
+        },
+        get: (t, prop) => (t as unknown as Record<string, unknown>)[prop as string],
+      }),
+    });
+
+    try {
+      await clientModule.apiClient.post('/auth/login', { username: 'a', password: 'b' });
+      throw new Error('Expected ApiError to be thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(clientModule.ApiError);
+      expect((err as InstanceType<typeof clientModule.ApiError>).status).toBe(401);
+    }
+
+    // The client must not retry via /auth/refresh on auth endpoints.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(redirected).toBe(false);
+    Object.defineProperty(window, 'location', { configurable: true, value: originalLocation });
+    globalThis.fetch = original;
+  });
+
+  it('throws ApiError(401) from POST /auth/signup without refresh or redirect', async () => {
+    const original = globalThis.fetch;
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ error: 'Email taken' }), { status: 401 }),
+    );
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    try {
+      await clientModule.apiClient.post('/auth/signup', { email: 'a@b.c', password: 'x' });
+      throw new Error('Expected ApiError to be thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(clientModule.ApiError);
+      expect((err as InstanceType<typeof clientModule.ApiError>).status).toBe(401);
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    globalThis.fetch = original;
+  });
+});

@@ -1,5 +1,15 @@
 import { API_BASE_URL } from '../utils/constants';
 
+// Fix (TMAIL-413): Endpoints where a 401 means "wrong credentials" rather than
+// "session expired". The client must NOT redirect to /login for these paths —
+// the calling component (LoginPage / SignupPage) handles the ApiError itself
+// so it can render an inline `.login-card__error` message.
+const AUTH_NO_REDIRECT_PATHS = ['/auth/login', '/auth/signup', '/auth/refresh'];
+
+function isAuthEndpoint(path: string): boolean {
+  return AUTH_NO_REDIRECT_PATHS.some((p) => path === p || path.startsWith(`${p}?`));
+}
+
 class ApiClient {
   private accessToken: string | null = null;
 
@@ -29,7 +39,12 @@ class ApiClient {
       headers,
     });
 
-    if (response.status === 401) {
+    // Fix (TMAIL-413): A 401 from /auth/login, /auth/signup, or /auth/refresh
+    // means "wrong credentials" — NOT "session expired". Treating those like
+    // session-expired triggers a refresh-then-redirect to /login, which wipes
+    // the LoginPage's error state before React can render `.login-card__error`.
+    // The caller (LoginPage) handles invalid-credential ApiErrors itself.
+    if (response.status === 401 && !isAuthEndpoint(path)) {
       // Try to refresh the token
       const refreshed = await this.tryRefresh();
       if (refreshed) {
