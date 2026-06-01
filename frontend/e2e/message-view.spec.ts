@@ -75,6 +75,14 @@ interface PhishingReport {
 
 test.describe.configure({ mode: 'serial' });
 
+// TMAIL-416: each test in this serial suite drives a full BYOK round-trip
+// (signup-bound API import-eml → /login render → INBOX IMAP fetch → MessageView
+// paint). On the live tunnel that flow comfortably exceeds Playwright's 30s
+// default once a few tests have run, so the second-and-onward tests time out
+// while still waiting for `#username` on /login. Bump the per-test budget the
+// same way folder-messagelist.spec.ts does for the matching IMAP-heavy flow.
+const PER_TEST_TIMEOUT_MS = 90_000;
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Seed helpers: build raw RFC822 messages so the sanitize, attachment, and
 // phishing tests have a known shape. We import via the `import-eml` endpoint
@@ -206,6 +214,14 @@ test.describe('TMAIL-284 Message view sweep', () => {
       },
     });
     expect(imap.status(), 'IMAP config create must succeed').toBeLessThan(300);
+
+    // TMAIL-405 hygiene (same as folder-messagelist.spec.ts): pre-mark the
+    // FirstLoginTour as seen so the overlay never paints on /app and intercepts
+    // downstream clicks. We don't validate the tour in this spec.
+    await api.patch('/api/me/preferences/first-login-tour-seen', {
+      headers: authHeader,
+      data: {},
+    });
   });
 
   test.afterAll(async () => {
@@ -218,14 +234,21 @@ test.describe('TMAIL-284 Message view sweep', () => {
   });
 
   // Per-test login through the UI so we exercise the full auth → app shell paint.
+  // TMAIL-416: switched off raw `page.waitForSelector` in favour of locator-based
+  // `expect(...).toBeVisible()` so the failure surface is the locator (not a
+  // string selector), and bumped the visibility timeout to 25s — the live
+  // tunnel + PWA + Firefox stack can take well over the 5s default to render
+  // the LoginPage after the bundle hydrates, especially once a few sequential
+  // tests in the serial suite have warmed the IMAP path.
   async function loginViaUI(page: import('@playwright/test').Page) {
-    await page.goto('/login');
-    await page.waitForSelector('#username');
-    await page.fill('#username', ACCOUNT_EMAIL);
+    await page.goto('/login', { waitUntil: 'domcontentloaded' });
+    const usernameField = page.locator('#username');
+    await expect(usernameField).toBeVisible({ timeout: 25_000 });
+    await usernameField.fill(ACCOUNT_EMAIL);
     await page.fill('#password', ACCOUNT_PASSWORD);
     await page.click('button[type="submit"]');
-    await page.waitForURL(/\/app/, { timeout: 20_000 });
-    await expect(page.locator('.folder-tree--loading')).toHaveCount(0, { timeout: 15_000 });
+    await page.waitForURL(/\/app/, { timeout: 25_000 });
+    await expect(page.locator('.folder-tree--loading')).toHaveCount(0, { timeout: 20_000 });
   }
 
   // After login, MessageList groups by normalised subject — multi-message
@@ -262,6 +285,7 @@ test.describe('TMAIL-284 Message view sweep', () => {
     page,
     takeScreenshot,
   }) => {
+    test.setTimeout(PER_TEST_TIMEOUT_MS);
     const subject = `TMAIL-284 plain text ${RUN_TAG}`;
     await importEmlIntoInbox(
       buildPlainTextEml(
@@ -280,6 +304,9 @@ test.describe('TMAIL-284 Message view sweep', () => {
     await expect(text).toContainText('Hello plain world');
     await expect(messageView.locator('.message-view__html')).toHaveCount(0);
     await takeScreenshot(page, 'message-view/text-email-rendered');
+    // TMAIL-416 acceptance: snapshot the rendered body so reviewers can see
+    // the message view actually painted, not just the assertion log.
+    await takeScreenshot(page, 'message-view/body-rendered');
   });
 
   // ───────────────────────── 2) HTML sanitization ─────────────────────────────
@@ -287,6 +314,7 @@ test.describe('TMAIL-284 Message view sweep', () => {
     page,
     takeScreenshot,
   }) => {
+    test.setTimeout(PER_TEST_TIMEOUT_MS);
     const subject = `TMAIL-284 sanitize HTML ${RUN_TAG}`;
     // Mix of allowed and forbidden content. DOMPurify must:
     //   - drop the <script> entirely
@@ -354,6 +382,7 @@ test.describe('TMAIL-284 Message view sweep', () => {
     page,
     takeScreenshot,
   }) => {
+    test.setTimeout(PER_TEST_TIMEOUT_MS);
     const subject = `TMAIL-284 attachments ${RUN_TAG}`;
     // Use application/octet-stream so the backend's extract_parts always treats
     // it as an attachment — see imap_service.rs::extract_parts: text/* parts
@@ -404,6 +433,7 @@ test.describe('TMAIL-284 Message view sweep', () => {
     context,
     takeScreenshot,
   }) => {
+    test.setTimeout(PER_TEST_TIMEOUT_MS);
     const subject = `TMAIL-284 eml download ${RUN_TAG}`;
     await importEmlIntoInbox(
       buildHtmlEml(subject, '<p>Body for the .eml round-trip download test.</p>'),
@@ -413,10 +443,12 @@ test.describe('TMAIL-284 Message view sweep', () => {
     await openInboxFlat(page);
     const messageView = await openMessageBySubject(page, subject);
 
-    // The export endpoint returns the raw RFC822 bytes — we wait for either a
-    // page-level download event OR a network response with message/rfc822.
-    // Firefox often takes the page-download path; capture both possibilities so
-    // the spec is browser-resilient.
+    // TMAIL-416: Firefox routes downloads through the browser's download
+    // manager, so `response.body()` on the captured network response throws
+    // NS_ERROR_FAILURE ("Component returned failure code"). Verify the network
+    // round-trip happened (status + content-type), then re-fetch the same .eml
+    // URL through the authenticated `api` context to assert the RFC822 body.
+    // That keeps the test browser-agnostic without touching the SPA code.
     const respPromise = page.waitForResponse(
       (resp) => resp.url().includes('/eml') && resp.request().method() === 'GET',
       { timeout: 15_000 },
@@ -427,7 +459,16 @@ test.describe('TMAIL-284 Message view sweep', () => {
     expect(resp.status()).toBe(200);
     const mimeType = resp.headers()['content-type'] ?? '';
     expect(mimeType).toContain('message/rfc822');
-    const bodyText = (await resp.body()).toString('utf8');
+
+    // Re-fetch the body via the api context (works on every browser project).
+    const lookup = await findMessageBySubject(subject);
+    expect(lookup, 'message must exist on backend').toBeTruthy();
+    const apiResp = await api.get(
+      `/api/folders/INBOX/messages/${lookup!.uid}/eml`,
+      { headers: authHeader },
+    );
+    expect(apiResp.status()).toBe(200);
+    const bodyText = await apiResp.text();
     expect(bodyText.startsWith('From:')).toBe(true);
     expect(bodyText).toContain('MIME-Version');
     expect(bodyText).toContain(subject);
@@ -442,6 +483,7 @@ test.describe('TMAIL-284 Message view sweep', () => {
     page,
     takeScreenshot,
   }) => {
+    test.setTimeout(PER_TEST_TIMEOUT_MS);
     const subject = `TMAIL-284 comments ${RUN_TAG}`;
     await importEmlIntoInbox(buildPlainTextEml(subject, 'Comments thread fixture.'));
 
@@ -508,6 +550,7 @@ test.describe('TMAIL-284 Message view sweep', () => {
     page,
     takeScreenshot,
   }) => {
+    test.setTimeout(PER_TEST_TIMEOUT_MS);
     const subject = `TMAIL-284 phishing ${RUN_TAG}`;
     // Hand-craft a body the heuristic scanner will flag: spoofed display name +
     // a deceptive link where the visible text differs from the href hostname.
@@ -556,6 +599,7 @@ test.describe('TMAIL-284 Message view sweep', () => {
     page,
     takeScreenshot,
   }) => {
+    test.setTimeout(PER_TEST_TIMEOUT_MS);
     const subject = `TMAIL-284 forward guard ${RUN_TAG}`;
     await importEmlIntoInbox(buildPlainTextEml(subject, 'Forward button guard fixture.'));
 
