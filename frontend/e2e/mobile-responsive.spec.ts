@@ -159,7 +159,12 @@ test.describe('Mobile responsive layout', () => {
     }
     await expect(overlay).toBeVisible();
 
-    await overlay.click({ position: { x: 5, y: 5 } });
+    // Fix (TMAIL-414): the sidebar drawer occupies the left ~300px of the
+    // viewport on mobile (80% width, max 300px). Clicking the overlay at
+    // (5,5) lands inside the sidebar's bounding box and is intercepted by
+    // <aside class="sidebar"> instead of the backdrop. Click well to the
+    // right of the drawer to hit the real backdrop region.
+    await overlay.click({ position: { x: 360, y: 100 } });
     await expect(overlay).toHaveCount(0);
 
     await takeScreenshot(page, 'mobile/sidebar-dismissed-via-backdrop');

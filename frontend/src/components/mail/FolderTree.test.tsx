@@ -19,6 +19,27 @@ vi.mock('../../stores/mailStore', () => ({
     }),
 }));
 
+// Added (TMAIL-414): FolderTree now closes the mobile sidebar after a
+// folder click. Mock the responsive + uiStore hooks so the unit tests
+// don't need a real matchMedia polyfill and can assert the close call.
+const mockIsMobile = vi.fn(() => false);
+vi.mock('../../hooks/useResponsive', () => ({
+  useResponsive: () => ({
+    isMobile: mockIsMobile(),
+    isTablet: false,
+    isDesktop: !mockIsMobile(),
+  }),
+}));
+
+const mockSetSidebarOpen = vi.fn();
+vi.mock('../../stores/uiStore', () => ({
+  useUiStore: (selector: (s: Record<string, unknown>) => unknown) =>
+    selector({
+      sidebarOpen: true,
+      setSidebarOpen: mockSetSidebarOpen,
+    }),
+}));
+
 function wrapper({ children }: { children: React.ReactNode }) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return <QueryClientProvider client={qc}>{children}</QueryClientProvider>;
@@ -28,6 +49,9 @@ describe('FolderTree', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockSelectedFolder.mockReturnValue('INBOX');
+    // Default to desktop so the existing tests don't accidentally trigger
+    // the mobile close-on-select path.
+    mockIsMobile.mockReturnValue(false);
   });
 
   it('shows loading state', () => {
@@ -137,5 +161,41 @@ describe('FolderTree', () => {
     });
     render(<FolderTree />, { wrapper });
     expect(screen.getByText('MyFolder')).toBeInTheDocument();
+  });
+
+  // Added (TMAIL-414): folder click must dismiss the mobile sidebar overlay
+  // so users aren't left looking at the menu after navigating.
+  it('closes the sidebar on mobile after a folder is clicked', () => {
+    mockIsMobile.mockReturnValue(true);
+    mockUseFolders.mockReturnValue({
+      data: [
+        { name: 'INBOX', delimiter: '.', messages: 10, unseen: 3 },
+        { name: 'Sent', delimiter: '.', messages: 5, unseen: 0 },
+      ],
+      isLoading: false,
+      error: null,
+    });
+    render(<FolderTree />, { wrapper });
+    fireEvent.click(screen.getByText('Sent'));
+    expect(mockSetSelectedFolder).toHaveBeenCalledWith('Sent');
+    expect(mockSetSidebarOpen).toHaveBeenCalledWith(false);
+  });
+
+  // Added (TMAIL-414): the desktop layout keeps the sidebar inline, so the
+  // close-on-select branch must NOT fire there.
+  it('does not toggle the sidebar on desktop after a folder is clicked', () => {
+    mockIsMobile.mockReturnValue(false);
+    mockUseFolders.mockReturnValue({
+      data: [
+        { name: 'INBOX', delimiter: '.', messages: 10, unseen: 3 },
+        { name: 'Sent', delimiter: '.', messages: 5, unseen: 0 },
+      ],
+      isLoading: false,
+      error: null,
+    });
+    render(<FolderTree />, { wrapper });
+    fireEvent.click(screen.getByText('Sent'));
+    expect(mockSetSelectedFolder).toHaveBeenCalledWith('Sent');
+    expect(mockSetSidebarOpen).not.toHaveBeenCalled();
   });
 });

@@ -6,6 +6,11 @@ import { useMailStore } from '../../stores/mailStore';
 // Added: Import drop hook and move API for drag-and-drop (TMAIL-122)
 import { useFolderDrop, type DragData } from '../../hooks/useDragAndDrop';
 import { moveMessage } from '../../api/messages';
+// Fix (TMAIL-414): close the mobile sidebar after folder selection so users
+// aren't left staring at the overlay (matches Sidebar.tsx's closeOnMobile
+// behaviour for Compose / nav items, originally wired in TMAIL-33).
+import { useResponsive } from '../../hooks/useResponsive';
+import { useUiStore } from '../../stores/uiStore';
 import type { Folder } from '../../types/mail';
 
 const FOLDER_ICONS: Record<string, typeof Inbox> = {
@@ -16,7 +21,7 @@ const FOLDER_ICONS: Record<string, typeof Inbox> = {
   Junk: AlertCircle,
 };
 
-function FolderItem({ folder }: { folder: Folder }) {
+function FolderItem({ folder, onAfterSelect }: { folder: Folder; onAfterSelect?: () => void }) {
   const selectedFolder = useMailStore((s) => s.selectedFolder);
   const setSelectedFolder = useMailStore((s) => s.setSelectedFolder);
   const queryClient = useQueryClient();
@@ -56,7 +61,11 @@ function FolderItem({ folder }: { folder: Folder }) {
       // Changed: Added drop handlers and drop-target class for visual feedback (TMAIL-122)
       // Added (TMAIL-401): data-tour="inbox" anchors the FirstLoginTour step 2 to the Inbox row.
       className={`folder-item ${isActive ? 'folder-item--active' : ''} ${isPrimary ? 'folder-item--primary' : ''} ${isOver ? 'folder-item--drop-target' : ''}`}
-      onClick={() => setSelectedFolder(folder.name)}
+      onClick={() => {
+        setSelectedFolder(folder.name);
+        // Fix (TMAIL-414): dismiss the mobile sidebar overlay after picking a folder.
+        onAfterSelect?.();
+      }}
       data-tour={isPrimary ? 'inbox' : undefined}
       {...dropHandlers}
     >
@@ -71,6 +80,13 @@ function FolderItem({ folder }: { folder: Folder }) {
 
 export function FolderTree() {
   const { data: folders, isLoading, error } = useFolders();
+  // Fix (TMAIL-414): subscribe once at the tree level so each FolderItem
+  // shares the same close handler — one matchMedia listener, one store hook.
+  const { isMobile } = useResponsive();
+  const setSidebarOpen = useUiStore((s) => s.setSidebarOpen);
+  const closeOnMobile = useCallback(() => {
+    if (isMobile) setSidebarOpen(false);
+  }, [isMobile, setSidebarOpen]);
 
   if (isLoading) {
     return <div className="folder-tree folder-tree--loading">Loading folders...</div>;
@@ -83,7 +99,7 @@ export function FolderTree() {
   return (
     <nav className="folder-tree">
       {folders?.map((folder) => (
-        <FolderItem key={folder.name} folder={folder} />
+        <FolderItem key={folder.name} folder={folder} onAfterSelect={closeOnMobile} />
       ))}
     </nav>
   );
