@@ -2,6 +2,41 @@
 // Covers the "read" requirement from TMAIL-36. Uses mocked IMAP responses so the
 // suite stays deterministic and doesn't depend on inbox state.
 import { test, expect } from './fixtures/base';
+// Fix (TMAIL-412): per-test signup emails need DB cleanup so re-runs stay
+// idempotent and the e2e.tasmail accounts don't accumulate forever.
+import { deleteMailboxByUsername } from './helpers/db-cleanup.js';
+
+// Fix (TMAIL-412): collect every per-test signup email so the afterAll hook
+// can wipe them from the DB. Replaces the dead hardcoded loginAs path.
+const readMsgEmails: string[] = [];
+
+test.afterAll(() => {
+  for (const email of readMsgEmails) {
+    try {
+      deleteMailboxByUsername(email);
+    } catch {
+      // Best-effort cleanup — don't fail the spec if the DB isn't reachable.
+    }
+  }
+});
+
+// Fix (TMAIL-412): provision a real BYOK account and inject its JWT pair so
+// /app loads without bouncing on the first unmocked endpoint.
+async function authenticate(
+  page: import('@playwright/test').Page,
+  apiSignup: (email: string, password: string) => Promise<{ access_token: string; refresh_token: string }>,
+  slug: string,
+): Promise<void> {
+  const email = `read-msg-${slug}-${Date.now()}@e2e.tasmail`;
+  readMsgEmails.push(email);
+  const tokens = await apiSignup(email, 'read-msg-pw-2026');
+  await page.goto('/login');
+  await page.evaluate(([at, rt]) => {
+    localStorage.setItem('access_token', at);
+    localStorage.setItem('refresh_token', rt);
+  }, [tokens.access_token, tokens.refresh_token]);
+  await page.goto('/app');
+}
 
 const MESSAGE_LIST = {
   messages: [
@@ -93,10 +128,10 @@ test.beforeEach(async ({ page }) => {
 test.describe('Read message', () => {
   test('clicking a message row opens the message view with subject + body', async ({
     page,
-    loginAs,
+    apiSignup,
     takeScreenshot,
   }) => {
-    await loginAs(page, 'user@example.com', 'password123');
+    await authenticate(page, apiSignup, 'open');
 
     const inboxFolder = page.locator('.folder-tree .folder-item', { hasText: 'INBOX' });
     await inboxFolder.click();
@@ -122,10 +157,10 @@ test.describe('Read message', () => {
 
   test('back button returns from message view to the list', async ({
     page,
-    loginAs,
+    apiSignup,
     takeScreenshot,
   }) => {
-    await loginAs(page, 'user@example.com', 'password123');
+    await authenticate(page, apiSignup, 'back');
 
     const inboxFolder = page.locator('.folder-tree .folder-item', { hasText: 'INBOX' });
     await inboxFolder.click();
@@ -149,10 +184,10 @@ test.describe('Read message', () => {
 
   test('reply button opens the composer in reply mode', async ({
     page,
-    loginAs,
+    apiSignup,
     takeScreenshot,
   }) => {
-    await loginAs(page, 'user@example.com', 'password123');
+    await authenticate(page, apiSignup, 'reply');
 
     await page.route('**/api/signatures', async (route) => {
       await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
@@ -174,10 +209,10 @@ test.describe('Read message', () => {
 
   test('seen message row renders without the unread badge styling', async ({
     page,
-    loginAs,
+    apiSignup,
     takeScreenshot,
   }) => {
-    await loginAs(page, 'user@example.com', 'password123');
+    await authenticate(page, apiSignup, 'seen');
 
     const inboxFolder = page.locator('.folder-tree .folder-item', { hasText: 'INBOX' });
     await inboxFolder.click();

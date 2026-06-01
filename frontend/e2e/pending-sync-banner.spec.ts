@@ -11,8 +11,43 @@
 // Login is via the standard auth mock used by the rest of the suite so we
 // reach AppShell without any backend dependency.
 import { test, expect } from './fixtures/base';
+// Fix (TMAIL-412): per-test signup emails need DB cleanup so re-runs stay
+// idempotent and the e2e.tasmail accounts don't accumulate forever.
+import { deleteMailboxByUsername } from './helpers/db-cleanup.js';
 
 const SCREENSHOT_DIR = 'pending-sync';
+
+// Fix (TMAIL-412): collect every per-test signup email so the afterAll hook
+// can wipe them from the DB. Replaces the dead hardcoded loginAs path.
+const pendingSyncEmails: string[] = [];
+
+test.afterAll(() => {
+  for (const email of pendingSyncEmails) {
+    try {
+      deleteMailboxByUsername(email);
+    } catch {
+      // Best-effort cleanup — don't fail the spec if the DB isn't reachable.
+    }
+  }
+});
+
+// Fix (TMAIL-412): provision a real BYOK account and inject its JWT pair so
+// /app loads without bouncing on the first unmocked endpoint.
+async function authenticate(
+  page: import('@playwright/test').Page,
+  apiSignup: (email: string, password: string) => Promise<{ access_token: string; refresh_token: string }>,
+  slug: string,
+): Promise<void> {
+  const email = `pending-sync-${slug}-${Date.now()}@e2e.tasmail`;
+  pendingSyncEmails.push(email);
+  const tokens = await apiSignup(email, 'pending-sync-pw-2026');
+  await page.goto('/login');
+  await page.evaluate(([at, rt]) => {
+    localStorage.setItem('access_token', at);
+    localStorage.setItem('refresh_token', rt);
+  }, [tokens.access_token, tokens.refresh_token]);
+  await page.goto('/app');
+}
 
 // Helpers: Seed and drain the tasmail-sync IndexedDB queue from inside the page
 // context. Executed via page.evaluate so they hit the same DB the production
@@ -109,8 +144,8 @@ test.beforeEach(async ({ page }) => {
 });
 
 test.describe('PendingSyncBanner (TMAIL-88)', () => {
-  test('hides when queue is empty', async ({ page, loginAs, takeScreenshot }) => {
-    await loginAs(page, 'user@example.com', 'password123');
+  test('hides when queue is empty', async ({ page, apiSignup, takeScreenshot }) => {
+    await authenticate(page, apiSignup, 'empty');
     await clearQueue(page);
     // NOTE: Force a re-render by toggling a no-op route so the banner subscription
     // sees the cleared queue; in practice the banner is mounted at AppShell load.
@@ -122,10 +157,10 @@ test.describe('PendingSyncBanner (TMAIL-88)', () => {
 
   test('shows "Syncing N actions" banner with Retry button when online with queue', async ({
     page,
-    loginAs,
+    apiSignup,
     takeScreenshot,
   }) => {
-    await loginAs(page, 'user@example.com', 'password123');
+    await authenticate(page, apiSignup, 'syncing');
     await clearQueue(page);
 
     await seedQueue(page, 3);
@@ -146,10 +181,10 @@ test.describe('PendingSyncBanner (TMAIL-88)', () => {
   test('shows "Offline — N actions queued" banner without Retry button when offline', async ({
     page,
     context,
-    loginAs,
+    apiSignup,
     takeScreenshot,
   }) => {
-    await loginAs(page, 'user@example.com', 'password123');
+    await authenticate(page, apiSignup, 'offline');
     await clearQueue(page);
 
     await seedQueue(page, 1);
@@ -171,10 +206,10 @@ test.describe('PendingSyncBanner (TMAIL-88)', () => {
 
   test('shows singular "1 action" copy (not "1 actions")', async ({
     page,
-    loginAs,
+    apiSignup,
     takeScreenshot,
   }) => {
-    await loginAs(page, 'user@example.com', 'password123');
+    await authenticate(page, apiSignup, 'singular');
     await clearQueue(page);
     await seedQueue(page, 1);
     await page.reload();
@@ -191,10 +226,10 @@ test.describe('PendingSyncBanner (TMAIL-88)', () => {
 
   test('Retry button drains the queue and hides the banner', async ({
     page,
-    loginAs,
+    apiSignup,
     takeScreenshot,
   }) => {
-    await loginAs(page, 'user@example.com', 'password123');
+    await authenticate(page, apiSignup, 'retry');
     await clearQueue(page);
     await seedQueue(page, 2);
     await page.reload();

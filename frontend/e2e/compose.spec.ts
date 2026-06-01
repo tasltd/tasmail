@@ -147,10 +147,20 @@ test.describe('Email Composer', () => {
 
   test('clicking Compose button opens the composer', async ({
     page,
-    loginAs,
+    apiSignup,
     takeScreenshot,
   }) => {
-    await loginAs(page, 'user@example.com', 'password123');
+    // Fix (TMAIL-412): replace the dead loginAs('user@example.com') call that
+    // bounced mid-test on unmocked endpoints — provision a real BYOK account.
+    const email = `compose-open-${Date.now()}@e2e.tasmail`;
+    composeEmails.push(email);
+    const tokens = await apiSignup(email, 'compose-test-pw-2026');
+    await page.goto('/login');
+    await page.evaluate(([at, rt]) => {
+      localStorage.setItem('access_token', at);
+      localStorage.setItem('refresh_token', rt);
+    }, [tokens.access_token, tokens.refresh_token]);
+    await page.goto('/app');
     await takeScreenshot(page, 'compose/before-compose-click');
 
     // Added: Click Compose button in sidebar (menu navigation, not goto)
@@ -167,10 +177,19 @@ test.describe('Email Composer', () => {
 
   test('composer has To, CC, Subject fields and editor', async ({
     page,
-    loginAs,
+    apiSignup,
     takeScreenshot,
   }) => {
-    await loginAs(page, 'user@example.com', 'password123');
+    // Fix (TMAIL-412): same dead-loginAs replacement as the open-composer test.
+    const email = `compose-fields-${Date.now()}@e2e.tasmail`;
+    composeEmails.push(email);
+    const tokens = await apiSignup(email, 'compose-test-pw-2026');
+    await page.goto('/login');
+    await page.evaluate(([at, rt]) => {
+      localStorage.setItem('access_token', at);
+      localStorage.setItem('refresh_token', rt);
+    }, [tokens.access_token, tokens.refresh_token]);
+    await page.goto('/app');
 
     // Added: Open composer via sidebar Compose button
     await page.locator('.sidebar .btn--compose').click();
@@ -184,10 +203,19 @@ test.describe('Email Composer', () => {
 
   test('fill To and Subject fields in composer', async ({
     page,
-    loginAs,
+    apiSignup,
     takeScreenshot,
   }) => {
-    await loginAs(page, 'user@example.com', 'password123');
+    // Fix (TMAIL-412): same dead-loginAs replacement as the open-composer test.
+    const email = `compose-fill-${Date.now()}@e2e.tasmail`;
+    composeEmails.push(email);
+    const tokens = await apiSignup(email, 'compose-test-pw-2026');
+    await page.goto('/login');
+    await page.evaluate(([at, rt]) => {
+      localStorage.setItem('access_token', at);
+      localStorage.setItem('refresh_token', rt);
+    }, [tokens.access_token, tokens.refresh_token]);
+    await page.goto('/app');
 
     // Added: Open composer via sidebar
     await page.locator('.sidebar .btn--compose').click();
@@ -222,10 +250,19 @@ test.describe('Email Composer', () => {
 
   test('composer can be dismissed by clicking close/cancel', async ({
     page,
-    loginAs,
+    apiSignup,
     takeScreenshot,
   }) => {
-    await loginAs(page, 'user@example.com', 'password123');
+    // Fix (TMAIL-412): same dead-loginAs replacement as the open-composer test.
+    const email = `compose-dismiss-${Date.now()}@e2e.tasmail`;
+    composeEmails.push(email);
+    const tokens = await apiSignup(email, 'compose-test-pw-2026');
+    await page.goto('/login');
+    await page.evaluate(([at, rt]) => {
+      localStorage.setItem('access_token', at);
+      localStorage.setItem('refresh_token', rt);
+    }, [tokens.access_token, tokens.refresh_token]);
+    await page.goto('/app');
 
     // Added: Open composer via sidebar Compose button
     await page.locator('.sidebar .btn--compose').click();

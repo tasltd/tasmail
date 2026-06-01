@@ -3,12 +3,47 @@
 // hamburger toggle, and navigation auto-close on small viewports.
 // See AppShell.tsx + Sidebar.tsx (TMAIL-33) for the implementation under test.
 import { test, expect } from './fixtures/base';
+// Fix (TMAIL-412): per-test signup emails need DB cleanup so re-runs stay
+// idempotent and the e2e.tasmail accounts don't accumulate forever.
+import { deleteMailboxByUsername } from './helpers/db-cleanup.js';
 
 // iPhone-ish portrait viewport — well below the desktop breakpoint used by
 // useResponsive, so the SPA renders in mobile mode.
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 
 test.use({ viewport: MOBILE_VIEWPORT });
+
+// Fix (TMAIL-412): collect every per-test signup email so the afterAll hook
+// can wipe them from the DB. Replaces the dead hardcoded loginAs path.
+const mobileEmails: string[] = [];
+
+test.afterAll(() => {
+  for (const email of mobileEmails) {
+    try {
+      deleteMailboxByUsername(email);
+    } catch {
+      // Best-effort cleanup — don't fail the spec if the DB isn't reachable.
+    }
+  }
+});
+
+// Fix (TMAIL-412): provision a real BYOK account and inject its JWT pair so
+// /app loads without bouncing on the first unmocked endpoint.
+async function authenticate(
+  page: import('@playwright/test').Page,
+  apiSignup: (email: string, password: string) => Promise<{ access_token: string; refresh_token: string }>,
+  slug: string,
+): Promise<void> {
+  const email = `mobile-${slug}-${Date.now()}@e2e.tasmail`;
+  mobileEmails.push(email);
+  const tokens = await apiSignup(email, 'mobile-test-pw-2026');
+  await page.goto('/login');
+  await page.evaluate(([at, rt]) => {
+    localStorage.setItem('access_token', at);
+    localStorage.setItem('refresh_token', rt);
+  }, [tokens.access_token, tokens.refresh_token]);
+  await page.goto('/app');
+}
 
 test.beforeEach(async ({ page }) => {
   await page.route('**/api/auth/login', async (route) => {
@@ -57,10 +92,10 @@ test.beforeEach(async ({ page }) => {
 test.describe('Mobile responsive layout', () => {
   test('app shell renders on mobile width without horizontal overflow', async ({
     page,
-    loginAs,
+    apiSignup,
     takeScreenshot,
   }) => {
-    await loginAs(page, 'user@example.com', 'password123');
+    await authenticate(page, apiSignup, 'overflow');
 
     const appShell = page.locator('.app-shell');
     await expect(appShell).toBeVisible();
@@ -76,10 +111,10 @@ test.describe('Mobile responsive layout', () => {
 
   test('topbar sidebar-toggle button is visible on mobile', async ({
     page,
-    loginAs,
+    apiSignup,
     takeScreenshot,
   }) => {
-    await loginAs(page, 'user@example.com', 'password123');
+    await authenticate(page, apiSignup, 'toggle');
 
     const sidebarToggle = page.locator('[data-testid="sidebar-toggle"]');
     await expect(sidebarToggle).toBeVisible();
@@ -89,10 +124,10 @@ test.describe('Mobile responsive layout', () => {
 
   test('tapping a folder in the mobile sidebar closes the overlay', async ({
     page,
-    loginAs,
+    apiSignup,
     takeScreenshot,
   }) => {
-    await loginAs(page, 'user@example.com', 'password123');
+    await authenticate(page, apiSignup, 'fold-tap');
 
     // Open the sidebar overlay if it is not already open on mobile.
     const overlay = page.locator('[data-testid="sidebar-overlay"]');
@@ -113,10 +148,10 @@ test.describe('Mobile responsive layout', () => {
 
   test('tapping the overlay backdrop dismisses the sidebar', async ({
     page,
-    loginAs,
+    apiSignup,
     takeScreenshot,
   }) => {
-    await loginAs(page, 'user@example.com', 'password123');
+    await authenticate(page, apiSignup, 'backdrop');
 
     const overlay = page.locator('[data-testid="sidebar-overlay"]');
     if (!(await overlay.isVisible().catch(() => false))) {

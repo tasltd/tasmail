@@ -3,6 +3,41 @@
 // `page.routeWebSocket` so the test can deliver server frames deterministically.
 import { test, expect } from './fixtures/base';
 import type { WebSocketRoute } from '@playwright/test';
+// Fix (TMAIL-412): per-test signup emails need DB cleanup so re-runs stay
+// idempotent and the e2e.tasmail accounts don't accumulate forever.
+import { deleteMailboxByUsername } from './helpers/db-cleanup.js';
+
+// Fix (TMAIL-412): collect every per-test signup email so the afterAll hook
+// can wipe them from the DB. Replaces the dead hardcoded loginAs path.
+const realtimeEmails: string[] = [];
+
+test.afterAll(() => {
+  for (const email of realtimeEmails) {
+    try {
+      deleteMailboxByUsername(email);
+    } catch {
+      // Best-effort cleanup — don't fail the spec if the DB isn't reachable.
+    }
+  }
+});
+
+// Fix (TMAIL-412): provision a real BYOK account and inject its JWT pair so
+// /app loads without bouncing on the first unmocked endpoint.
+async function authenticate(
+  page: import('@playwright/test').Page,
+  apiSignup: (email: string, password: string) => Promise<{ access_token: string; refresh_token: string }>,
+  slug: string,
+): Promise<void> {
+  const email = `realtime-${slug}-${Date.now()}@e2e.tasmail`;
+  realtimeEmails.push(email);
+  const tokens = await apiSignup(email, 'realtime-pw-2026');
+  await page.goto('/login');
+  await page.evaluate(([at, rt]) => {
+    localStorage.setItem('access_token', at);
+    localStorage.setItem('refresh_token', rt);
+  }, [tokens.access_token, tokens.refresh_token]);
+  await page.goto('/app');
+}
 
 const folderResponse = (inboxUnseen: number) =>
   JSON.stringify([
@@ -77,7 +112,7 @@ const wsHandler = (ws: WebSocketRoute) => {
 test.describe('Real-time updates', () => {
   test('SPA opens a WebSocket connection after login', async ({
     page,
-    loginAs,
+    apiSignup,
     takeScreenshot,
   }, testInfo) => {
     let observedConnection = false;
@@ -86,7 +121,7 @@ test.describe('Real-time updates', () => {
       wsHandler(ws);
     });
 
-    await loginAs(page, 'user@example.com', 'password123');
+    await authenticate(page, apiSignup, 'ws-connect');
 
     // Give the hook one tick to open its socket.
     await expect.poll(() => observedConnection, { timeout: 10_000 }).toBe(true);
@@ -97,7 +132,7 @@ test.describe('Real-time updates', () => {
 
   test('new_mail event invalidates folders and bumps unread badge', async ({
     page,
-    loginAs,
+    apiSignup,
     takeScreenshot,
   }) => {
     await page.routeWebSocket('**/ws**', (ws) => {
@@ -121,7 +156,7 @@ test.describe('Real-time updates', () => {
       });
     });
 
-    await loginAs(page, 'user@example.com', 'password123');
+    await authenticate(page, apiSignup, 'new-mail');
 
     const inboxBadge = page
       .locator('.folder-tree .folder-item', { hasText: 'INBOX' })
@@ -133,7 +168,7 @@ test.describe('Real-time updates', () => {
 
   test('quota_update event refreshes the quota indicator', async ({
     page,
-    loginAs,
+    apiSignup,
     takeScreenshot,
   }) => {
     let usedBytes = 100;
@@ -163,7 +198,7 @@ test.describe('Real-time updates', () => {
       });
     });
 
-    await loginAs(page, 'user@example.com', 'password123');
+    await authenticate(page, apiSignup, 'quota-update');
 
     // The quota indicator should eventually pick up the new value (component
     // class name varies — match either the QuotaBar or a percentage-aware label).
@@ -175,7 +210,7 @@ test.describe('Real-time updates', () => {
 
   test('socket reconnects after the server closes the connection', async ({
     page,
-    loginAs,
+    apiSignup,
     takeScreenshot,
   }) => {
     let connectCount = 0;
@@ -189,7 +224,7 @@ test.describe('Real-time updates', () => {
       }
     });
 
-    await loginAs(page, 'user@example.com', 'password123');
+    await authenticate(page, apiSignup, 'reconnect');
 
     await expect.poll(() => connectCount, { timeout: 15_000 }).toBeGreaterThanOrEqual(2);
     await takeScreenshot(page, 'realtime/reconnect');

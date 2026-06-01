@@ -1,5 +1,24 @@
 // Added: Authentication E2E specs for TASMail (TMAIL-36)
 import { test, expect } from './fixtures/base';
+// Fix (TMAIL-412): per-test signup emails need DB cleanup so re-runs stay
+// idempotent and the e2e.tasmail accounts don't accumulate forever.
+import { deleteMailboxByUsername } from './helpers/db-cleanup.js';
+
+// Fix (TMAIL-412): collect every per-test signup email so the afterAll hook can
+// wipe them from the DB. Replaces the dead hardcoded loginAs(user@example.com)
+// path that bounced mid-test on unmocked endpoints.
+const authEmails: string[] = [];
+
+test.afterAll(() => {
+  for (const email of authEmails) {
+    try {
+      deleteMailboxByUsername(email);
+    } catch {
+      // Best-effort cleanup — don't fail the spec if the DB isn't reachable
+      // (e.g. CI runs against a remote backend without psql).
+    }
+  }
+});
 
 test.describe('Login Page', () => {
   test('renders login form with branding', async ({ page, takeScreenshot }) => {
@@ -79,20 +98,8 @@ test.describe('Login Page', () => {
     await takeScreenshot(page, 'auth/login-loading-state');
   });
 
-  test('successful login redirects to mailbox', async ({ page, loginAs, takeScreenshot }) => {
-    // Added: Mock login API to return valid tokens
-    await page.route('**/api/auth/login', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          access_token: 'mock-access-token',
-          refresh_token: 'mock-refresh-token',
-        }),
-      });
-    });
-
-    // Added: Mock folders API so sidebar loads after login
+  test('successful login redirects to mailbox', async ({ page, apiSignup, takeScreenshot }) => {
+    // Added: Mock folders API so sidebar loads after JWT injection
     await page.route('**/api/folders', async (route) => {
       await route.fulfill({
         status: 200,
@@ -125,7 +132,20 @@ test.describe('Login Page', () => {
       });
     });
 
-    await loginAs(page, 'user@example.com', 'password123');
+    // Fix (TMAIL-412): the hardcoded loginAs('user@example.com') call relied
+    // on a mailbox that doesn't exist in the DB, so the SPA's first unmocked
+    // request 401s, refresh fails, and the page bounces back to /login mid
+    // test. Provision a real per-test BYOK account via the public signup
+    // endpoint and inject its JWT pair into localStorage instead.
+    const email = `auth-roundtrip-${Date.now()}@e2e.tasmail`;
+    authEmails.push(email);
+    const tokens = await apiSignup(email, 'auth-pw-2026');
+    await page.goto('/login');
+    await page.evaluate(([at, rt]) => {
+      localStorage.setItem('access_token', at);
+      localStorage.setItem('refresh_token', rt);
+    }, [tokens.access_token, tokens.refresh_token]);
+    await page.goto('/app');
 
     // Added: Verify sidebar is visible after login (confirms successful auth)
     await expect(page.locator('.sidebar')).toBeVisible();
@@ -168,19 +188,8 @@ test.describe('Login Page', () => {
 });
 
 test.describe('Logout', () => {
-  test('logout returns to login page', async ({ page, loginAs, takeScreenshot }) => {
+  test('logout returns to login page', async ({ page, apiSignup, takeScreenshot }) => {
     // Added: Set up route mocks for authenticated session
-    await page.route('**/api/auth/login', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          access_token: 'mock-access-token',
-          refresh_token: 'mock-refresh-token',
-        }),
-      });
-    });
-
     await page.route('**/api/folders', async (route) => {
       await route.fulfill({
         status: 200,
@@ -218,7 +227,18 @@ test.describe('Logout', () => {
       await route.fulfill({ status: 204, body: '' });
     });
 
-    await loginAs(page, 'user@example.com', 'password123');
+    // Fix (TMAIL-412): same dead loginAs('user@example.com') replacement as
+    // the successful-login spec above — provision a real BYOK account so the
+    // SPA can sit on /app without bouncing on the first unmocked endpoint.
+    const email = `auth-logout-${Date.now()}@e2e.tasmail`;
+    authEmails.push(email);
+    const tokens = await apiSignup(email, 'auth-pw-2026');
+    await page.goto('/login');
+    await page.evaluate(([at, rt]) => {
+      localStorage.setItem('access_token', at);
+      localStorage.setItem('refresh_token', rt);
+    }, [tokens.access_token, tokens.refresh_token]);
+    await page.goto('/app');
     await takeScreenshot(page, 'auth/logout-before');
 
     // Added: Click the logout button in the top bar (navigating via UI, not goto)

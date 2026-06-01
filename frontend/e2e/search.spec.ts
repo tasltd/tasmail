@@ -1,6 +1,41 @@
 // Added: Search E2E specs — TopBar search bar, results page, empty + populated states (TMAIL-36)
 // Covers the "search" requirement from TMAIL-36.
 import { test, expect } from './fixtures/base';
+// Fix (TMAIL-412): per-test signup emails need DB cleanup so re-runs stay
+// idempotent and the e2e.tasmail accounts don't accumulate forever.
+import { deleteMailboxByUsername } from './helpers/db-cleanup.js';
+
+// Fix (TMAIL-412): collect every per-test signup email so the afterAll hook
+// can wipe them from the DB. Replaces the dead hardcoded loginAs path.
+const searchEmails: string[] = [];
+
+test.afterAll(() => {
+  for (const email of searchEmails) {
+    try {
+      deleteMailboxByUsername(email);
+    } catch {
+      // Best-effort cleanup — don't fail the spec if the DB isn't reachable.
+    }
+  }
+});
+
+// Fix (TMAIL-412): provision a real BYOK account and inject its JWT pair so
+// /app loads without bouncing on the first unmocked endpoint.
+async function authenticate(
+  page: import('@playwright/test').Page,
+  apiSignup: (email: string, password: string) => Promise<{ access_token: string; refresh_token: string }>,
+  slug: string,
+): Promise<void> {
+  const email = `search-${slug}-${Date.now()}@e2e.tasmail`;
+  searchEmails.push(email);
+  const tokens = await apiSignup(email, 'search-pw-2026');
+  await page.goto('/login');
+  await page.evaluate(([at, rt]) => {
+    localStorage.setItem('access_token', at);
+    localStorage.setItem('refresh_token', rt);
+  }, [tokens.access_token, tokens.refresh_token]);
+  await page.goto('/app');
+}
 
 test.beforeEach(async ({ page }) => {
   await page.route('**/api/auth/login', async (route) => {
@@ -49,10 +84,10 @@ test.beforeEach(async ({ page }) => {
 test.describe('Mail search', () => {
   test('search input is visible in the top bar after login', async ({
     page,
-    loginAs,
+    apiSignup,
     takeScreenshot,
   }) => {
-    await loginAs(page, 'user@example.com', 'password123');
+    await authenticate(page, apiSignup, 'input-visible');
 
     const searchInput = page.locator(
       '.topbar__search input[placeholder="Search emails..."]',
@@ -64,10 +99,10 @@ test.describe('Mail search', () => {
 
   test('submitting a query renders matching results', async ({
     page,
-    loginAs,
+    apiSignup,
     takeScreenshot,
   }) => {
-    await loginAs(page, 'user@example.com', 'password123');
+    await authenticate(page, apiSignup, 'results');
 
     await page.route('**/api/search**', async (route) => {
       await route.fulfill({
@@ -113,10 +148,10 @@ test.describe('Mail search', () => {
 
   test('submitting a query with zero matches shows the empty state', async ({
     page,
-    loginAs,
+    apiSignup,
     takeScreenshot,
   }) => {
-    await loginAs(page, 'user@example.com', 'password123');
+    await authenticate(page, apiSignup, 'empty');
 
     await page.route('**/api/search**', async (route) => {
       await route.fulfill({
@@ -140,10 +175,10 @@ test.describe('Mail search', () => {
 
   test('clearing the search input restores the folder view', async ({
     page,
-    loginAs,
+    apiSignup,
     takeScreenshot,
   }) => {
-    await loginAs(page, 'user@example.com', 'password123');
+    await authenticate(page, apiSignup, 'clear');
 
     await page.route('**/api/search**', async (route) => {
       await route.fulfill({

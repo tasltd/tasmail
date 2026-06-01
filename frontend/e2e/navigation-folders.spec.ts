@@ -2,6 +2,41 @@
 // Split from navigation.spec.ts so each spec stays at <=8 tests per the
 // "small focused specs" hard rule in ~/.claude/rules/all-rules.md.
 import { test, expect } from './fixtures/base';
+// Fix (TMAIL-412): per-test signup emails need DB cleanup so re-runs stay
+// idempotent and the e2e.tasmail accounts don't accumulate forever.
+import { deleteMailboxByUsername } from './helpers/db-cleanup.js';
+
+// Fix (TMAIL-412): collect every per-test signup email so the afterAll hook
+// can wipe them from the DB. Replaces the dead hardcoded loginAs path.
+const navFolderEmails: string[] = [];
+
+test.afterAll(() => {
+  for (const email of navFolderEmails) {
+    try {
+      deleteMailboxByUsername(email);
+    } catch {
+      // Best-effort cleanup — don't fail the spec if the DB isn't reachable.
+    }
+  }
+});
+
+// Fix (TMAIL-412): provision a real BYOK account and inject its JWT pair so
+// /app loads without bouncing on the first unmocked endpoint.
+async function authenticate(
+  page: import('@playwright/test').Page,
+  apiSignup: (email: string, password: string) => Promise<{ access_token: string; refresh_token: string }>,
+  slug: string,
+): Promise<void> {
+  const email = `nav-folders-${slug}-${Date.now()}@e2e.tasmail`;
+  navFolderEmails.push(email);
+  const tokens = await apiSignup(email, 'nav-folders-pw-2026');
+  await page.goto('/login');
+  await page.evaluate(([at, rt]) => {
+    localStorage.setItem('access_token', at);
+    localStorage.setItem('refresh_token', rt);
+  }, [tokens.access_token, tokens.refresh_token]);
+  await page.goto('/app');
+}
 
 // Added: Shared route mocks so each test starts in a known logged-in state.
 test.beforeEach(async ({ page }) => {
@@ -58,10 +93,10 @@ test.beforeEach(async ({ page }) => {
 test.describe('Sidebar Navigation', () => {
   test('sidebar renders with folder tree and settings items', async ({
     page,
-    loginAs,
+    apiSignup,
     takeScreenshot,
   }) => {
-    await loginAs(page, 'user@example.com', 'password123');
+    await authenticate(page, apiSignup, 'sidebar');
 
     const sidebar = page.locator('.sidebar');
     await expect(sidebar).toBeVisible();
@@ -74,10 +109,10 @@ test.describe('Sidebar Navigation', () => {
 
   test('mail folders display with unread badges', async ({
     page,
-    loginAs,
+    apiSignup,
     takeScreenshot,
   }) => {
-    await loginAs(page, 'user@example.com', 'password123');
+    await authenticate(page, apiSignup, 'badges');
 
     const folderTree = page.locator('.folder-tree');
     await expect(folderTree.locator('.folder-item__name', { hasText: 'INBOX' })).toBeVisible();
@@ -99,10 +134,10 @@ test.describe('Sidebar Navigation', () => {
 test.describe('Folder Navigation', () => {
   test('click INBOX folder loads inbox content', async ({
     page,
-    loginAs,
+    apiSignup,
     takeScreenshot,
   }) => {
-    await loginAs(page, 'user@example.com', 'password123');
+    await authenticate(page, apiSignup, 'inbox');
 
     const inboxFolder = page.locator('.folder-tree .folder-item', { hasText: 'INBOX' });
     await inboxFolder.click();
@@ -113,10 +148,10 @@ test.describe('Folder Navigation', () => {
 
   test('click Sent folder switches view', async ({
     page,
-    loginAs,
+    apiSignup,
     takeScreenshot,
   }) => {
-    await loginAs(page, 'user@example.com', 'password123');
+    await authenticate(page, apiSignup, 'sent');
 
     const sentFolder = page.locator('.folder-tree .folder-item', { hasText: 'Sent' });
     await sentFolder.click();
@@ -127,10 +162,10 @@ test.describe('Folder Navigation', () => {
 
   test('click Drafts folder switches view', async ({
     page,
-    loginAs,
+    apiSignup,
     takeScreenshot,
   }) => {
-    await loginAs(page, 'user@example.com', 'password123');
+    await authenticate(page, apiSignup, 'drafts');
 
     const draftsFolder = page.locator('.folder-tree .folder-item', { hasText: 'Drafts' });
     await draftsFolder.click();
@@ -141,10 +176,10 @@ test.describe('Folder Navigation', () => {
 
   test('click Trash folder switches view', async ({
     page,
-    loginAs,
+    apiSignup,
     takeScreenshot,
   }) => {
-    await loginAs(page, 'user@example.com', 'password123');
+    await authenticate(page, apiSignup, 'trash');
 
     const trashFolder = page.locator('.folder-tree .folder-item', { hasText: 'Trash' });
     await trashFolder.click();
@@ -155,10 +190,10 @@ test.describe('Folder Navigation', () => {
 
   test('click Junk folder switches view', async ({
     page,
-    loginAs,
+    apiSignup,
     takeScreenshot,
   }) => {
-    await loginAs(page, 'user@example.com', 'password123');
+    await authenticate(page, apiSignup, 'junk');
 
     const junkFolder = page.locator('.folder-tree .folder-item', { hasText: 'Junk' });
     await junkFolder.click();
