@@ -76,16 +76,19 @@ test.describe('First-login tour (TMAIL-401)', () => {
     await expect(page.getByText('Step 1 of 3')).toBeVisible();
     await takeScreenshot(page, `${SCREENSHOT_PREFIX}/01-tour-step-1-compose`);
 
-    // 6. Advance through Step 2 (Inbox).
+    // 6. Advance through Step 2 (Inbox). Match the heading, not the body —
+    //    "Your inbox" also appears in the body copy "Your inbox lives here…"
+    //    so a getByText() locator would hit strict-mode violation (TMAIL-403).
     await page.getByTestId('first-login-tour-next').click();
     await expect(page.getByText('Step 2 of 3')).toBeVisible();
-    await expect(page.getByText('Your inbox')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Your inbox' })).toBeVisible();
     await takeScreenshot(page, `${SCREENSHOT_PREFIX}/02-tour-step-2-inbox`);
 
-    // 7. Step 3 (Settings) — last step's CTA reads "Got it".
+    // 7. Step 3 (Settings) — last step's CTA reads "Got it". Same
+    //    heading-vs-body disambiguation as step 2 (TMAIL-403, defensive).
     await page.getByTestId('first-login-tour-next').click();
     await expect(page.getByText('Step 3 of 3')).toBeVisible();
-    await expect(page.getByText('Everything else')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Everything else' })).toBeVisible();
     await expect(page.getByTestId('first-login-tour-next')).toHaveText('Got it');
     await takeScreenshot(page, `${SCREENSHOT_PREFIX}/03-tour-step-3-settings`);
 
