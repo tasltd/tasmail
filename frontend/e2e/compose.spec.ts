@@ -1,5 +1,8 @@
 // Added: Compose E2E specs for TASMail email composer (TMAIL-36)
 import { test, expect } from './fixtures/base';
+// Fix (TMAIL-408): need DB cleanup for the per-test signup emails so re-runs
+// stay idempotent and the e2e.tasmail accounts don't accumulate forever.
+import { deleteMailboxByUsername } from './helpers/db-cleanup.js';
 
 // Added: Shared route mocks for authenticated session
 test.beforeEach(async ({ page }) => {
@@ -124,7 +127,24 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
+// Fix (TMAIL-408): collect every per-test signup email so the afterAll hook
+// can wipe them from the DB. Each apiSignup() creates a real mailbox row in
+// the live `byok.tasmail` domain; without cleanup the table grows by one
+// row per run.
+const composeEmails: string[] = [];
+
 test.describe('Email Composer', () => {
+  test.afterAll(() => {
+    for (const email of composeEmails) {
+      try {
+        deleteMailboxByUsername(email);
+      } catch {
+        // Best-effort cleanup — don't fail the spec if the DB isn't reachable
+        // (e.g. CI runs against a remote backend without psql).
+      }
+    }
+  });
+
   test('clicking Compose button opens the composer', async ({
     page,
     loginAs,
@@ -231,10 +251,23 @@ test.describe('Email Composer', () => {
 
   test('send button exists and is interactive', async ({
     page,
-    loginAs,
+    apiSignup,
     takeScreenshot,
   }) => {
-    await loginAs(page, 'user@example.com', 'password123');
+    // Fix (TMAIL-408): the hardcoded loginAs('user@example.com') call relied
+    // on a mailbox that doesn't exist in the DB, so the SPA's first unmocked
+    // request 401s, refresh fails, and the page bounces back to /login mid
+    // test. Provision a real per-test BYOK account via the public signup
+    // endpoint and inject its JWT pair into localStorage instead.
+    const email = `compose-${Date.now()}@e2e.tasmail`;
+    composeEmails.push(email);
+    const tokens = await apiSignup(email, 'compose-test-pw-2026');
+    await page.goto('/login');
+    await page.evaluate(([at, rt]) => {
+      localStorage.setItem('access_token', at);
+      localStorage.setItem('refresh_token', rt);
+    }, [tokens.access_token, tokens.refresh_token]);
+    await page.goto('/app');
 
     // Added: Open composer
     await page.locator('.sidebar .btn--compose').click();
@@ -250,10 +283,24 @@ test.describe('Email Composer', () => {
 
   test('SPA validation: composing and sending updates API state', async ({
     page,
-    loginAs,
+    apiSignup,
     takeScreenshot,
   }) => {
-    await loginAs(page, 'user@example.com', 'password123');
+    // Fix (TMAIL-408): same root cause as the send-button test above — the
+    // hardcoded 'user@example.com' login mocked to 200 but the resulting
+    // mock-access-token isn't accepted by any unmocked endpoint, so the SPA
+    // 401s and bounces to /login before the send button is ever clicked,
+    // leaving sendCalled === false. Provision a real BYOK account so the JWT
+    // round-trips cleanly.
+    const email = `compose-spa-${Date.now()}@e2e.tasmail`;
+    composeEmails.push(email);
+    const tokens = await apiSignup(email, 'compose-test-pw-2026');
+    await page.goto('/login');
+    await page.evaluate(([at, rt]) => {
+      localStorage.setItem('access_token', at);
+      localStorage.setItem('refresh_token', rt);
+    }, [tokens.access_token, tokens.refresh_token]);
+    await page.goto('/app');
 
     // Added: SPA validation — GET drafts count BEFORE composing
     let draftSaveCount = 0;
