@@ -1,7 +1,10 @@
 // Added (TMAIL-89): E2E spec for offline draft composition.
 //
 // Walks the full flow:
-//   1. Log in via the standard mocked auth fixture.
+//   1. Provision a real BYOK account via apiSignup (TMAIL-412 convention) and
+//      inject the JWT pair into localStorage — the legacy mocked-login flow
+//      bounced mid-test because the unmocked SPA endpoints 401'd and the
+//      apiClient refresh chain redirected to /login.
 //   2. Open the composer (sidebar menu click — not page.goto, per the
 //      navigation HARD RULE).
 //   3. Go offline via `context.setOffline(true)` so the SPA can detect
@@ -18,20 +21,21 @@
 // Screenshots are captured at every key step under e2e/screenshots/offline-draft/.
 
 import { test, expect } from './fixtures/base';
+// Fix (TMAIL-423): collect per-test signup emails so the afterAll hook can
+// wipe them. apiSignup creates a real mailbox row in the live `byok.tasmail`
+// domain; without cleanup the table grows by one row per run.
+import { deleteMailboxByUsername } from './helpers/db-cleanup.js';
 
 const SCREENSHOT_DIR = 'offline-draft';
+
+// Fix (TMAIL-423): track every BYOK mailbox we create so afterAll can DELETE
+// them from the `mailboxes` table. Mirrors the compose.spec.ts cleanup pattern.
+const offlineDraftEmails: string[] = [];
 
 test.describe('Offline draft composition (TMAIL-89)', () => {
   // Bake the same auth/folder/quota mocks the compose.spec uses so we hit
   // AppShell without depending on the real backend.
   test.beforeEach(async ({ page }) => {
-    await page.route('**/api/auth/login', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ access_token: 'mock', refresh_token: 'mock' }),
-      });
-    });
     await page.route('**/api/folders', async (route) => {
       await route.fulfill({
         status: 200,
@@ -69,12 +73,60 @@ test.describe('Offline draft composition (TMAIL-89)', () => {
     await page.route('**/api/signatures', async (route) => {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([]) });
     });
+    // Fix (TMAIL-423 / TMAIL-406): mock FirstLoginTour preference endpoint so
+    // AppShell's mount-time GET doesn't 401 → refresh → redirect-to-/login.
+    // apiSignup already PATCHes this on the real backend, but the mock wins
+    // here so the SPA always sees seen:true regardless of backend state.
+    await page.route('**/api/me/preferences/first-login-tour-seen', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ seen: true }),
+      });
+    });
+    // Fix (TMAIL-423 / TMAIL-406): defensive refresh mock. If any unmocked
+    // endpoint 401s the apiClient hits /api/auth/refresh before redirecting —
+    // stub it out so a missed mock degrades to a no-op instead of bouncing
+    // the whole test to /login.
+    await page.route('**/api/auth/refresh', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          access_token: 'mock-access-token',
+          refresh_token: 'mock-refresh-token',
+        }),
+      });
+    });
+    // Fix (TMAIL-423 / TMAIL-406): contacts autocomplete. RecipientAutocomplete
+    // (To / Cc fields) fires GET /api/contacts?q=... on type. Regex-scoped so
+    // we don't intercept Vite's /src/api/contacts.ts dev module.
+    await page.route(/\/api\/contacts(\?|$)/, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([]),
+      });
+    });
+  });
+
+  // Fix (TMAIL-423): wipe BYOK signups after the spec so re-runs stay
+  // idempotent and the e2e.tasmail accounts don't accumulate forever.
+  test.afterAll(() => {
+    for (const email of offlineDraftEmails) {
+      try {
+        deleteMailboxByUsername(email);
+      } catch {
+        // Best-effort cleanup — don't fail the spec if the DB isn't reachable
+        // (e.g. CI runs against a remote backend without psql).
+      }
+    }
   });
 
   test('draft survives offline, reload, and sync indicator flips on reconnect', async ({
     page,
     context,
-    loginAs,
+    apiSignup,
     takeScreenshot,
   }) => {
     // Track every POST /api/drafts so we can assert the offline window held
@@ -93,14 +145,25 @@ test.describe('Offline draft composition (TMAIL-89)', () => {
       }
     });
 
-    // Step 1: log in.
-    await loginAs(page, 'offline-draft@example.com', 'pw');
+    // Step 1: provision a real BYOK account and inject its JWT pair (TMAIL-412
+    // pattern). Replaces the dead loginAs('offline-draft@example.com', ...)
+    // call that bounced the test mid-flow on the 15min JWT expiry / unmocked
+    // endpoint refresh chain.
+    const email = `offline-draft-${Date.now()}@e2e.tasmail`;
+    offlineDraftEmails.push(email);
+    const tokens = await apiSignup(email, 'offline-draft-pw-2026');
+    await page.goto('/login');
+    await page.evaluate(([at, rt]) => {
+      localStorage.setItem('access_token', at);
+      localStorage.setItem('refresh_token', rt);
+    }, [tokens.access_token, tokens.refresh_token]);
+    await page.goto('/app');
     await takeScreenshot(page, `${SCREENSHOT_DIR}/01-after-login`);
 
     // Step 2: open composer via the sidebar Compose button (HARD RULE — no page.goto for internal routes).
     await page.locator('.sidebar .btn--compose').click();
     const pill = page.getByTestId('draft-sync-status');
-    await expect(pill).toBeVisible();
+    await expect(pill).toBeVisible({ timeout: 15_000 });
     await takeScreenshot(page, `${SCREENSHOT_DIR}/02-composer-open`);
 
     // Step 3: go offline BEFORE typing so we exercise the offline write path.
@@ -158,7 +221,7 @@ test.describe('Offline draft composition (TMAIL-89)', () => {
 
   test('attachment picker queues a file in the offline draft', async ({
     page,
-    loginAs,
+    apiSignup,
     takeScreenshot,
   }) => {
     await page.route('**/api/drafts', async (route) => {
@@ -169,11 +232,26 @@ test.describe('Offline draft composition (TMAIL-89)', () => {
       }
     });
 
-    await loginAs(page, 'offline-attach@example.com', 'pw');
+    // Fix (TMAIL-423): same dead-loginAs replacement as the offline-draft test
+    // above — apiSignup gives the SPA a real JWT so the page doesn't bounce
+    // to /login on the first unmocked request.
+    const email = `offline-attach-${Date.now()}@e2e.tasmail`;
+    offlineDraftEmails.push(email);
+    const tokens = await apiSignup(email, 'offline-attach-pw-2026');
+    await page.goto('/login');
+    await page.evaluate(([at, rt]) => {
+      localStorage.setItem('access_token', at);
+      localStorage.setItem('refresh_token', rt);
+    }, [tokens.access_token, tokens.refresh_token]);
+    await page.goto('/app');
+    await takeScreenshot(page, `${SCREENSHOT_DIR}/attach-00-after-login`);
+
     await page.locator('.sidebar .btn--compose').click();
 
     // Fill a recipient so the draft is non-trivial.
-    await page.locator('input[placeholder*="recipient"]').first().fill('attach@example.com');
+    const toInput = page.locator('input[placeholder*="recipient"]').first();
+    await expect(toInput).toBeVisible({ timeout: 15_000 });
+    await toInput.fill('attach@example.com');
     await takeScreenshot(page, `${SCREENSHOT_DIR}/attach-01-before-pick`);
 
     // Use Playwright's native file chooser — set the file directly on the
