@@ -105,6 +105,15 @@ test.describe('BYOK end-to-end as noreply@techatscale.io', () => {
       .toBeVisible({ timeout: 20_000 });
     await takeScreenshot(page, 'byok-noreply/07-app-shell-loaded');
 
+    // ─── 6a. TMAIL-404 regression: FolderTree must replace "Loading folders…"
+    // with the real list within 5 s. Before the prefetch fix, this stayed
+    // stuck for the full IMAP login round-trip (≥15 s) and broke step 9.
+    await expect(page.locator('.folder-tree--loading'))
+      .toHaveCount(0, { timeout: 5_000 });
+    await expect(page.locator('.folder-item__name', { hasText: /^INBOX$/i }))
+      .toBeVisible({ timeout: 5_000 });
+    await takeScreenshot(page, 'byok-noreply/07a-folder-tree-loaded');
+
     // ─── 7. Validate /api/folders returns a real list from swmail ──────────
     const accessToken = await page.evaluate(() => localStorage.getItem('access_token'));
     expect(accessToken, 'access token persisted to localStorage').toBeTruthy();
@@ -133,9 +142,17 @@ test.describe('BYOK end-to-end as noreply@techatscale.io', () => {
     expect(smtpOk, `SMTP test body: ${JSON.stringify(smtpTestBody)}`).toBe(true);
 
     // ─── 9. Click INBOX in the sidebar to render the message list ──────────
-    const inboxLink = page.locator('button, a, li', { hasText: /INBOX/i }).first();
-    await inboxLink.click().catch(() => null);
-    await page.waitForTimeout(4000);
+    // Changed (TMAIL-404): scope the locator to the FolderTree button so we
+    // never accidentally match a tooltip / aria-label hit elsewhere on the
+    // page, and treat a click failure as a real test failure (previously
+    // .catch(() => null) hid the bug).
+    const inboxButton = page.locator('.folder-tree .folder-item', {
+      has: page.locator('.folder-item__name', { hasText: /^INBOX$/i }),
+    });
+    await expect(inboxButton).toBeVisible({ timeout: 5_000 });
+    await inboxButton.click();
+    await expect(inboxButton).toHaveClass(/folder-item--active/, { timeout: 5_000 });
+    await page.waitForTimeout(2000);
     await takeScreenshot(page, 'byok-noreply/08-inbox-rendered');
   });
 

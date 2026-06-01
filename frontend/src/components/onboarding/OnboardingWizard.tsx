@@ -7,8 +7,13 @@
 // When only one onboarding path is enabled in feature flags, the path step is auto-skipped.
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { byokApi, type ProviderPreset, type CreateImapConfig, type CreateSmtpConfig } from '../../api/byok';
 import { featureFlagsApi, type FeatureFlag } from '../../api/featureFlags';
+// TMAIL-404: prefetch folders during wizard so AppShell renders the real
+// folder list immediately instead of getting stuck on "Loading folders…"
+// while the IMAP login + LIST round-trips against the user's BYOK server.
+import { fetchFolders } from '../../api/folders';
 import './OnboardingWizard.css';
 
 type Step = 'path' | 'provider' | 'imap' | 'smtp' | 'managed' | 'done';
@@ -27,6 +32,12 @@ const blank: ServerForm = { host: '', port: 0, username: '', password: '', encry
 
 export function OnboardingWizard() {
   const navigate = useNavigate();
+  // TMAIL-404: shared QueryClient so we can invalidate any stale `folders`
+  // / `messages` / `quota` entries left over from an earlier visit (e.g. the
+  // user landed on /app with no IMAP config, got a 503-cached error, then
+  // came back through the wizard) AND prefetch /api/folders before navigating
+  // so the request is warm by the time AppShell mounts FolderTree.
+  const queryClient = useQueryClient();
   const [step, setStep] = useState<Step>('path');
   const [presets, setPresets] = useState<ProviderPreset[]>([]);
   const [flags, setFlags] = useState<FeatureFlag[]>([]);
@@ -143,8 +154,33 @@ export function OnboardingWizard() {
         is_default: true,
       };
       await byokApi.createSmtp(req);
+
+      // TMAIL-404: warm /api/folders BEFORE navigating to /app. Without this
+      // the FolderTree mounts cold and shows "Loading folders…" for the full
+      // duration of the first IMAP login + LIST round-trip against the BYOK
+      // server (5-15 s for a fresh swmail/Gmail/Outlook session). Starting the
+      // request here lets it run in parallel with the "done" overlay and the
+      // route transition, so by the time AppShell mounts FolderTree the
+      // request is either complete or far enough along that the user sees the
+      // real folder list within seconds. `fetchQuery` is fire-and-forget — we
+      // don't await it so the wizard's success state shows immediately.
+      // The invalidate is paired so any stale error state from a previous
+      // visit (e.g. 503 "No IMAP server configured") is dropped before the
+      // prefetch attaches.
+      queryClient.invalidateQueries({ queryKey: ['folders'] });
+      queryClient.invalidateQueries({ queryKey: ['messages'] });
+      queryClient.invalidateQueries({ queryKey: ['quota'] });
+      void queryClient.prefetchQuery({
+        queryKey: ['folders'],
+        queryFn: fetchFolders,
+        staleTime: 30_000,
+      });
+
       setStep('done');
-      setTimeout(() => navigate('/app', { replace: true }), 1200);
+      // Changed (TMAIL-404): trim the success-screen delay from 1.2 s to 600 ms
+      // — the prefetch above means the user no longer pays for an idle pause
+      // before the real mailbox renders.
+      setTimeout(() => navigate('/app', { replace: true }), 600);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not save SMTP config');
     } finally { setBusy(false); }
