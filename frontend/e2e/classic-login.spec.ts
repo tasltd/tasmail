@@ -14,6 +14,15 @@
 //     "incorrect email or password" copy and rotates the CSRF token.
 //   * Screenshots: page load, submitted form, CSRF rejection, bad-cred
 //     rejection.
+//
+// Changed (TMAIL-421): every assertion + interaction is now scoped to the
+// `<form action="/classic/login">` locator. The page also renders the
+// site-nav search form (TMAIL-389) and the footer language picker
+// (TMAIL-387), so bare `button[type="submit"]` / `input[name="..."]`
+// selectors tripped Playwright's strict-mode collision check after those
+// two forms landed. Scoping to the login form is the minimal fix and
+// keeps the spec robust against further site-shell additions (e.g. a
+// future "skip to footer" landmark or admin-link bar).
 
 import { test, expect } from './fixtures/base';
 import path from 'path';
@@ -29,17 +38,25 @@ const SCREENSHOT_DIR = path.join(__dirname, 'screenshots', 'classic-login');
 const FAKE_EMAIL = 'this-user-does-not-exist-tmail359@example.invalid';
 const FAKE_PASSWORD = 'wrong-password-tmail359';
 
+// Selector for the login `<form>` itself — used as the scope for every
+// per-form locator below so the spec ignores the site-nav search form and
+// the footer locale picker that share the page (TMAIL-421).
+const LOGIN_FORM = 'form[action="/classic/login"]';
+
 test.describe('Classic UI Login (TMAIL-359)', () => {
   test('GET /classic/login renders the no-JS login form', async ({ page }) => {
     const resp = await page.goto('/classic/login');
     expect(resp?.status()).toBe(200);
 
-    // Form scaffold.
-    await expect(page.locator('form[action="/classic/login"]')).toBeVisible();
-    await expect(page.locator('input[name="email"]')).toBeVisible();
-    await expect(page.locator('input[name="password"]')).toBeVisible();
-    await expect(page.locator('input[name="_csrf"]')).toHaveCount(1);
-    await expect(page.locator('button[type="submit"]')).toBeVisible();
+    // Form scaffold — scope every input/button to the login form to avoid
+    // collisions with the site-nav search button and the language-picker
+    // form that share the page.
+    const form = page.locator(LOGIN_FORM);
+    await expect(form).toBeVisible();
+    await expect(form.locator('input[name="email"]')).toBeVisible();
+    await expect(form.locator('input[name="password"]')).toBeVisible();
+    await expect(form.locator('input[name="_csrf"]')).toHaveCount(1);
+    await expect(form.locator('button[type="submit"]')).toBeVisible();
 
     // Accessible base layout (TMAIL-356 inheritance).
     await expect(page.locator('a.skip-link')).toBeAttached();
@@ -64,7 +81,9 @@ test.describe('Classic UI Login (TMAIL-359)', () => {
     expect(csrfCookie!.httpOnly).toBe(true);
     // The token in the cookie MUST match the hidden form input — that's
     // the double-submit-cookie invariant.
-    const formToken = await page.locator('input[name="_csrf"]').getAttribute('value');
+    const formToken = await page
+      .locator(`${LOGIN_FORM} input[name="_csrf"]`)
+      .getAttribute('value');
     expect(formToken, 'form must carry a _csrf token').toBeTruthy();
     expect(formToken).toBe(csrfCookie!.value);
 
@@ -77,9 +96,11 @@ test.describe('Classic UI Login (TMAIL-359)', () => {
   test('POST with bad credentials re-renders form with generic error', async ({ page }) => {
     await page.goto('/classic/login');
 
+    const form = page.locator(LOGIN_FORM);
+
     // Fill + submit with wrong credentials.
-    await page.locator('input[name="email"]').fill(FAKE_EMAIL);
-    await page.locator('input[name="password"]').fill(FAKE_PASSWORD);
+    await form.locator('input[name="email"]').fill(FAKE_EMAIL);
+    await form.locator('input[name="password"]').fill(FAKE_PASSWORD);
 
     await page.screenshot({
       path: path.join(SCREENSHOT_DIR, 'login-form-filled.png'),
@@ -89,7 +110,7 @@ test.describe('Classic UI Login (TMAIL-359)', () => {
     // Submit the form — Playwright waits for navigation.
     await Promise.all([
       page.waitForLoadState('domcontentloaded'),
-      page.locator('button[type="submit"]').click(),
+      form.locator('button[type="submit"]').click(),
     ]);
 
     // We should land back on the same URL with the form re-rendered.
@@ -97,7 +118,11 @@ test.describe('Classic UI Login (TMAIL-359)', () => {
 
     // Error alert visible with the generic copy. Must NOT mention "locked",
     // account existence, or anything that would leak the lookup result.
-    const alert = page.locator('[role="alert"]');
+    // The `<div class="alert alert-error" role="alert">` block sits ABOVE
+    // the form (TMAIL-385 markup), so we look it up at page scope and
+    // narrow by class to ignore any future success-flash `role="status"`
+    // siblings.
+    const alert = page.locator('.alert-error[role="alert"]');
     await expect(alert).toBeVisible();
     const alertText = (await alert.textContent())?.toLowerCase() ?? '';
     expect(alertText).toContain('incorrect email or password');
@@ -106,7 +131,8 @@ test.describe('Classic UI Login (TMAIL-359)', () => {
 
     // The submitted email must round-trip into the form so the user
     // doesn't have to retype.
-    await expect(page.locator('input[name="email"]')).toHaveValue(FAKE_EMAIL);
+    const reRenderedForm = page.locator(LOGIN_FORM);
+    await expect(reRenderedForm.locator('input[name="email"]')).toHaveValue(FAKE_EMAIL);
 
     await page.screenshot({
       path: path.join(SCREENSHOT_DIR, 'login-bad-credentials-rejected.png'),
@@ -118,23 +144,26 @@ test.describe('Classic UI Login (TMAIL-359)', () => {
     await page.goto('/classic/login');
     // Pull the form token BEFORE clearing the cookie so the form input
     // still carries something to submit.
-    const formToken = await page.locator('input[name="_csrf"]').getAttribute('value');
+    const formToken = await page
+      .locator(`${LOGIN_FORM} input[name="_csrf"]`)
+      .getAttribute('value');
     expect(formToken).toBeTruthy();
 
     // Simulate an extension that strips the cookie.
     await context.clearCookies({ name: 'tasmail_classic_login_csrf' });
 
-    await page.locator('input[name="email"]').fill(FAKE_EMAIL);
-    await page.locator('input[name="password"]').fill(FAKE_PASSWORD);
+    const form = page.locator(LOGIN_FORM);
+    await form.locator('input[name="email"]').fill(FAKE_EMAIL);
+    await form.locator('input[name="password"]').fill(FAKE_PASSWORD);
 
     await Promise.all([
       page.waitForLoadState('domcontentloaded'),
-      page.locator('button[type="submit"]').click(),
+      form.locator('button[type="submit"]').click(),
     ]);
 
     expect(page.url()).toContain('/classic/login');
 
-    const alert = page.locator('[role="alert"]');
+    const alert = page.locator('.alert-error[role="alert"]');
     await expect(alert).toBeVisible();
     const alertText = (await alert.textContent())?.toLowerCase() ?? '';
     // Distinct error message from the credential path so a user whose
@@ -152,11 +181,12 @@ test.describe('Classic UI Login (TMAIL-359)', () => {
     const before = (await context.cookies()).find((c) => c.name === 'tasmail_classic_login_csrf');
     expect(before).toBeDefined();
 
-    await page.locator('input[name="email"]').fill(FAKE_EMAIL);
-    await page.locator('input[name="password"]').fill(FAKE_PASSWORD);
+    const form = page.locator(LOGIN_FORM);
+    await form.locator('input[name="email"]').fill(FAKE_EMAIL);
+    await form.locator('input[name="password"]').fill(FAKE_PASSWORD);
     await Promise.all([
       page.waitForLoadState('domcontentloaded'),
-      page.locator('button[type="submit"]').click(),
+      form.locator('button[type="submit"]').click(),
     ]);
 
     const after = (await context.cookies()).find((c) => c.name === 'tasmail_classic_login_csrf');

@@ -147,6 +147,16 @@ export default defineConfig({
         target: `ws://127.0.0.1:${process.env.TASMAIL_BACKEND_PORT ?? 3300}`,
         ws: true,
       },
+      // Added (TMAIL-421): /classic/* is the no-JS Classic UI surface owned
+      // by the Rust backend (handlers::classic::router). Without this entry
+      // every /classic/login | /classic/folders/... request was being caught
+      // by Vite's SPA fallback and answered with index.html, breaking every
+      // classic-* E2E spec when the test base URL ran through the dev
+      // tunnel / Apache → Vite stack rather than directly against :3300.
+      '/classic': {
+        target: `http://127.0.0.1:${process.env.TASMAIL_BACKEND_PORT ?? 3300}`,
+        changeOrigin: true,
+      },
     },
   },
 })
