@@ -77,6 +77,14 @@ test.describe('TMAIL-283 Folder tree + message list sweep', () => {
     accessToken = signupBody.access_token;
     authHeader = { Authorization: `Bearer ${accessToken}` };
 
+    // TMAIL-405: pre-mark the FirstLoginTour as seen so the overlay doesn't
+    // intercept clicks once the test navigates to /app. Without this every
+    // INBOX / folder click times out behind the tour backdrop.
+    await api.patch('/api/me/preferences/first-login-tour-seen', {
+      headers: authHeader,
+      data: {},
+    });
+
     // Attach the noreply IMAP server as the default — the same shape the wizard
     // would POST after the user clicks Save & continue. We set `trash_folder`
     // to the Stalwart special-use name so TMAIL-283's delete flow can resolve

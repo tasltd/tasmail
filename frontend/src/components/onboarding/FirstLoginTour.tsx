@@ -161,10 +161,13 @@ export function FirstLoginTour({ forceOpen = false }: FirstLoginTourProps) {
       aria-modal="true"
       aria-labelledby="first-login-tour-title"
     >
+      {/* TMAIL-405: backdrop is purely visual dimming. pointer-events:none
+          in the stylesheet means it never receives clicks; users dismiss via
+          the explicit Skip / Got it buttons in the popover. */}
       <div
         className="first-login-tour__backdrop"
         data-testid="first-login-tour-backdrop"
-        onClick={handleDismiss}
+        aria-hidden="true"
       />
       <div
         className={`first-login-tour__popover ${

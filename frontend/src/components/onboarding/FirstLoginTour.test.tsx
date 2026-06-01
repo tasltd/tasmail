@@ -70,10 +70,18 @@ describe('FirstLoginTour', () => {
     await waitFor(() => expect(markFirstLoginTourSeen).toHaveBeenCalledTimes(1));
   });
 
-  it('PATCHes when the backdrop is clicked', async () => {
+  // TMAIL-405: backdrop is no longer interactive (pointer-events: none) and
+  // has no onClick handler. It exists purely as visual dimming. The popover
+  // buttons (Skip / Next / Got it) are the only dismiss surfaces. Verify the
+  // backdrop renders but has no click handler attached.
+  it('renders the backdrop as a non-interactive visual layer', () => {
     render(wrap(<FirstLoginTour forceOpen />));
-    fireEvent.click(screen.getByTestId('first-login-tour-backdrop'));
-    await waitFor(() => expect(markFirstLoginTourSeen).toHaveBeenCalledTimes(1));
+    const backdrop = screen.getByTestId('first-login-tour-backdrop');
+    expect(backdrop).toBeInTheDocument();
+    expect(backdrop).toHaveAttribute('aria-hidden', 'true');
+    // No onClick — clicking the backdrop must not dismiss the tour.
+    fireEvent.click(backdrop);
+    expect(markFirstLoginTourSeen).not.toHaveBeenCalled();
   });
 
   it('does not render when the backend flag already says seen=true', async () => {

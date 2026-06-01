@@ -38,6 +38,29 @@ export const NOREPLY_CREDS = {
   },
 } as const;
 
+// TMAIL-405: helper that marks the FirstLoginTour as already seen for a given
+// access token. The tour mounts on /app for every fresh account and its
+// backdrop / popover would otherwise intercept downstream Playwright clicks.
+// Tests that explicitly need the tour to appear (e.g. an auth-onboarding spec
+// that validates the tour itself) should NOT call this — see signupAsTourVisible.
+async function markFirstLoginTourSeenViaApi(baseURL: string | undefined, accessToken: string): Promise<void> {
+  const url = `${baseURL?.replace(/\/$/, '') ?? ''}/api/me/preferences/first-login-tour-seen`;
+  const resp = await fetch(url, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: '{}',
+  });
+  if (!resp.ok) {
+    // Don't hard-fail the test — older backends without this endpoint should
+    // still let the rest of the fixtures run. Surface the warning so it's
+    // visible in CI logs.
+    console.warn(`markFirstLoginTourSeenViaApi: PATCH returned HTTP ${resp.status}`);
+  }
+}
+
 // Added: Extended test fixture with screenshot helper, login + signup utilities.
 export const test = base.extend<{
   screenshotDir: string;
@@ -45,6 +68,8 @@ export const test = base.extend<{
   loginAs: (page: Page, email: string, password: string) => Promise<void>;
   signupAs: (page: Page, email: string, password: string) => Promise<void>;
   apiSignup: (email: string, password: string) => Promise<{ access_token: string; refresh_token: string }>;
+  apiSignupTourVisible: (email: string, password: string) => Promise<{ access_token: string; refresh_token: string }>;
+  markTourSeen: (accessToken: string) => Promise<void>;
 }>({
   // Added: Screenshot output directory fixture, resolved to e2e/screenshots/
   screenshotDir: async ({}, use) => {
@@ -96,6 +121,11 @@ export const test = base.extend<{
   // Direct API signup — bypasses the form for tests that just need a token.
   // Returns the JWT pair so the caller can write it to localStorage and visit
   // protected pages directly without going through the UI signup flow.
+  //
+  // TMAIL-405: After signup we also PATCH /api/me/preferences/first-login-tour-seen
+  // so the FirstLoginTour overlay (added in TMAIL-401) doesn't render on /app and
+  // intercept downstream Playwright interactions. Tests that need to drive the
+  // tour itself should use `apiSignupTourVisible` instead.
   apiSignup: async ({ baseURL }, use) => {
     const fn = async (email: string, password: string) => {
       const url = `${baseURL?.replace(/\/$/, '') ?? ''}/api/auth/signup`;
@@ -107,7 +137,37 @@ export const test = base.extend<{
       if (!resp.ok) {
         throw new Error(`apiSignup failed: HTTP ${resp.status} ${await resp.text()}`);
       }
+      const tokens = (await resp.json()) as { access_token: string; refresh_token: string };
+      await markFirstLoginTourSeenViaApi(baseURL, tokens.access_token);
+      return tokens;
+    };
+    await use(fn);
+  },
+
+  // TMAIL-405: variant of apiSignup that does NOT pre-mark the tour as seen.
+  // Use this in specs that explicitly validate the FirstLoginTour UI.
+  apiSignupTourVisible: async ({ baseURL }, use) => {
+    const fn = async (email: string, password: string) => {
+      const url = `${baseURL?.replace(/\/$/, '') ?? ''}/api/auth/signup`;
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+      if (!resp.ok) {
+        throw new Error(`apiSignupTourVisible failed: HTTP ${resp.status} ${await resp.text()}`);
+      }
       return resp.json() as Promise<{ access_token: string; refresh_token: string }>;
+    };
+    await use(fn);
+  },
+
+  // TMAIL-405: exposed so specs that call the raw /api/auth/signup endpoint
+  // directly (e.g. folder-messagelist.spec.ts's beforeAll) can still benefit
+  // from the tour-seen pre-mark without going through apiSignup.
+  markTourSeen: async ({ baseURL }, use) => {
+    const fn = async (accessToken: string) => {
+      await markFirstLoginTourSeenViaApi(baseURL, accessToken);
     };
     await use(fn);
   },
