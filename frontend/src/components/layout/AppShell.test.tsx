@@ -30,6 +30,14 @@ vi.mock('../../hooks/useResponsive', () => ({
   }),
 }));
 
+// Fix (TMAIL-424): AppShell now mounts useWebSocket for realtime push events.
+// jsdom has no WebSocket constructor, so stub the hook to keep AppShell unit
+// tests focused on layout/routing. The realtime E2E spec exercises the real
+// hook against the live backend.
+vi.mock('../../hooks/useWebSocket', () => ({
+  useWebSocket: vi.fn(() => ({ connected: false, subscribe: vi.fn() })),
+}));
+
 // Added: Mock all child components
 vi.mock('./TopBar', () => ({
   TopBar: ({ onLogout }: { onLogout: () => void }) => (

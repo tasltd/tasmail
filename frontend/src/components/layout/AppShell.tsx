@@ -15,6 +15,13 @@ import { useResponsive } from '../../hooks/useResponsive';
 import { useSearchUrlSync } from '../../hooks/useSearchUrlSync';
 // Added (TMAIL-88): "Pending sync: N actions" banner for offline queue visibility.
 import { PendingSyncBanner } from '../shared/PendingSyncBanner';
+// Fix (TMAIL-424): mount the realtime WebSocket here so /app users get
+// push-driven folder/quota updates. The hook existed but had no consumer,
+// so realtime.spec.ts never saw a connection open. Token is read from
+// localStorage because useAuth deliberately only exposes the auth flag —
+// AppShell mounts behind RequireAuth, so the access_token is guaranteed
+// to be present at mount time.
+import { useWebSocket } from '../../hooks/useWebSocket';
 // Added (TMAIL-401): lazy-loaded first-login product tour. Renders nothing
 // for users who have already dismissed it, so the import + chunk is cheap
 // after the initial visit.
@@ -87,6 +94,13 @@ export function AppShell({ onLogout, content }: AppShellProps) {
   const { isMobile } = useResponsive();
   // Added (TMAIL-32): keep ?q=... and advanced filters in the URL so search is bookmarkable.
   useSearchUrlSync();
+  // Fix (TMAIL-424): open the realtime push channel for the signed-in session.
+  // The hook owns reconnect + React Query invalidation; we only need to feed
+  // it the access token. Re-reads on every render are cheap and let the next
+  // reconnect pick up a refreshed token after the 15-min access TTL.
+  const accessToken =
+    typeof localStorage !== 'undefined' ? localStorage.getItem('access_token') : null;
+  useWebSocket({ token: accessToken });
 
   return (
     <div className={`app-shell ${sidebarOpen ? '' : 'app-shell--sidebar-collapsed'}`}>
