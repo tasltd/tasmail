@@ -193,10 +193,13 @@
     }
     /* TMAIL-387 — Footer language picker. Sits to the right of the
        quota indicator on wide viewports, wraps below on narrow. The
-       <select> + button are sized to match nav text — the picker is a
-       housekeeping control, not a primary CTA. No JS — the form POSTs
-       to /classic/locale which sets the tasmail_classic_locale cookie
-       and 303s back. */
+       dropdown + submit button are sized to match nav text — the picker
+       is a housekeeping control, not a primary CTA. No JS — the form
+       POSTs to /classic/locale which sets the tasmail_classic_locale
+       cookie and 303s back.
+       (Note: avoid literal "<select>" tag syntax inside this CSS comment
+       so the WCAG structural test in `tests/classic_a11y_test.rs` does
+       not mistake it for unlabelled markup — TMAIL-420.) */
     .lang-picker {
       display: inline-flex;
       flex-wrap: wrap;

@@ -212,10 +212,52 @@ fn assert_classic_shell(html: &str, page_label: &str) {
     );
 }
 
+/// Strip the contents of every `<style>...</style>` (and `<script>...</script>`,
+/// though Classic UI has none) block from the HTML before structural scans.
+/// CSS / JS bodies legitimately contain text like `<select>` or `<input>` inside
+/// comments (e.g. "The <select> + button are sized…"); without stripping, the
+/// naive `<tag` walker below would treat that prose as a real form element and
+/// fire a false positive. TMAIL-420.
+fn strip_style_and_script_blocks(html: &str) -> String {
+    let mut current = html.to_string();
+    for tag in &["style", "script"] {
+        let open_needle = format!("<{tag}");
+        let close_needle = format!("</{tag}>");
+        let mut buf = String::with_capacity(current.len());
+        let mut cursor = 0;
+        while let Some(open) = current[cursor..].find(&open_needle) {
+            let abs_open = cursor + open;
+            // Copy everything up to AND including the opening tag itself, so
+            // `<style nonce="…">` survives (assert_classic_shell checks for it).
+            let close_open = current[abs_open..]
+                .find('>')
+                .map(|p| abs_open + p + 1)
+                .unwrap_or(current.len());
+            buf.push_str(&current[cursor..close_open]);
+            // Skip the body up to the closing tag, then re-emit the closer so
+            // the document still looks structurally balanced to later checks.
+            let body_start = close_open;
+            let close_at = current[body_start..]
+                .find(&close_needle)
+                .map(|p| body_start + p)
+                .unwrap_or(current.len());
+            buf.push_str(&close_needle);
+            cursor = (close_at + close_needle.len()).min(current.len());
+        }
+        buf.push_str(&current[cursor..]);
+        current = buf;
+    }
+    current
+}
+
 /// Check every <label for="X"> targets an input that exists, and every
 /// non-hidden input either has a matching label OR an aria-label /
 /// aria-labelledby. Mirrors axe's `label` rule.
 fn assert_inputs_are_labelled(html: &str, page_label: &str) {
+    // TMAIL-420 — strip <style>/<script> bodies so CSS/JS comments that
+    // mention `<select>` or `<input>` aren't parsed as real markup.
+    let cleaned = strip_style_and_script_blocks(html);
+    let html = cleaned.as_str();
     // Collect every label `for=` attribute value.
     let mut labelled_ids: Vec<String> = Vec::new();
     let mut cursor = 0;
