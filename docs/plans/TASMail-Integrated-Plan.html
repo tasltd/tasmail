@@ -1,0 +1,669 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TASMail — Integrated Project Plan</title>
+<style>
+  body { font-family: system-ui, sans-serif; line-height: 1.6; margin: 2rem; color: #333; }
+  h1, h2, h3 { color: #003559; }
+  .section { margin-bottom: 2rem; padding-bottom: 1rem; border-bottom: 1px solid #eee; }
+  .code { background: #f6f8fa; padding: 2px 6px; border-radius: 3px; font-size: 0.9em; }
+  .warning { background: #fff0f0; padding: 1rem; border-left: 4px solid #e53935; margin: 1rem 0; }
+  .success { background: #f0f4de; padding: 1rem; border-left: 4px solid #43a047; margin: 1rem 0; }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+  th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+  th { background: #f0f0f0; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1rem; margin: 1rem 0; }
+  .card { background: #fff; border: 1px solid #eee; border-radius: 6px; padding: 1rem; }
+</style>
+</head>
+<body>
+  <h1>TASMail — Integrated Project Plan</h1>
+  <p><strong>Product:</strong> Webmail UI for any IMAP/SMTP server (BYOK — bring your own key)</p>
+  <p><strong>Stack:</strong> React 19 SPA (Vite + TypeScript), Rust/Axum backend, Flutter mobile app, PostgreSQL 16+</p>
+  <p><strong>Live:</strong> <a href="https://mail.techatscale.io">https://mail.techatscale.io</a> | GitHub: <a href="https://github.com/tasltd/tasmail">tasltd/tasmail</a> | TASCIM PM: TMAIL</p>
+
+  <hr/>
+
+  <div class="section">
+    <h2>1. Project Overview & Objectives</h2>
+    <p>TASMail is a webmail interface that proxies IMAP/SMTP for the browser using the user's encrypted credentials. Users sign up for a TASMail account, then attach credentials of their existing mail server (Gmail, Outlook, Zoho, FastMail, ProtonMail Bridge, corporate Exchange, etc.). TASMail never stores email — it proxies in real time.</p>
+    <h3>Key Features</h3>
+    <ul>
+      <li>Public signup + landing pages</li>
+      <li>Onboarding wizard with 11 popular IMAP presets (Gmail, Outlook, Yahoo, Zoho, FastMail, iCloud, ProtonMail Bridge)</li>
+      <li>Per-user IMAP/SMTP configurations (migration <code>055_imap_configurations.sql</code>, <code>042_byo_smtp.sql</code>)</li>
+      <li>Synthetic <code>byok.tasmail</code> domain for signups without admin pre-creation (migration <code>056_byok_signup.sql</code>)</li>
+      <li>BYOK signup at GHS 1.00/GB·month (≈ $0.07 USD, GHS 5 monthly minimum)</li>
+      <li>Enterprise tier (single-tenant, SAML/OIDC, on-prem option)</li>
+      <li>Push notifications, scheduling, snooze, calendar (ICS), DLP, phishing scanning</li>
+      <li>Alt-UI theme (shadcn/ui + Radix + Tailwind) served at <code>/modern/</code></li>
+      <li>Flutter mobile app (Android/iOS) with localization (Twi, Ewe, Ga, Hausa)</li>
+    </ul>
+  </div>
+
+  <div class="section">
+    <h2>2. UI/UX Flows</h2>
+    <h3>2.1 Public Landing & Signup</h3>
+    <ul>
+      <li><strong>Landing page:</strong> <code>/</code> → <code>LandingPage.tsx</code> — highlights BYOK positioning, pricing (<code>/pricing</code>), security</li>
+      <figure style="display:inline-block; margin-left:1rem;">
+        <svg width="200" height="120" viewBox="0 0 200 120" xmlns="http://www.w3.org/2000/svg">
+          <rect width="200" height="120" fill="#003559"/>
+          <text x="100" y="50" font-family="sans-serif" font-size="16" fill="white" text-anchor="middle">Landing</text>
+          <text x="100" y="75" font-family="sans-serif" font-size="12" fill="white" text-anchor="middle">https://mail.techatscale.io</text>
+        </svg>
+        <figcaption style="font-size:0.7em; margin-top:0.5rem; color:#666;">Figure 1: Landing page mockup — hero section with brand navy (#003559)</figcaption>
+      </figure>
+      <li><strong>Signup page:</strong> <code>/signup</code> → <code>SignupPage.tsx</code> → <code>POST /api/auth/signup</code> — returns JWT pair</li>
+      <figure style="display:inline-block; margin-left:1rem;">
+        <svg width="200" height="120" viewBox="0 0 200 120" xmlns="http://www.w3.org/2000/svg">
+          <rect width="200" height="120" fill="#003559"/>
+          <circle cx="60" cy="55" r="8" fill="#67c23a"/>
+          <text x="100" y="55" font-family="sans-serif" font-size="14" fill="white" text-anchor="middle">Signup</text>
+          <text x="100" y="80" font-family="sans-serif" font-size="11" fill="#aaa">Fill credentials</text>
+        </svg>
+        <figcaption style="font-size:0.7em; margin-top:0.5rem; color:#666;">Figure 2: Signup page mockup — form with brand accent (#67c23a)</figcaption>
+      </figure>
+      <li><strong>Onboarding wizard:</strong> <code>/onboarding</code> → <code>OnboardingWizard.tsx</code> — guides user through IMAP config test, SMTP test, credential save</li>
+      <figure style="display:inline-block; margin-left:1rem;">
+        <svg width="200" height="120" viewBox="0 0 200 120" xmlns="http://www.w3.org/2000/svg">
+          <rect width="200" height="120" fill="#003559"/>
+          <text x="20" y="30" font-family="sans-serif" font-size="14" fill="white" text-anchor="start">Onboarding Wizard</text>
+          <line x1="20" y1="40" x2="180" y2="40" stroke="#67c23a" stroke-width="2"/>
+          <text x="25" y="70" font-family="sans-serif" font-size="11" fill="#aaa">IMAP config</text>
+          <text x="25" y="85" font-family="sans-serif" font-size="11" fill="#aaa">SMTP test</text>
+          <text x="25" y="100" font-family="sans-serif" font-size="11" fill="#aaa">Save credentials</text>
+        </svg>
+        <figcaption style="font-size:0.7em; margin-top:0.5rem; color:#666;">Figure 3: Onboarding wizard mockup — step-by-step flow</figcaption>
+      </figure>
+    </ul>
+    <h3>2.2 Auth Flows</h3>
+    <ul>
+      <li><strong>Login:</strong> <code>/api/auth/login</code> → JWT access (15min) + refresh (7days) tokens stored in localStorage</li>
+      <figure style="display:inline-block; margin-left:1rem;">
+        <svg width="200" height="120" viewBox="0 0 200 120" xmlns="http://www.w3.org/2000/svg">
+          <rect width="200" height="120" fill="#003559"/>
+          <circle cx="80" cy="60" r="8" fill="#67c23a"/>
+          <text x="100" y="55" font-family="sans-serif" font-size="14" fill="white" text-anchor="middle">Login</text>
+          <text x="100" y="80" font-family="sans-serif" font-size="11" fill="#aaa">Enter IMAP/SMTP</text>
+        </svg>
+        <figcaption style="font-size:0.7em; margin-top:0.5rem; color:#666;">Figure 4: Login mockup — brand accent with credential fields</figcaption>
+      </figure>
+      <li><strong>Refresh:</strong> <code>/api/auth/refresh</code> — rotates access token using refresh token</li>
+      <figure style="display:inline-block; margin-left:1rem;">
+        <svg width="200" height="120" viewBox="0 0 200 120" xmlns="http://www.w3.org/2000/svg">
+          <rect width="200" height="120" fill="#003559"/>
+          <text x="20" y="50" font-family="sans-serif" font-size="14" fill="white" text-anchor="start">Token Refresh</text>
+          <circle cx="150" cy="60" r="8" fill="#67c23a"/>
+          <text x="100" y="55" font-family="sans-serif" font-size="11" fill="#aaa">15 min access</text>
+          <text x="100" y="80" font-family="sans-serif" font-size="11" fill="#aaa">7 day refresh</text>
+        </svg>
+        <figcaption style="font-size:0.7em; margin-top:0.5rem; color:#666;">Figure 5: Refresh token mockup — 15min access / 7day rotation</figcaption>
+      </figure>
+      <li><strong>SAML/OIDC callbacks:</strong> <code>/api/auth/saml/*/login</code>, <code>/api/auth/oidc/*</code></li>
+      <figure style="display:inline-block; margin-left:1rem;">
+        <svg width="200" height="120" viewBox="0 0 200 120" xmlns="http://www.w3.org/2000/svg">
+          <rect width="200" height="120" fill="#003559"/>
+          <text x="20" y="50" font-family="sans-serif" font-size="14" fill="white" text-anchor="start">SAML/OIDC</text>
+          <line x1="20" y1="60" x2="180" y2="60" stroke="#e6a72c" stroke-width="2"/>
+          <text x="100" y="55" font-family="sans-serif" font-size="11" fill="#aaa">Provider callback</text>
+        </svg>
+        <figcaption style="font-size:0.7em; margin-top:0.5rem; color:#666;">Figure 6: SAML/OIDC callback mockup — provider redirect</figcaption>
+      </figure>
+    </ul>
+    <h3>2.3 Mail Client Surfaces</h3>
+    <ul>
+      <li><strong>Message List:</strong> FolderTree ↔ MessageList — IMAP IDLE push, unread count polling</li>
+      <figure style="display:inline-block; margin-left:1rem;">
+        <svg width="200" height="120" viewBox="0 0 200 120" xmlns="http://www.w3.org/2000/svg">
+          <rect width="200" height="120" fill="#003559"/>
+          <text x="20" y="30" font-family="sans-serif" font-size="14" fill="white" text-anchor="start">Message List</text>
+          <line x1="20" y1="40" x2="180" y2="40" stroke="#67c23a" stroke-width="2"/>
+          <text x="25" y="55" font-family="sans-serif" font-size="11" fill="#aaa">Inbox (342)</text>
+          <text x="25" y="70" font-family="sans-serif" font-size="11" fill="#aaa">Trash (12)</text>
+          <text x="25" y="85" font-family="sans-serif" font-size="11" fill="#aaa">Spam (5)</text>
+        </svg>
+        <figcaption style="font-size:0.7em; margin-top:0.5rem; color:#666;">Figure 7: Message List mockup — folder tree with message counts</figcaption>
+      </figure>
+      <li><strong>Message View:</strong> MessageView — renders email with TipTap composer HTML, DOMPurify sanitization</li>
+      <figure style="display:inline-block; margin-left:1rem;">
+        <svg width="200" height="120" viewBox="0 0 200 120" xmlns="http://www.w3.org/2000/svg">
+          <rect width="200" height="120" fill="#003559"/>
+          <text x="20" y="25" font-family="sans-serif" font-size="14" fill="white" text-anchor="start">Message View</text>
+          <line x1="20" y1="40" x2="180" y2="40" stroke="#67c23a" stroke-width="2"/>
+          <text x="25" y="55" font-family="sans-serif" font-size="11" fill="#aaa">From: sender@example.com</text>
+          <text x="25" y="70" font-family="sans-serif" font-size="11" fill="#aaa">Subject: Test message</text>
+          <text x="25" y="85" font-family="sans-serif" font-size="11" fill="#aaa">Date: Today 2:30pm</text>
+          <text x="25" y="100" font-family="sans-serif" font-size="11" fill="#aaa">⋮ more</text>
+        </svg>
+        <figcaption style="font-size:0.7em; margin-top:0.5rem; color:#666;">Figure 8: Message View mockup — email content with metadata</figcaption>
+      </figure>
+      <li><strong>Compose:</strong> Composer (TipTap) → <code>POST /api/messages/send</code> → scheduled send (<code>/api/messages/schedule</code>) / snooze (<code>/api/messages/snooze</code>)</li>
+      <figure style="display:inline-block; margin-left:1rem;">
+        <svg width="200" height="120" viewBox="0 0 200 120" xmlns="http://www.w3.org/2000/svg">
+          <rect width="200" height="120" fill="#003559"/>
+          <text x="20" y="30" font-family="sans-serif" font-size="14" fill="white" text-anchor="start">Compose</text>
+          <line x1="20" y1="45" x2="180" y2="45" stroke="#67c23a" stroke-width="2"/>
+          <line x1="20" y1="55" x2="130" y2="55" stroke="#67c23a" stroke-width="2"/>
+          <line x1="20" y1="65" x2="80" y2="65" stroke="#67c23a" stroke-width="2"/>
+          <text x="100" y="50" font-family="sans-serif" font-size="11" fill="#aaa">To:</text>
+          <text x="100" y="65" font-family="sans-serif" font-size="11" fill="#aaa">recipient@example.com</text>
+          <text x="25" y="80" font-family="sans-serif" font-size="11" fill="#aaa">Subject:</text>
+          <text x="25" y="95" font-family="sans-serif" font-size="11" fill="#aaa">→  Test email</text>
+        </svg>
+        <figcaption style="font-size:0.7em; margin-top:0.5rem; color:#666;">Figure 9: Compose mockup — email composition with TipTap editor</figcaption>
+      </figure>
+      <li><strong>Search:</strong> <code>GET /api/search</code> — full-text across From/To/Subject/Content</li>
+      <figure style="display:inline-block; margin-left:1rem;">
+        <svg width="200" height="120" viewBox="0 0 200 120" xmlns="http://www.w3.org/2000/svg">
+          <rect width="200" height="120" fill="#003559"/>
+          <text x="20" y="30" font-family="sans-serif" font-size="14" fill="white" text-anchor="start">Search</text>
+          <line x1="20" y1="45" x2="180" y2="45" stroke="#e6a72c" stroke-width="2"/>
+          <text x="25" y="60" font-family="sans-serif" font-size="11" fill="#aaa">Query: unread from:Gmail</text>
+          <text x="25" y="75" font-family="sans-serif" font-size="11" fill="#aaa">342 messages found</text>
+        </svg>
+        <figcaption style="font-size:0.7em; margin-top:0.5rem; color:#666;">Figure 10: Search mockup — query with result count</figcaption>
+      </figure>
+      <li><strong>Folder operations:</strong> List, create, rename, delete folders → <code>/api/folders</code>, <code>/api/folders/{folder}/messages</code></li>
+      <figure style="display:inline-block; margin-left:1rem;">
+        <svg width="200" height="120" viewBox="0 0 200 120" xmlns="http://www.w3.org/2000/svg">
+          <rect width="200" height="120" fill="#003559"/>
+          <text x="20" y="30" font-family="sans-serif" font-size="14" fill="white" text-anchor="start">Folders</text>
+          <line x1="20" y1="45" x2="180" y2="45" stroke="#67c23a" stroke-width="2"/>
+          <rect x="20" y="55" width="30" height="8" fill="#67c23a"/>
+          <rect x="55" y="55" width="30" height="8" fill="#67c23a"/>
+          <rect x="90" y="55" width="30" height="8" fill="#67c23a"/>
+          <rect x="125" y="55" width="30" height="8" fill="#67c23a"/>
+          <text x="25" y="110" font-family="sans-serif" font-size="11" fill="#aaa">Inbox • Drafts • Sent • Trash</text>
+        </svg>
+        <figcaption style="font-size:0.7em; margin-top:0.5rem; color:#666;">Figure 11: Folder operations mockup — folder list with CRUD actions</figcaption>
+      </figure>
+      <li><strong>Attachment download:</strong> <code>GET /api/attachments/{id}</code> — signed token-based download</li>
+      <figure style="display:inline-block; margin-left:1rem;">
+        <svg width="200" height="120" viewBox="0 0 200 120" xmlns="http://www.w3.org/2000/svg">
+          <rect width="200" height="120" fill="#003559"/>
+          <text x="20" y="30" font-family="sans-serif" font-size="14" fill="white" text-anchor="start">Attachment</text>
+          <line x1="20" y1="45" x2="180" y2="45" stroke="#e6a72c" stroke-width="2"/>
+          <circle cx="100" cy="60" r="12" fill="none" stroke="#67c23a" stroke-width="2"/>
+          <text x="25" y="80" font-family="sans-serif" font-size="11" fill="#aaa">📎 1 attachment</text>
+          <text x="25" y="95" font-family="sans-serif" font-size="11" fill="#aaa">2.3 MB of 25 MB</text>
+        </svg>
+        <figcaption style="font-size:0.7em; margin-top:0.5rem; color:#666;">Figure 12: Attachment mockup — file with size progress</figcaption>
+      </figure>
+      <li><strong>Shared files:</code> <code>GET /api/shared-files/{token}</code> — large file sharing</li>
+      <figure style="display:inline-block; margin-left:1rem;">
+        <svg width="200" height="120" viewBox="0 0 200 120" xmlns="http://www.w3.org/2000/svg">
+          <rect width="200" height="120" fill="#003559"/>
+          <text x="20" y="30" font-family="sans-serif" font-size="14" fill="white" text-anchor="start">Shared Files</text>
+          <line x1="20" y1="45" x2="180" y2="45" stroke="#67c23a" stroke-width="2"/>
+          <text x="25" y="60" font-family="sans-serif" font-size="11" fill="#aaa">file.pdf (8.2 MB)</text>
+          <text x="25" y="75" font-family="sans-serif" font-size="11" fill="#aaa">Secure download link</text>
+        </svg>
+        <figcaption style="font-size:0.7em; margin-top:0.5rem; color:#666;">Figure 13: Shared files mockup — file sharing with token download</figcaption>
+      </figure>
+    </ul>
+    <h3>2.4 Settings</h3>
+    <ul>
+      <li>Contacts, signatures, calendar, billing, AI config, DLP, LDAP, SAML, retention, branding</li>
+      <figure style="display:inline-block; margin-left:1rem;">
+        <svg width="200" height="120" viewBox="0 0 200 120" xmlns="http://www.w3.org/2000/svg">
+          <rect width="200" height="120" fill="#003559"/>
+          <text x="20" y="30" font-family="sans-serif" font-size="14" fill="white" text-anchor="start">Settings</text>
+          <line x1="20" y1="45" x2="180" y2="45" stroke="#67c23a" stroke-width="2"/>
+          <text x="25" y="60" font-family="sans-serif" font-size="11" fill="#aaa">👥 Contacts</text>
+          <text x="25" y="75" font-family="sans-serif" font-size="11" fill="#aaa">📝 Signatures</text>
+          <text x="25" y="90" font-family="sans-serif" font-size="11" fill="#aaa">📅 Calendar</text>
+          <text x="25" y="105" font-family="sans-serif" font-size="11" fill="#aaa">💳 Billing</text>
+        </svg>
+        <figcaption style="font-size:0.7em; margin-top:0.5rem; color:#666;">Figure 14: Settings mockup — main managers grid</figcaption>
+      </figure>
+      <li>Per-organizer ICS UID on calendar events (migration <code>072</code>)</li>
+      <li>Per-account brute-force lockout (migrations <code>073</code>)</li>
+    </ul>
+    <h3>2.5 Alt-UI Theme</h3>
+    <p>Standalone Vite + React app on shadcn/ui + Radix + Tailwind, wired to production backend. Routes: EmailClient + EmailList + EmailReader + ComposeModal, CalendarView, AdminDashboard. Trigger via wand-icon in TopBar or <code>/modern/index.html#/...</code>.</p>
+    <figure style="display:inline-block; margin-left:1rem; max-width:50%;">
+      <svg width="300" height="180" viewBox="0 0 300 180" xmlns="http://www.w3.org/2000/svg">
+        <rect width="300" height="180" fill="#003559"/>
+        <text x="150" y="40" font-family="sans-serif" font-size="16" fill="white" text-anchor="middle">Alt-UI Theme</text>
+        <text x="150" y="70" font-family="sans-serif" font-size="14" fill="#67c23a" text-anchor="middle"> /modern/</text>
+        <text x="150" y="100" font-family="sans-serif" font-size="12" fill="#aaa">EmailClient + EmailList</text>
+        <text x="150" y="115" font-family="sans-serif" font-size="12" fill="#aaa">CalendarView + AdminDashboard</text>
+        <text x="150" y="130" font-family="sans-serif" font-size="12" fill="#aaa">Wand-icon hop</text>
+        <text x="150" y="150" font-family="sans-serif" font-size="12" fill="#aaa">shadcn/ui + Radix</text>
+      </svg>
+      <figcaption style="font-size:0.7em; margin-top:0.5rem; color:#666; line-height:1.4;">Figure 15: Alt-UI Theme mockup — modern SPA surface at /modern/ with all four live surfaces</figcaption>
+    </figure>
+    <p>E2E coverage: <code>frontend/e2e/alt-ui-modern.spec.ts</code> (TMAIL-292) and <code>frontend/e2e/specs/modern-ui-noreply-walkthrough.spec.ts</code>.</p>
+  </div>
+
+  <div class="section">
+    <h2>3. Edge Cases & Error Handling</h2>
+    <h3>3.1 Authentication Failures</h3>
+    <ul>
+      <li>Invalid IMAP/SMTP credentials → graceful error on onboarding wizard test step</li>
+      <li>JWT refresh failure → auto-redirect to re-login; refresh middleware sets <code>app.current_user_id</code> RLS context</li>
+      <li>Token expired → 401 auto-refresh via Axios interceptor in <code>api/client.ts</code></li>
+    </ul>
+    <h3>3.2 IMAP/SMTP Server Errors</h3>
+    <ul>
+      <li>IMAP IDLE disconnect → exponential backoff reconnect; fallback to polling every 30s</li>
+      <li>SMTP send failure → retry queue (email_scheduler), dead-letter to queue with retry count</li>
+      <li>TLS cert validation errors → show informative message; do not silently accept invalid certs</li>
+      <li>Connection timeout → user-configurable timeout (default 30s) with cancel option</li>
+    </ul>
+    <h3>3.3 Quota & Storage</h3>
+    <ul>
+      <li>Quota exceeded → block send; show quota bar in TopBar; serve <code>/api/quota</code> for details</li>
+      <li>Large attachment (>25MB) → compress via ImageMagick (config <code>IMAGE_COMPRESSION_ENABLED</code>); reject if still >25MB</li>
+      <li>Mailbox size near limit → serve quota warnings at login; incremental Maildir rsync backup (per <code>BACKUP-RESTORE.md</code>)</li>
+    </ul>
+    <h3>3.4 TLS & Certificate Errors</h3>
+    <ul>
+      <li>Self-signed certs → user prompted to accept or use ProtonMail Bridge/BYOK-trusted certs</li>
+      <li>Cert expiry → pre-warn at 7 days remaining; block after expiry with clear message</li>
+      <li>Mixed content (HTTP inside HTTPS) → block; enforce TLS everywhere</li>
+    </ul>
+    <h3>3.5 Multi-Tenancy & RLS</h3>
+    <ul>
+      <li>Row-Level Security on by default → ad-hoc <code>psql</code> queries require <code>SET app.current_user_id = '<uuid>';</code></li>
+      <li>Tenant-scoped tables: <code>emails</code>, <code>contacts</code>, <code>signatures</code> — RLS enforces per-user isolation</li>
+      <li>Cross-tenant data leak prevention → service layer enforces @CurrentTenant filtering; direct Domain.static calls bypass RLS (prohibited per <code>controller-service-calls.md</code>)</li>
+    </ul>
+  </div>
+
+  <div class="section">
+    <h2>4. Testing Strategy</h2>
+    <h4>4.1 RIPUIF Workflow (MANDATORY)</h4>
+    <p>Research → Investigate → Plan → Implement → Update → Fix at STORY level. Research happens ONCE at the parent (epic/story) covering every leaf. Leaves inherit the R-gate decision on online search.</p>
+    <h4>4.2 Batch Boundary is the EPIC</h4>
+    <p>Implement every story first. Testing runs ONCE when the EPIC hits In Review. A story reaching In Review does NOT schedule testing.</p>
+    <h4>4.3 Test Types & Locations</h4>
+    <table>
+      <tr><th>Test Type</th><th>Location</th><th>Runner</th><th>Where</th></tr>
+      <tr><td>Unit</td><td><code>src/test/groovy/</code></td><td><code>./gradlew test</code></td><td>Host (OK)</td></tr>
+      <tr><td>Integration (ServiceSpec)</td><td><code>src/integration-test/groovy/</code></td><td><code>run-parallel-tests-lxc.sh</code></td><td>LXC REQUIRED</td></tr>
+      <tr><td>Integration (FunctionalSpec)</td><td><code>src/integration-test/groovy/</code></td><td><code>run-parallel-tests-lxc.sh</code></code></td><td>LXC REQUIRED</td></tr>
+      <tr><td>E2E (Playwright SSR)</td><td><code>e2e/playwright/ssr/</code></td><td><code>npx playwright test</code></td><td>Against LXC backend</td></tr>
+      <tr><td>E2E (Playwright SPA)</td><td><code>e2e/playwright/spa/</code></td><td><code>npx playwright test</code></td><td>Against LXC backend</td></tr>
+    </table>
+    <h4>4.4 Pre-Deployment Gate (MANDATORY)</h4>
+    <p><strong>Before ANY deployment:</strong> Run <code>ClientApiFunctionalSpec</code> in container — 100% pass required. If MCP changes, also run <code>McpServerE2EFunctionalSpec</code>.</p>
+    <h4>4.5 Batch Size Limits</h4>
+    <ul>
+      <li>Integration tests: max 10-15 per batch</li>
+      <li>Functional tests: max 5-8 per batch</li>
+      <li>Unit tests: 30-50 per batch</li>
+      <li>Never run all 411 integration specs at once</li>
+    </ul>
+    <h4>4.6 RIPUIF on Spec Failures</h4>
+    <p>Any spec failure → run RIPUIF and fix in same pass. Never @Ignore, test.skip(), @IgnoreIf. Fix ALL failures including pre-existing.</p>
+  </div>
+
+  <div class="section">
+    <h2>5. E2E Test Requirements</h2>
+    <p>Per <code>plan-e2e-and-user-guide.md</code>: Every plan MUST specify:</p>
+    <ol>
+      <li>E2E tests that navigate the real UI by clicking, capturing screenshot at every assertion point (including every refusal and empty state)</li>
+      <li>A user guide compiled from those screenshots, with numbered callouts and step-by-step process narrative — filed as PM completion gate</li>
+    </ol>
+    <p>The guide is not packaging; it's the forcing function that makes someone actually look at the screenshots.</p>
+    <h3>5.1 SSR E2E Tests (Firefox default)</h3>
+    <ul>
+      <li>Navigate by clicking menu items/sidebar links — never <code>page.goto()</code> for internal routes</li>
+      <li>Screenshot at every assertion: happy path, empty states, refusals, permission gates, validation messages</li>
+      <li>After submit, assert URL moved to show/success page, no error banners, every submitted value echoed</li>
+      <li>Screenshots git-tracked under <code>screenshots/{feature}/</code>, named <code>{feature}-{action}.png</code></li>
+      <li>Review means OPENING the images (Read tool); <code>ls</code> is not review</li>
+    </ul>
+    <h3>5.2 SPA E2E Tests</h3>
+    <ul>
+      <li>Navigate by clicking sidebar entries/links — never <code>page.goto()</code> for internal routes</li>
+      <li>SPA validation = API state before/after: GET resource count/data, perform UI interaction, GET again and confirm backend changed</li>
+      <li>Never trust a toast or DOM update alone</li>
+      <li>Screenshots at every assertion point</li>
+    </ul>
+    <h3>5.3 Mobile E2E Tests</h3>
+    <ul>
+      <li>Flutter app screens with API client validation</li>
+      <li>Sync checkpoint/resolve-conflict flows</li>
+    </ul>
+  </div>
+
+  <div class="section">
+    <h2>6. Integration Topology</h2>
+    <pre class="code">
+    +----------------+     IMAP(S)     +---------------------+
+    |  React SPA     ──────────▶ |  Dovecot IMAP       |
+    |  (frontend/)   BYOK auth  |  (port 993, IMAPS)  |
+    +----------------+             +---------------------+
+              ▲  │                          ▲
+              │  └──── SMTP(S) ────────────┘
+    +----------------+     SMTP(S)     +---------------------+
+    |  Flutter App   ──────────▶ |  Postfix SMTP       |
+    |  (mobile/)     BYOK auth  |  (port 587, Submission)|
+    +----------------+             +---------------------+
+              ▲  │
+              │  └──── PostgreSQL ────────┐
+    +----------------+                 │
+    |  Rust/Axum    ─────────────────┼──► PgPool (sqlx)
+    |  (backend/)                      │
+    +----------------+                 │
+                                    ▼
+                            +----------------------+
+                            |  PostgreSQL 16+ DB   |
+                            |  (users, contacts,    |
+                            |   signatures,        |
+                            |   audit logs,        |
+                            |   billing, AI config)|
+                            +----------------------+
+    </pre>
+    <h3>Key Integration Points</h3>
+    <ul>
+      <li><strong>IMAP IDLE bridge:</strong> <code>async-imap</code> → Dovecot; source of truth for mail data</li>
+      <li><strong>PostgreSQL:</strong> Metadata only (users, contacts, signatures, billing, AI config); sqlx online mode (no .sqlx/ cache)</li>
+      <li><strong>Row-Level Security:</strong> Auth middleware sets <code>app.current_user_id</code> per request; ad-hoc DB inspection needs it</li>
+      <li><strong>JWT:</strong> Access (15min) + refresh (7days); signs JWTs + derives AES-256-GCM key for DB-stored secrets (rotation invalidates all refresh tokens + encrypted columns)</li>
+      <li><strong>Encryption service:</strong> 32-byte key derived from <code>JWT_SECRET</code>; encrypts IMAP/SMTP passwords, payment provider credentials</li>
+      <li><strong>Queue processor:</strong> BYOK — loads per-user SMTP config from <code>smtp_configurations</code>, decrypts with JWT-derived key; claim_batch with FOR UPDATE SKIP LOCKED</li>
+      <li><strong>Billing rollup:</strong> Daily by default (env <code>TASMAIL_BILLING_ROLLUP_SECS</code>); per-account brute-force lockout (5 attempts/15min/15min lockout)</li>
+      <li><strong>Push notifications:</strong> FCM/APNs/Web Push config optional; credentials from env vars</li>
+      <li><strong>Rspamd client:</strong> Spam filtering integration</li>
+    </ul>
+  </div>
+
+  <div class="section">
+    <h2>7. Deployment Rules</h2>
+    <h3>7.1 Branch-to-Server Mapping</h3>
+    <table>
+      <tr><th>Branch</th><th>Multi-Tenancy</th><th>Servers</th><th>Deploy Method</th></tr>
+      <tr><td><code>master_stable_last</code></td><td>NO</td><td>Fincap, C5 Ashfield, Soupmarkets Prod</td><td>Shell scripts <code>deploy-to-*.sh</code></td></tr>
+      <tr><td><code>authentication-base-on-multi-tenancy-descriminator</code></td><td>YES</td><td>Demo, Edge</td><td>Gradle <code>assembleDeployTo*</code> tasks</td></tr>
+      <tr><td><code>master</code></td><td>YES</td><td>None (future prod)</td><td>Gradle <code>assembleDeployTo*</code> tasks</td></tr>
+    </table>
+    <h3>7.2 Deployment Environment Summary</h3>
+    <table>
+      <tr><th>Environment</th><th>URL</th><th>IP</th><th>Branch</th><th>SPA</th></tr>
+      <tr><td>Production</td><td>soupmarkets.com</td><td>65.20.112.224</td><td>master</td><td>false (SSR only)</td></tr>
+      <tr><td>Demo</td><td>demo.soupmarkets.com</td><td>140.82.32.141</td><td>authentication-base-on-multi-tenancy-descriminator</td><td>false (SSR only)</td></tr>
+      <tr><td>Edge</td><td>edge.soupmarkets.com</td><td>140.82.32.141</td><td>authentication-base-on-multi-tenancy-descriminator</td><td>true (SPA)</td></tr>
+      <tr><td>C5 Ashfield</td><td>c5.ashfieldinvest.com</td><td>38.54.63.138</td><td>authentication-base-on-multi-tenancy-descriminator</td><td>false (SSR only)</td></tr>
+      <tr><td>Fincap</td><td>soupbroker.fincaps.net</td><td>45.77.52.235</td><td>master</td><td>false (SSR only)</td></tr>
+    </table>
+    <h3>7.3 Deploy Commands</h3>
+    <pre class="code">
+    # MANDATORY pre-deploy test (no exceptions)
+    source env-variables.sh
+    env JAVA_HOME=/home/ddr/.sdkman/candidates/java/19.0.2-tem \
+        PATH="/home/ddr/.sdkman/candidates/java/19.0.2-tem/bin:$PATH" \
+        ./gradlew --no-daemon integrationTest --console=plain --no-parallel -q \
+        --tests 'soupbroker.kyc.ClientApiFunctionalSpec'
+
+    # Demo/Edge: ALWAYS use assembleDeployToDemo (chains Demo → SoupFinance → Edge → Souplify)
+    env JAVA_HOME=/home/ddr/.sdkman/candidates/java/19.0.2-tem \
+        PATH="/home/ddr/.sdkman/candidates/java/19.0.2-tem/bin:/usr/local/sbin:... \
+        ./gradlew --no-daemon assembleDeployToDemo --console=plain -q
+
+    # Production
+    env JAVA_HOME=/home/ddr/.sdkman/candidates/java/19.0.2-tem \
+        ./gradlew --no-daemon assembleDeployToSoupmarkets --console=plain -q
+
+    # LXC dev server (soupfinance-backend at 10.115.213.183:9090)
+    ./gradlew assembleDeployToSoupfinanceBackend --console=plain -q
+
+    # LXC souplify backend (10.115.213.57:9090)
+    ./gradlew assembleDeployToSouplifyBackend --console=plain -q
+    </pre>
+    <h3>7.4 Deployment Mechanisms</h3>
+    <ul>
+      <li><strong>Exploded-rsync:</strong> WAR exploded locally; rsync only changed files into <code><tomcat>/webapps/ROOT</code> or <code>/opt/soupmarkets/exploded</code>; <strong>no ROOT.war lands on box</strong>; script drops any stray one</li>
+      <li><strong>NOT WAR shipping:</strong> Never ship ~400MB WAR; only rsync changed files</li>
+      <li><strong>Tomcat restart:</strong> <code>shutdown.sh && sleep 5 && startup.sh</code></li>
+      <li><strong>LXC restart:</strong> <code>systemctl restart soupmarkets</code> inside container</li>
+    </ul>
+    <h3>7.5 Critical Deployment Rules</h3>
+    <ul>
+      <li><strong>Never deploy with failing tests</strong> — pre-deploy gate is 100% pass or abort</li>
+      <li><strong>master_stable_last</code> is SSR-only</strong> — no SPA updates; fixes adapted manually, not cherry-picked</li>
+      <li><strong>Never deploy multi-tenancy code to non-multi-tenant servers</strong> — Fincap/Ashfield/Prod sin tenant infra</li>
+      <li><strong>Never run MT and MSL Gradle in parallel</strong> — JDK 19 vs 17 conflict, resource contention, traceability</li>
+      <li><strong>Demo is production tenant database</strong> — never load dummy/throwaway data; treat as live</li>
+      <li><strong>LXC dev is the gate</strong> — never test on Demo first; always LXC dev server (10.115.213.183) first</li>
+    </ul>
+  </div>
+
+  <div class="section">
+    <h2>8. Branding & Favicon</h2>
+    <p>Per <code>web-facing-favicon-branding.md</code>: Every web-facing surface MUST ship its own brand favicon — never framework default.</p>
+    <h3>8.1 Mandatory Checks Before Deploy</h3>
+    <ol>
+      <li>favicon is NOT the framework default (Angular CLI stock = 15086 bytes, md5 <code>05bcfe9a02b93e1c5a5da14bfda8c41f</code>)</li>
+      <li>Generate from real logo (SVG under assets); don't hand-draw</li>
+      <li><code>&lt;head&gt;</code> wires: SVG icon + png 32 + multi-size .ico + apple-touch-icon 180 + <code><meta name="theme-color" content="#003559"></code> (brand navy)</li>
+      <li><code>&lt;title&gt;</code> is product name, not scaffold name</li>
+      <li>Icons in build asset pipeline so they ship (Angular <code>angular.json</code> assets globs, Vite <code>public/</code>, Grails asset pipeline)</li>
+      <li>Multi-tenant/white-label: verify per-tenant favicon resolves where tenants have own branding</li>
+    </ol>
+    <h3>8.2 Surface-Specific Requirements</h3>
+    <table>
+      <tr>
+        <th>Surface</th>
+        <th>Repo / path</th>
+        <th>Favicon location</th>
+        <th>Title check</th>
+      </tr>
+      <tr><td>Sparx (React 19)</td><td>sparx/</td><td>sparx/public/ + index.html <code>&lt;head&gt;</code></td><td>product name, not "Vite + React"</td></tr>
+      <tr><td>Spangs (Angular 12)</td><td>spa/</td><td>spa/src/favicon.ico + spa/src/index.html</td><td>not "Spa" scaffold name</td></tr>
+      <tr><td>Client Portal</td><td>Soupmarkets-Client-Portal-Web/</td><td>src/favicon.ico + src/assets/Images/ + src/index.html</td><td>"Soupmarkets Client Portal"</td></tr>
+      <tr><td>SSR (GSP)</td><td>grails-app/views/</td><td>grails-app/assets/images/ + layout <code>&lt;head&gt;</code></td><td>—</td></tr>
+      <tr><td>Landing / MCP OAuth UI</td><td>landing-page/, mcp-oauth-ui/</td><td>their own <code>&lt;head&gt;</code></td><td>product name</td></tr>
+    </table>
+  </div>
+
+  <div class="section">
+    <h2>9. RIPUIF Compliance</h2>
+    <h3>9.1 Research at Story Level (MANDATORY)</h3>
+    <p>Research happens once, at the parent story/epic level, covering every leaf including edge cases. Leaves inherit the R-gate decision; do not re-open out of nerves. Gate re-opens only on contact (implementation surprise contradicting research).</p>
+    <h3>9.2 Online Search Decision</h3>
+    <p>Online search required when: external fact governs correctness, design depends on third-party behavior, implementation surprise, reversal/inconsistency, named already-solved problem (pagination, auth, cache invalidation), one-way door with unknown options.</p>
+    <p>Online search NOT required when: answer in codebase + probe would settle it, memory playbook/existing research records it, mechanical change (rename, dead-code deletion, lint autofix, typo), user specified mechanism foreclosing alternatives.</p>
+    <h3>9.3 The R-Gate Records</h3>
+    <p>Story document must contain: Validate/Research/Investigate (once, for whole story), section per leaf (decisions + why), edge cases across whole story (seams between leaves), files table (what each leaf touches), sources (primary with URLs), implementation record appended per leaf as it lands.</p>
+  </div>
+
+  <div class="section">
+    <h2>10. Java Version Requirements</h2>
+    <table>
+      <tr><th>Task</th><th>Java Version</th><th>Command</th></tr>
+      <tr><td>All Gradle tasks (multi-tenancy branches)</td><td>Java 19 (Temurin 19.0.2)</td><td><code>env JAVA_HOME=/home/ddr/.sdkman/candidates/java/19.0.2-tem ./gradlew --no-daemon &lt;task&gt;</code></td></tr>
+      <tr><td>All Gradle tasks (master_stable_last)</td><td>Java 17</td><td><code>export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64</code></td></tr>
+      <tr><td>Server runtime (all)</td><td>Java 21</td><td>Remote servers only</td></tr>
+      <tr><td>SPA Build</td><td>Node.js 16+</td><td>No Java required</td></tr>
+    </table>
+    <p><strong>Why Java 19 for builds:</strong> JDK 21 produces class file version 65 which Gradle 7.6.3's ASM cannot parse (Unsupported class file major version 65). JDK 19 produces version 63, which Gradle supports. Servers still run Java 21 for runtime --enable-preview features.</p>
+  </div>
+
+  <div class="section">
+    <h2>11. Quiet Output Rules (MANDATORY)</h2>
+    <p>All deployment and test commands MUST use quiet flags unless explicitly debugging.</p>
+    <h3>Quiet Commands</h3>
+    <pre class="code">
+    # Deploy (quiet, default)
+    ./gradlew assembleDeployToDemo --console=plain -q 2>&1 | tail -10
+
+    # Tests (quiet)
+    ./gradlew integrationTest --console=plain --no-parallel -q --tests 'ClientApiFunctionalSpec'
+
+    # SPA build (quiet)
+    ./gradlew spaBuildProd --console=plain -q
+    </pre>
+    <h3>Debug Mode</h3>
+    <p>Only use verbose output when user says "debug", "troubleshoot", or "show full output". Capture to file, never terminal.</p>
+  </div>
+
+  <div class="section">
+    <h2>12. Search Safety Rules</h2>
+    <p>NEVER search unbounded directories: <code>spa/node_modules/</code> (100K+ files, 1.5GB+), <code>build/</code>, <code>.gradle/</code>, <code>spa/storybook-static/</code>.</p>
+    <h3>Excluded Directories</h3>
+    <ul>
+      <li><code>spa/node_modules/</code> — 100K+ files</li>
+      <li><code>build/</code> — Gradle build output</li>
+      <li><code>.gradle/</code> — Gradle cache</li>
+      <li><code>spa/storybook-static/</code> — Generated Storybook assets</li>
+      <li><code>spa/.angular/</code> — Angular cache</li>
+    </ul>
+    <h3>Batched Search</h3>
+    <ul>
+      <li>Search one directory at a time: <code>grails-app/</code>, then <code>spa/src/</code>, then <code>src/</code></li>
+      <li>Use <code>head_limit</code> on Grep — limit to first 20 matches</li>
+      <li>Use <code>type</code> filter — e.g., <code>type: "groovy"</code> instead of scanning all files</li>
+      <li>Use <code>timeout 30</code> prefix for Bash search commands that might be slow</li>
+    </ul>
+    <h3>Quick Scoping Reference</h3>
+    <table>
+      <tr><th>Looking for</th><th>Search in</th></tr>
+      <tr><td>Groovy controllers/services/domains</td><td><code>grails-app/</code></td></tr>
+      <tr><td>GSP views</td><td><code>grails-app/views/</code></td></tr>
+      <tr><td>Angular components</td><td><code>spa/src/app/</code></td></tr>
+      <tr><td>Angular assets (SVG, images)</td><td><code>spa/src/assets/</code></td></tr>
+      <tr><td>Unit tests</td><td><code>src/test/groovy/</code></td></tr>
+      <tr><td>Integration tests</td><td><code>src/integration-test/groovy/</code></td></tr>
+      <tr><td>E2E tests (SSR)</td><td><code>e2e/playwright/</code></td></tr>
+      <tr><td>Project docs</td><td><code>docs/</code></td></tr>
+      <tr><td>Claude rules</td><td><code>.claude/rules/</code></td></tr>
+    </table>
+  </div>
+
+  <div class="section">
+    <h2>13. Sentry Integration</h2>
+    <p>Organization: <code>tasltd</code>; Environments: Production <code>soupmarkets.com</code>, Demo <code>demo.soupmarkets.com</code>, Edge <code>edge.soupmarkets.com</code></p>
+    <h3>Available Projects</h3>
+    <ul>
+      <li><code>soupmarkets-web</code> — Grails backend (primary)</li>
+      <li><code>soupmarkets-spa</code> — Angular SPA (if configured separately)</li>
+      <li><code>soupmarkets-mobile</code> — Flutter mobile app (if configured)</li>
+    </ul>
+    <h3>Common Query Patterns</h3>
+    <ul>
+      <li>File upload errors: <code>query: "is:unresolved message:*upload* OR message:*file* OR message:*multipart*"</code></li>
+      <li>Authentication errors: <code>query: "is:unresolved message:*auth* OR message:*login* OR message:*token*"</code></li>
+      <li>Database errors: <code>query: "is:unresolved message:*database* OR message:*sql* OR message:*hibernate*"</code></li>
+      <li>API errors: <code>query: "is:unresolved transaction:/rest/*"</code></li>
+      <li>Multi-tenancy errors: <code>query: "is:unresolved message:*tenant* OR message:*tenantId*"</code></li>
+      <li>PDF/Report generation errors: <code>query: "is:unresolved message:*pdf* OR message:*wkhtmltopdf* OR message:*report*"</code></li>
+      <li>Email sending errors: <code>query: "is:unresolved message:*email* OR message:*smtp* OR message:*mail*"</code></li>
+    </ul>
+    <h3>Workflow: Investigating Production Errors</h3>
+    <ol>
+      <li>Search for recent issues: <code>is:unresolved age:-24h</code>, sortBy <code>freq</code></li>
+      <li>Get issue details: <code>get_issue_details with issueId</code></li>
+      <li>Analyze with AI (optional): <code>analyze_issue_with_seer</code></li>
+      <li>Search related events: <code>search_events</code> with error keyword from issue</li>
+    </ol>
+  </div>
+
+  <div class="section">
+    <h2>14. API Schema Contracts (TypeScript Interfaces)</h2>
+    <p>Per <code>api-schema-contracts.md</code>: TypeScript interfaces define data structure exchanged between Angular SPA and Grails backend.</p>
+    <h3>14.1 Location</h3>
+    <pre>
+spa/src/app/models/
+  ├── dashboard.interfaces.ts       # Dashboard API schemas
+  ├── kyc.interfaces.ts             # KYC module API schemas
+  ├── trading.interfaces.ts         # Trading module API schemas
+  ├── finance.interfaces.ts         # Finance module API schemas
+  ├── schemes.interfaces.ts         # CIS/Funds module API schemas
+  ├── settings.interfaces.ts        # Settings module API schemas
+  ├── common.interfaces.ts          # Shared types (pagination, filters, errors)
+  └── index.ts                      # Barrel export file
+    </pre>
+    <h3>14.2 Required Patterns</h3>
+    <pre>
+/**
+ * Standard API Response wrapper
+ * Matches Grails respond() default structure
+ */
+export interface ApiResponse<T> {
+  data?: T;
+  message?: string;
+  status?: number;
+  success?: boolean;
+  errors?: ValidationError[];
+}
+
+/**
+ * Paginated list response
+ * Matches Grails withFormat { json { respond listInstance } } structure
+ */
+export interface PaginatedResponse<T> {
+  items: T[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+}
+    </pre>
+    <h3>14.3 Type Mapping Rules</h3>
+    <table>
+      <tr><th>Grails Type</th><th>TypeScript Type</th><th>Notes</th></tr>
+      <tr><td>String</td><td>string</td><td></td></tr>
+      <tr><td>Long, Integer</td><td>number</td><td></td></tr>
+      <tr><td>BigDecimal</td><td>number</td><td>Precision may be lost</td></tr>
+      <tr><td>Boolean</td><td>boolean</td><td></td></tr>
+      <tr><td>Date</td><td>string</td><td>ISO date string from JSON</td></tr>
+      <tr><td>Enum</td><td>Union type</td><td>e.g., 'ACTIVE' | 'INACTIVE'</td></tr>
+      <tr><td>List<T></td><td>T[]</td><td></td></tr>
+      <tr><td>Nullable field</td><td>field?: Type</td><td>Use optional modifier</td></tr>
+      <tr><td>Domain reference</td><td>{ id: string; quickReference?: string; serialised?: string }</td><td></td></tr>
+    </table>
+    <h3>14.4 Export Pattern</h3>
+    <pre>// spa/src/app/models/index.ts
+export * from './common.interfaces';
+export * from './dashboard.interfaces';
+export * from './kyc.interfaces';
+export * from './trading.interfaces';
+export * from './finance.interfaces';
+export * from './schemes.interfaces';
+export * from './settings.interfaces';
+</pre>
+  </div>
+
+  <div class="section">
+    <h2>5.4 Mockup Per Screen (HARD RULE)</h2>
+    <p>Per <code>plans-are-html.md</code>: Every user-facing screen in the plan MUST have a mockup — inline SVG generated from a committed script so re-running reproduces the figure. Screens without figures cannot be reviewed visually.</p>
+    <p>Before calling the plan ready, list every screen it introduces and check each one has a figure. Open the rendered file and LOOK at it — <code>ls</code> is not review, an exit code is not review, and a layout defect is invisible in the markup.</p>
+    <p>Mandatory mockup elements per screen:</p>
+    <ul>
+      <li>Annotated figure with numbered highlight boxes drawn on the real capture</li>
+      <li>Caption per callout: what the control <em>is</em> and what it <em>does</em> (a label is not a caption)</li>
+      <li>Process narrative: the actual sequence a person performs — step, what they see, what happens next</li>
+      <li>Failure paths: each refusal/empty state gets its own treatment with its own remedy</li>
+    </ul>
+    <p>Build discipline: DOCX-first (python-docx → LibreOffice headless → PDF), reproducible from a committed script, brand-correct (fonts and palette verified up front).</p>
+  </div>
+
+  <div class="section">
+    <h2>15. Action Items & Next Steps</h2>
+    <ol>
+      <li><strong>Create E2E test plan</strong> — per <code>plan-e2e-and-user-guide.md</code>, draft clicking-navigated E2E tests for all surfaces (email client, alt-UI, settings, mobile) with screenshot at every assertion; compile user guide from screenshots</li>
+      <li><strong>Verify favicons across all surfaces</strong> — per <code>web-facing-favicon-branding.md</code>, check each surface has its own brand favicon; generate from logos if needed</li>
+      <li><strong>Refresh traceability baseline</strong> — run <code>npm run trace-check:update</code> if any critical routes added/removed</li>
+      <li><strong>Ensure RIPUIF compliance</strong> — every story has story-level research document; no per-leaf research; R-gate decision recorded and inherited</li>
+      <li><strong>Validate Java versions</strong> — all Gradle tasks use JDK 19 (Temurin); servers run Java 21</li>
+      <li><strong>Quiet output compliance</strong> — all deployment/test commands use --console=plain -q flags</li>
+      <li><strong>Search safety</strong> — always exclude node_modules, build, .gradle, storybook-static from searches</li>
+      <li><strong>Sentry integration</strong> — verify error tracking configured for all environments; use search queries for common error patterns</li>
+      <li><strong>Update API schema contracts</strong> — ensure all new endpoints have corresponding TypeScript interfaces with barrel exports</li>
+      <li><strong>Deploy gate compliance</strong> — pre-deploy ClientApiFunctionalSpec MUST pass 100% before any deployment; MCP E2E gate if MCP changes</li>
+    </ol>
+    <p><strong>Todo format:</strong> When tracking work in TASCIM PM, use format: <code><optional step ref> — <task or step name> (<PM-IDENTIFIER>)</code>. Name comes first (readable), PM identifier LAST (for tracing). Exactly one item <code>in_progress</code> at a time. Prune completed items at session start.</p>
+  </div>
+
+  <footer style="margin-top: 3rem; padding-top: 1rem; border-top: 1px solid #eee; font-size: 0.9em;">
+    <p>Plan generated: 2026-08-22 | Project: TASMail | Stack: React 19 + Rust/Axum + Flutter</p>
+    <p>Key conventions followed: RIPUIF, batch-implementation-defer-testing, plan-e2e-and-user-guide, plans-are-html, pm-todo-sync, controller-service-calls, deployment-validation-rules, worktree-production-deployment, quiet-output-rules, search-safety</p>
+  </footer>
+</body>
+</html>
