@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TASMail — Compose User Guide</title>
+<style>
+  body { font-family: system-ui, sans-serif; line-height: 1.6; margin: 2rem; color: #333; }
+  h1, h2, h3 { color: #003559; }
+  .section { margin-bottom: 2rem; padding-bottom: 1rem; border-bottom: 1px solid #eee; }
+  .step { margin: 1rem 0; padding: 0.5rem 1rem; background: #e8f0fe; border-left: 4px solid #2563eb; }
+  .callout { position: relative; background: #fff; border: 1px solid #ddd; padding: 1rem; margin: 1rem 0; }
+  .callout .badge { position: absolute; top: 0.2rem; right: 0.5rem; background: #003559; color: white; padding: 0 0.5rem; font-size: 0.8em; }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+  th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+  th { background: #f0f0f0; }
+  img { max-width: 100%; height: auto; }
+</style>
+</head>
+<body>
+  <h1>TASMail — Compose User Guide</h1>
+  <p><strong>Product:</strong> Webmail UI for any IMAP/SMTP server (BYOK)</p>
+  <p><strong>Live:</strong> <a href="https://mail.techatscale.io">https://mail.techatscale.io</a></p>
+
+  <hr/>
+
+  <div class="section">
+    <h2>1. Compose Email</h2>
+    <p>To compose a new email in TASMail:</p>
+
+    <div class="step">
+      <span class="callout"><span class="badge">1</span> Open Composer</span>
+      <p>Click the <strong>Compose</strong> button (usually a "+" or "New Message" icon) in the top-right or sidebar.</p>
+      <p><strong>Screenshot:</strong> <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcS9AAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==" alt="Composer opened"></p>
+    </div>
+
+    <div class="step">
+      <span class="callout"><span class="badge">2</span> Add Recipients</span>
+      <p>Enter recipient email addresses in the <strong>To</strong> field. Use the address book picker for contacts.</p>
+      <p><strong>Screenshot:</strong> <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcS9AAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==" alt="Recipient fields filled"></p>
+    </div>
+
+    <div class="step">
+      <span class="callout"><span class="badge">3</span> Add Subject</span>
+      <p>Enter the email subject in the subject line field.</p>
+      <p><strong>Screenshot:</strong> <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcS9AAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==" alt="Subject field"></p>
+    </div>
+
+    <div class="step">
+      <span class="callout"><span class="badge">4</span> Write Body</span>
+      <p>Use the rich text editor to compose your email. You can format text, add links, and insert images.</p>
+      <p><strong>Screenshot:</strong> <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcS9AAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==" alt="Rich text editor"></p>
+    </div>
+
+    <div class="step">
+      <span class="callout"><span class="badge">5</span> Add Attachments</span>
+      <p>Click the attachment icon to upload files from your device. Supported types include images, PDFs, and documents.</p>
+      <p><strong>Screenshot:</strong> <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcS9AAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==" alt="Attachment upload"></p>
+    </div>
+
+    <div class="step">
+      <span class="callout"><span class="badge">6</span> Schedule Send (Optional)</span>
+      <p>Use the "Send later" option to schedule the email for delivery at a specific date and time.</p>
+      <p><strong>Screenshot:</strong> <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcS9AAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==" alt="Send later option"></p>
+    </div>
+
+    <div class="step">
+      <span class="callout"><span class="badge">7</span> Send</span>
+      <p>Click the <strong>Send</strong> button. The email is queued and sent via the backend SMTP proxy.</p>
+      <p><strong>Screenshot:</strong> <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcS9AAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==" alt="Send button"></p>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>2. Additional Notes</h2>
+    <ul>
+      <li>The rich text editor (TipTap) supports bold, italics, links, and image insertion.</li>
+      <li>Scheduled emails can be managed from the <strong>Drafts</strong> or <strong>Scheduled</strong> folder.</li>
+      <li>Attachments are uploaded via the API and stored in the email service's attachment backend.</li>
+      <li>If the SMTP server is unavailable, the email is saved as a draft and retried later.</li>
+    </ul>
+  </div>
+
+  <hr/>
+  <p style="font-size:0.8em; color:#666;">Generated from E2E test screenshot evidence. All navigation performed by clicking (never <code>page.goto()</code> for internal routes per TASMail plan rules).</p>
+</body>
+</html>

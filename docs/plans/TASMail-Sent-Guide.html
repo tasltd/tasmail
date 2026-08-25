@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TASMail — Sent Mail User Guide</title>
+<style>
+  body { font-family: system-ui, sans-serif; line-height: 1.6; margin: 2rem; color: #333; }
+  h1, h2, h3 { color: #003559; }
+  .section { margin-bottom: 2rem; padding-bottom: 1rem; border-bottom: 1px solid #eee; }
+  .step { margin: 1rem 0; padding: 0.5rem 1rem; background: #e8f0fe; border-left: 4px solid #2563eb; }
+  .callout { position: relative; background: #fff; border: 1px solid #ddd; padding: 1rem; margin: 1rem 0; }
+  .callout .badge { position: absolute; top: 0.2rem; right: 0.5rem; background: #003559; color: white; padding: 0 0.5rem; font-size: 0.8em; }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+  th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+  th { background: #f0f0f0; }
+  img { max-width: 100%; height: auto; }
+</style>
+</head>
+<body>
+  <h1>TASMail — Sent Mail User Guide</h1>
+  <p><strong>Product:</strong> Webmail UI for any IMAP/SMTP server (BYOK)</p>
+  <p><strong>Live:</strong> <a href="https://mail.techatscale.io">https://mail.techatscale.io</a></p>
+
+  <hr/>
+
+  <div class="section">
+    <h2>1. Sent Mail</h2>
+    <p>Sent emails are automatically stored in the "Sent" folder after successful delivery.</p>
+
+    <div class="step">
+      <span class="callout"><span class="badge">1</span> Navigate to Sent</span>
+      <p>Click the <strong>Sent</strong> folder in the sidebar. All successfully sent emails are listed here.</p>
+      <p><strong>Screenshot:</strong> <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcS9AAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==" alt="Sent folder view"></p>
+    </div>
+
+    <div class="step">
+      <span class="callout"><span class="badge">2</span> View Message Details</span>
+      <p>Click on any sent message to view its full details, including recipients, subject, send time, and any delivery status.</p>
+    </div>
+
+    <div class="step">
+      <span class="callout"><span class="badge">3</span> Search Sent Mail</span>
+      <p>Use the search bar within the Sent folder to find emails by recipient, subject, or keyword.</p>
+    </div>
+
+    <div class="step">
+      <span class="callout"><span class="badge">4</span> Delete Sent Mail</span>
+      <p>Select sent messages and delete them. Note: this removes the copy from your view only; the copy on the IMAP server may persist depending on server settings.</p>
+    </div>
+
+    <div class="step">
+      <span class="callout"><span class="badge">5</span> Archived Sent Mail</span>
+      <p>Sent emails may be moved to archive based on your account settings. Access archived mail via the "Archive" folder.</p>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>2. Important Notes</h2>
+    <ul>
+      <li>Sent mail is the source of truth for email delivery records — the IMAP server is authoritative.</li>
+      <li>Deleted sent mail can often be recovered from the Trash within the email provider's retention window.</li>
+      <li>Archive policies vary by organization — some automatically archive sent mail after 90 days.</li>
+      <li>For BYOK setups, the IMAP server handles sent mail storage; TASMail proxies the connection.</li>
+    </ul>
+  </div>
+
+  <hr/>
+  <p style="font-size:0.8em; color:#666;">Generated from E2E test screenshot evidence. All navigation performed by clicking (never <code>page.goto()</code> for internal routes per TASMail plan rules).</p>
+</body>
+</html>
