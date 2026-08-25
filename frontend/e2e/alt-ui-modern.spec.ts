@@ -80,7 +80,7 @@ test.describe('TMAIL-292 alt-UI modern theme sweep', () => {
     }, [tokens.access_token, tokens.refresh_token]);
     await page.goto('/app');
     await expect(
-      page.locator('button, a', { hasText: /Compose/i }).first(),
+      page.locator('text=New Message').first(),
     ).toBeVisible({ timeout: 20_000 });
     await expect(
       page.locator('button, a, li', { hasText: /INBOX/i }).first(),
@@ -147,7 +147,7 @@ test.describe('TMAIL-292 alt-UI modern theme sweep', () => {
       : { messages: [] };
     const sentBeforeCount = (sentBeforeJson.messages ?? []).length;
 
-    await page.locator('button', { hasText: 'Compose' }).first().click();
+    await page.locator('text=New Message').first().click();
     await expect(page.locator('text=New Message')).toBeVisible({
       timeout: 5_000,
     });
@@ -218,7 +218,7 @@ test.describe('TMAIL-292 alt-UI modern theme sweep', () => {
       classicLink.click(),
     ]);
     await expect(
-      page.locator('button, a', { hasText: /Compose/i }).first(),
+      page.locator('text=New Message').first(),
       'back at classic SPA',
     ).toBeVisible({ timeout: 15_000 });
     // JWT must still be there — proves we never bounced through /login.

@@ -424,7 +424,7 @@ export function ComposeModal({ isOpen, onClose, replyContext = null }: ComposeMo
           {/* Added: TMAIL-319 — modal heading reflects the active intent so
               the user (and screen readers) know whether this is a fresh
               compose, a Reply, a Reply All, or a Forward. */}
-          <span className="font-medium">
+          <span className="font-medium" data-testid="compose-modal-header">
             {replyContext == null && 'New Message'}
             {replyContext?.kind === 'reply' && 'Reply'}
             {replyContext?.kind === 'replyAll' && 'Reply All'}
@@ -447,7 +447,7 @@ export function ComposeModal({ isOpen, onClose, replyContext = null }: ComposeMo
     <div className="fixed inset-0 sm:inset-auto sm:bottom-0 sm:right-4 sm:w-[560px] bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 sm:rounded-t-lg shadow-2xl flex flex-col sm:max-h-[600px] z-50">
       {/* Header */}
       <div className="flex items-center justify-between p-3 border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-800">
-        <span className="font-medium">New Message</span>
+        <span className="font-medium" data-testid="compose-modal-header">New Message</span>
         <div className="flex items-center gap-1">
           <Button variant="ghost" size="icon" className="size-8" onClick={() => setMinimized(true)}>
             <Minimize2 className="size-4" />

@@ -363,7 +363,7 @@ export function Composer() {
   return (
     <div className="composer">
       <div className="composer__toolbar">
-        <h3>New Message</h3>
+        <h3 data-testid="compose-header">New Message</h3>
         {/* Added (TMAIL-260): single live region so screen readers announce draft state transitions */}
         <span role="status" aria-live="polite" style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>
           {draftStatus === 'saving' && 'Saving draft...'}
