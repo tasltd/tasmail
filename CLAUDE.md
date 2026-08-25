@@ -179,7 +179,7 @@ Key route groups:
 - `/api/calendar/events` — Calendar events with ICS export and RSVP
 - `/api/calendar/free-busy` — Attendee free/busy lookup (GET single, POST batch) + meeting-slot suggestion
 - `/api/calendar/imip/accept` — Inbound iMIP REQUEST handler (auto-sent on event create per TMAIL-127)
-- `/api/caldav/*` — CalDAV/public-scheduling tokens (migration `071`)
+- `/api/dav/*` — CalDAV/public-scheduling tokens (migration `071`)
 - `/api/attachments` — Attachment storage and download
 - `/api/shared-files` — Large file sharing with token-based download
 - `/api/queue` — Email queue management (list, retry, cancel)

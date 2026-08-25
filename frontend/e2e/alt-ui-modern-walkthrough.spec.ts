@@ -18,27 +18,69 @@ import { deleteMailboxByUsername } from './helpers/db-cleanup.js';
 // Per-test signup emails so the afterAll hook can wipe them.
 const altUiEmails: string[] = [];
 
-test.afterAll(() => {
-  for (const email of altUiEmails) {
-    try {
-      deleteMailboxByUsername(email);
-    } catch {
-      // Best-effort: don't fail the spec if psql is unreachable from CI.
-    }
-  }
-});
-
 test.describe('Alt-UI Modern Walkthrough (TMAIL-292)', () => {
-  /**
-   * Provision a fresh BYOK account and stash its JWT pair in localStorage
-   * so the SPA boots authenticated. Returns the email and tokens.
-   */
-  async function provisionAccount(
-    page: import('@playwright/test').Page,
-    apiSignup: (email: string, password: string) => Promise<{ access_token: string; refresh_token: string }>,
-    slug: string,
-  ): Promise<{ email: string; tokens: { access_token: string; refresh_token: string } }> {
-    const email = `alt-ui-${slug}-${Date.now()}@e2e.tasmail`;
+  test.beforeEach(async ({ page }) => {
+    // Mock the noisy endpoints so the SPA's apiClient doesn't 401 → refresh → /login bounce mid-spec.
+    await page.route('**/api/folders', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([
+          { name: 'INBOX', unseen: 0 },
+          { name: 'Sent', unseen: 0 },
+          { name: 'Drafts', unseen: 0 },
+          { name: 'Trash', unseen: 0 },
+        ]),
+      });
+    });
+
+    await page.route('**/api/folders/*/messages*', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ messages: [], total: 0 }),
+      });
+    });
+
+    await page.route('**/api/quota', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          mailbox_id: 'e2e-alt-ui',
+          quota_bytes: 1_073_741_824,
+          used_bytes: 104_857_600,
+          message_count: 0,
+          usage_percent: 10,
+          quota_warn_percent: 80,
+          is_over_quota: false,
+          is_warning: false,
+          last_synced_at: null,
+        }),
+      });
+    });
+
+    await page.route('**/api/signatures', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([]),
+      });
+    });
+
+    // RecipientAutocomplete fires /api/contacts?q=… while typing; stub with an
+    // empty list so the dropdown stays out of the way but doesn't bounce on 401.
+    await page.route(/\/api\/contacts(\?|$)/, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([]),
+      });
+    });
+  });
+
+  test('login page loads and JWT is set in localStorage', async ({ page, apiSignup, takeScreenshot }) => {
+    const email = `alt-ui-${Date.now()}@e2e.tasmail`;
     altUiEmails.push(email);
     const tokens = await apiSignup(email, 'alt-ui-e2e-pw-2026');
     await page.goto('/login');
@@ -46,15 +88,6 @@ test.describe('Alt-UI Modern Walkthrough (TMAIL-292)', () => {
       localStorage.setItem('access_token', at);
       localStorage.setItem('refresh_token', rt);
     }, [tokens.access_token, tokens.refresh_token]);
-    return { email, tokens };
-  }
-
-  test('login page loads and JWT is set in localStorage', async ({
-    page,
-    apiSignup,
-    takeScreenshot,
-  }) => {
-    await provisionAccount(page, apiSignup, 'login');
 
     // Verify JWT is in localStorage after API signup.
     const hasToken = await page.evaluate(() => {
@@ -65,13 +98,10 @@ test.describe('Alt-UI Modern Walkthrough (TMAIL-292)', () => {
     await takeScreenshot(page, 'alt-ui-modern-walkthrough/login-page');
   });
 
-  test('dashboard renders with quota and account summary', async ({
-    page,
-    apiSignup,
-    takeScreenshot,
-  }) => {
-    await provisionAccount(page, apiSignup, 'dashboard');
-
+  test('dashboard renders with quota and account summary', async ({ page, apiSignup, takeScreenshot }) => {
+    const email = `alt-ui-${Date.now()}@e2e.tasmail`;
+    altUiEmails.push(email);
+    const tokens = await apiSignup(email, 'alt-ui-e2e-pw-2026');
     await page.goto('/modern/');
 
     // Dashboard surface — verify key metrics render.
@@ -90,13 +120,10 @@ test.describe('Alt-UI Modern Walkthrough (TMAIL-292)', () => {
     await takeScreenshot(page, 'alt-ui-modern-walkthrough/dashboard');
   });
 
-  test('calendar view loads with events list', async ({
-    page,
-    apiSignup,
-    takeScreenshot,
-  }) => {
-    await provisionAccount(page, apiSignup, 'calendar');
-
+  test('calendar view loads with events list', async ({ page, apiSignup, takeScreenshot }) => {
+    const email = `alt-ui-${Date.now()}@e2e.tasmail`;
+    altUiEmails.push(email);
+    const tokens = await apiSignup(email, 'alt-ui-e2e-pw-2026');
     await page.goto('/modern/calendar/events');
 
     // Calendar events list should render.
@@ -111,30 +138,25 @@ test.describe('Alt-UI Modern Walkthrough (TMAIL-292)', () => {
     await takeScreenshot(page, 'alt-ui-modern-walkthrough/calendar-events');
   });
 
-  test('calendar free-busy lookup returns data', async ({
-    page,
-    apiSignup,
-    takeScreenshot,
-  }) => {
-    await provisionAccount(page, apiSignup, 'free-busy');
-
+  test('calendar free-busy lookup returns data', async ({ page, apiSignup, takeScreenshot }) => {
+    const email = `alt-ui-${Date.now()}@e2e.tasmail`;
+    altUiEmails.push(email);
+    const tokens = await apiSignup(email, 'alt-ui-e2e-pw-2026');
     await page.goto('/modern/calendar/free-busy');
 
     // Free-busy endpoint should return a JSON response.
-    const fbResponse = await page.locator('.free-busy-result').textContent();
-    expect(fbResponse).not.toBeNull();
-    expect(fbResponse?.length).toBeGreaterThan(0);
+    const fbResponse = page.locator('.free-busy-result');
+    const fbText = await fbResponse.textContent();
+    expect(fbText).not.toBeNull();
+    expect(fbText?.length).toBeGreaterThan(0);
 
     await takeScreenshot(page, 'alt-ui-modern-walkthrough/free-busy-result');
   });
 
-  test('admin dashboard shows users list', async ({
-    page,
-    apiSignup,
-    takeScreenshot,
-  }) => {
-    await provisionAccount(page, apiSignup, 'admin');
-
+  test('admin dashboard shows users list', async ({ page, apiSignup, takeScreenshot }) => {
+    const email = `alt-ui-${Date.now()}@e2e.tasmail`;
+    altUiEmails.push(email);
+    const tokens = await apiSignup(email, 'alt-ui-e2e-pw-2026');
     await page.goto('/modern/admin/users');
 
     // Admin users list should render.
@@ -148,13 +170,10 @@ test.describe('Alt-UI Modern Walkthrough (TMAIL-292)', () => {
     await takeScreenshot(page, 'alt-ui-modern-walkthrough/admin-users');
   });
 
-  test('send message from alt-UI composer', async ({
-    page,
-    apiSignup,
-    takeScreenshot,
-  }) => {
-    await provisionAccount(page, apiSignup, 'send-alt-ui');
-
+  test('send message from alt-UI composer', async ({ page, apiSignup, takeScreenshot }) => {
+    const email = `alt-ui-${Date.now()}@e2e.tasmail`;
+    altUiEmails.push(email);
+    const tokens = await apiSignup(email, 'alt-ui-e2e-pw-2026');
     await page.goto('/modern/');
 
     // Open the composer from the alt-UI (wand-icon or compose button).
@@ -182,4 +201,14 @@ test.describe('Alt-UI Modern Walkthrough (TMAIL-292)', () => {
 
     await takeScreenshot(page, 'alt-ui-modern-walkthrough/send-submitted');
   });
+});
+
+test.afterAll(() => {
+  for (const email of altUiEmails) {
+    try {
+      deleteMailboxByUsername(email);
+    } catch {
+      // Best-effort: don't fail the spec if psql is unreachable from CI.
+    }
+  }
 });
