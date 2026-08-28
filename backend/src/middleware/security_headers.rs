@@ -145,7 +145,32 @@ pub async fn security_headers_middleware(
         headers.insert(
             HeaderName::from_static("content-security-policy"),
             HeaderValue::from_static(
-                "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+                // Changed: widened for Google Tag Manager (GTM-KLBBC27C).
+                //
+                // script-src keeps 'self' and deliberately does NOT gain
+                // 'unsafe-inline' — that would re-open the whole SPA to any
+                // injected inline script. Instead the ONE inline GTM loader in
+                // index.html is allowlisted by the sha256 of its exact body:
+                //
+                //   sha256-SXc2wpeV9E0mm/lmfMA8bUtOWkrkYb6zlCTQ/JtrjX0=
+                //
+                // That hash is over the bytes BETWEEN <script> and </script>.
+                // Re-edit the snippet — even one byte of whitespace — and the
+                // hash no longer matches and GTM silently stops loading.
+                // Recompute with:
+                //   python3 -c "import hashlib,base64,sys;print(base64.b64encode(hashlib.sha256(open(sys.argv[1],'rb').read()).digest()).decode())" snippet.txt
+                //
+                // frame-src allows the <noscript> ns.html iframe fallback.
+                // Note the /classic/* branch above is untouched: it keeps
+                // script-src 'none' because it is the deliberate no-JS surface.
+                "default-src 'self'; \
+                 script-src 'self' 'sha256-SXc2wpeV9E0mm/lmfMA8bUtOWkrkYb6zlCTQ/JtrjX0=' https://www.googletagmanager.com; \
+                 style-src 'self' 'unsafe-inline'; \
+                 img-src 'self' https: data:; \
+                 font-src 'self'; \
+                 frame-src https://www.googletagmanager.com; \
+                 connect-src 'self' https://www.google-analytics.com https://analytics.google.com https://*.analytics.google.com https://*.google-analytics.com https://www.googletagmanager.com; \
+                 frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
             ),
         );
 
