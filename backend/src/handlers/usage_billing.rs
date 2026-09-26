@@ -8,13 +8,14 @@
 // caller's mailbox via an explicit WHERE — the per-request RLS connection
 // helper from TMAIL-161 is overkill for these read-only endpoints.
 
-use axum::{extract::State, Json};
+use axum::{extract::{FromRequestParts, State}, Json};
 use chrono::{Datelike, NaiveDate};
 use serde::Serialize;
 use sqlx::FromRow;
 use uuid::Uuid;
 
 use crate::error::AppError;
+use crate::extractors::mailbox::MailboxExtractor as Mailbox;
 use crate::services::auth_service::Claims;
 use crate::services::billing_math::compute_invoice_ghs;
 use crate::state::AppState;
@@ -42,11 +43,8 @@ fn rate() -> (f64, f64) {
 
 pub async fn get_usage(
     State(state): State<AppState>,
-    axum::Extension(claims): axum::Extension<Claims>,
+    Mailbox(mailbox): Mailbox,
 ) -> Result<Json<UsageResponse>, AppError> {
-    let mailbox_id = Uuid::parse_str(&claims.sub)
-        .map_err(|_| AppError::Internal(anyhow::anyhow!("Invalid mailbox id")))?;
-
     let today = chrono::Utc::now().date_naive();
     let period_start = NaiveDate::from_ymd_opt(today.year(), today.month(), 1)
         .expect("first-of-month is always valid");
@@ -59,7 +57,7 @@ pub async fn get_usage(
          FROM billing_periods
          WHERE mailbox_id = $1 AND period_start = $2",
     )
-    .bind(mailbox_id)
+    .bind(mailbox.id)
     .bind(period_start)
     .fetch_optional(&state.db)
     .await?;
@@ -67,7 +65,7 @@ pub async fn get_usage(
     let current_bytes: i64 = sqlx::query_scalar(
         "SELECT COALESCE(used_bytes, 0) FROM quota_usage WHERE mailbox_id = $1",
     )
-    .bind(mailbox_id)
+    .bind(mailbox.id)
     .fetch_optional(&state.db)
     .await?
     .unwrap_or(0);
@@ -108,11 +106,8 @@ pub struct InvoiceRow {
 
 pub async fn list_invoices(
     State(state): State<AppState>,
-    axum::Extension(claims): axum::Extension<Claims>,
+    Mailbox(mailbox): Mailbox,
 ) -> Result<Json<Vec<InvoiceRow>>, AppError> {
-    let mailbox_id = Uuid::parse_str(&claims.sub)
-        .map_err(|_| AppError::Internal(anyhow::anyhow!("Invalid mailbox id")))?;
-
     let rows = sqlx::query_as::<_, InvoiceRow>(
         "SELECT id, period_start, period_end, avg_storage_bytes, amount_ghs::float8 AS amount_ghs,
                 minimum_applied, status, provider, provider_reference, paid_at, created_at
@@ -121,7 +116,7 @@ pub async fn list_invoices(
          ORDER BY period_end DESC
          LIMIT 24",
     )
-    .bind(mailbox_id)
+    .bind(mailbox.id)
     .fetch_all(&state.db)
     .await?;
 

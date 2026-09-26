@@ -98,6 +98,8 @@ async fn try_build_app() -> Option<(axum::Router, PgPool)> {
     let inner_router_holder: Arc<std::sync::OnceLock<axum::Router>> =
         Arc::new(std::sync::OnceLock::new());
     let state = AppState {
+        // Added (TMAIL-435): decrypted IMAP credential cache, empty per test.
+        imap_credential_cache: std::sync::Arc::new(dashmap::DashMap::new()),
         db: pool.clone(),
         config: config.clone(),
         metrics_handle: None,

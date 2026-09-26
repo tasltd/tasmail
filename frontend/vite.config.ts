@@ -135,6 +135,9 @@ export default defineConfig({
   server: {
     // Changed: Non-default port (5173 occupied by Alleina dev server)
     port: Number(process.env.TASMAIL_VITE_PORT ?? 5273),
+    // Added: Fail loudly if the configured port is taken instead of silently
+    // drifting to 5275 (which breaks the SSH tunnel 9602 -> 5273 and 502s the site)
+    strictPort: true,
     host: '127.0.0.1',
     // Added: Allow Apache reverse proxy from mail.techatscale.io to forward host header
     allowedHosts: ['mail.techatscale.io', 'localhost', '127.0.0.1'],

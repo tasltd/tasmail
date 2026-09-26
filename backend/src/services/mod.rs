@@ -75,6 +75,8 @@ pub mod caldav_freebusy;
 // Added (TMAIL-100): Real LDAP/AD bind+search and apply_sync. Replaces the
 // stub that previously lived inline in handlers/ldap.rs.
 pub mod ldap_service;
+// Added (TMAIL-322): Background poller that runs LDAP sync for overdue configs.
+pub mod ldap_sync_scheduler;
 // Added (TMAIL-307): Centralised admin-action audit helper. Every state-changing
 // admin endpoint should call audit::audit_admin_action so the audit_log table
 // accumulates a complete compliance trail.

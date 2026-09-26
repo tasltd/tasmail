@@ -1,6 +1,7 @@
 // Added: Email archive handlers for Piler integration (TMAIL-107)
 // PURPOSE: Admin endpoints for archive policy/config CRUD, user endpoints for archive search
 
+use crate::Mailbox;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -180,7 +181,7 @@ pub async fn update_config(
 /// POST /api/archive/search — Search archived emails (proxies to Piler API or returns mock)
 pub async fn search_archive(
     State(state): State<AppState>,
-    axum::Extension(claims): axum::Extension<Claims>,
+    Mailbox(mailbox): Mailbox,
     Json(body): Json<ArchiveSearchRequest>,
 ) -> Result<Json<Vec<ArchiveSearchResult>>, AppError> {
     // NOTE: In production, this would proxy to the Piler search API
@@ -195,12 +196,9 @@ pub async fn search_archive(
         "recipient": body.recipient,
     });
 
-    // Fix: Parse user_id from claims.sub string to Uuid
-    let user_id: uuid::Uuid = claims.sub.parse()
-        .map_err(|_| AppError::Internal(anyhow::anyhow!("Invalid user ID in JWT claims")))?;
     let _ = ArchiveSearch::create(
         &state.db,
-        user_id,
+        mailbox.id,
         &body.query,
         Some(&filters),
         Some(mock_results.len() as i32),
@@ -213,12 +211,9 @@ pub async fn search_archive(
 /// GET /api/archive/search/history — Get user's archive search history
 pub async fn search_history(
     State(state): State<AppState>,
-    axum::Extension(claims): axum::Extension<Claims>,
+    Mailbox(mailbox): Mailbox,
 ) -> Result<Json<Vec<ArchiveSearch>>, AppError> {
-    // Fix: Parse user_id from claims.sub string to Uuid
-    let user_id: uuid::Uuid = claims.sub.parse()
-        .map_err(|_| AppError::Internal(anyhow::anyhow!("Invalid user ID in JWT claims")))?;
-    let history = ArchiveSearch::find_by_user(&state.db, user_id, 50).await?;
+    let history = ArchiveSearch::find_by_user(&state.db, mailbox.id, 50).await?;
     Ok(Json(history))
 }
 

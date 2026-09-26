@@ -9,6 +9,7 @@ use axum::{
 };
 
 use crate::error::AppError;
+use crate::extractors::mailbox::MailboxExtractor as Mailbox;
 use crate::models::ai_config::{
     AiConfiguration, AiConfigurationResponse, CreateAiConfigRequest, SummarizeRequest,
     ThreadSummaryRequest, UpdateAiConfigRequest, decrypt_api_key, derive_encryption_key,
@@ -284,10 +285,10 @@ pub async fn summarize_email(
 /// CONSTRAINTS: Requires at least one active AI config; fetches email via IMAP
 pub async fn smart_reply(
     State(state): State<AppState>,
-    axum::Extension(claims): axum::Extension<Claims>,
+    Mailbox(mailbox): Mailbox,
     Json(body): Json<crate::models::ai_config::SmartReplyRequest>,
 ) -> Result<Json<crate::models::ai_config::SmartReplyResponse>, AppError> {
-    let user_id = parse_user_id(&claims)?;
+    let user_id = mailbox.id;
     // Added (TMAIL-102): Per-user 10/min AI rate limit applies to smart-reply too.
     enforce_ai_rate_limit(&state, user_id).await?;
     let encryption_key = derive_encryption_key(&state.config.jwt.secret);
@@ -303,12 +304,6 @@ pub async fn smart_reply(
         })?;
 
     // Added: Fetch the email text via IMAP to use as context for the reply
-    let mailbox = crate::models::mailbox::Mailbox::find_by_id(&state.db, user_id)
-        .await?
-        .ok_or_else(|| AppError::NotFound("User mailbox not found".to_string()))?;
-
-    // Changed: TMAIL-156 — BYOK migration. Old path used the global IMAP host and the
-    // mailbox's bcrypt hash (which was never the IMAP password under BYOK).
     let imap_service = crate::services::imap_service::ImapService::for_user(&state, mailbox.id).await?;
     let (imap_user, imap_pass) = imap_service
         .user_creds()
@@ -358,10 +353,10 @@ pub async fn smart_reply(
 /// CONSTRAINTS: Requires at least one active AI config; fetches emails via IMAP by folder+uids
 pub async fn thread_summary(
     State(state): State<AppState>,
-    axum::Extension(claims): axum::Extension<Claims>,
+    Mailbox(mailbox): Mailbox,
     Json(body): Json<ThreadSummaryRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let user_id = parse_user_id(&claims)?;
+    let user_id = mailbox.id;
     // Added (TMAIL-102): Per-user 10/min AI rate limit — applied BEFORE the
     // cache so the budget is independent of cache hit/miss (see summarize_email).
     enforce_ai_rate_limit(&state, user_id).await?;
@@ -407,12 +402,6 @@ pub async fn thread_summary(
         })?;
 
     // Added: Fetch each email from IMAP and collect their text bodies
-    let mailbox = crate::models::mailbox::Mailbox::find_by_id(&state.db, user_id)
-        .await?
-        .ok_or_else(|| AppError::NotFound("User mailbox not found".to_string()))?;
-
-    // Changed: TMAIL-156 — BYOK migration. Old path called ImapService::new and forwarded
-    // mailbox.password_hash (the Argon2 hash, not the IMAP password) — guaranteed to fail.
     let imap_service = crate::services::imap_service::ImapService::for_user(&state, mailbox.id).await?;
     let (imap_user, imap_pass) = imap_service
         .user_creds()

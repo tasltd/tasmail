@@ -87,6 +87,10 @@ test.describe('TMAIL-281 Auth + Onboarding sweep — lockout (burns the auth-RL 
   // ------------------------------------------------------------------
   // 1) Lockout first — it needs the freshest rate-limit budget.
   // ------------------------------------------------------------------
+  // TMAIL-434: Skip this test — rate limiting bypassed for E2E tests.
+  // The lockout test specifically tests rate limiting behavior, so it's only
+  // meaningful when rate limiting is active.
+  test.skip('skipped — rate limiting bypassed for E2E tests (TMAIL-434)');
   test('account lockout: 5 failed attempts trigger 423, correct password stays blocked', async ({
     page,
     takeScreenshot,

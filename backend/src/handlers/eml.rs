@@ -7,7 +7,7 @@ use axum::{
 use futures::TryStreamExt;
 
 use crate::error::AppError;
-use crate::services::auth_service::Claims;
+use crate::extractors::mailbox::MailboxExtractor as Mailbox;
 use crate::services::imap_service::ImapService;
 use crate::state::AppState;
 
@@ -18,17 +18,9 @@ use crate::state::AppState;
 /// GET /api/folders/{folder}/messages/{uid}/eml
 pub async fn export_eml(
     State(state): State<AppState>,
-    axum::Extension(claims): axum::Extension<Claims>,
+    Mailbox(mailbox): Mailbox,
     Path((folder, uid)): Path<(String, u32)>,
 ) -> Result<impl IntoResponse, AppError> {
-    let mailbox_id: uuid::Uuid = claims
-        .sub
-        .parse()
-        .map_err(|_| AppError::Internal(anyhow::anyhow!("Invalid mailbox ID")))?;
-
-    let mailbox = crate::models::mailbox::Mailbox::find_by_id(&state.db, mailbox_id)
-        .await?
-        .ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
 
     let imap_service = ImapService::for_user(&state, mailbox.id).await?;
     // BYOK: borrow the user-specific IMAP credentials loaded from imap_configurations.
@@ -69,7 +61,7 @@ pub async fn export_eml(
 /// POST /api/folders/{folder}/import-eml
 pub async fn import_eml(
     State(state): State<AppState>,
-    axum::Extension(claims): axum::Extension<Claims>,
+    Mailbox(mailbox): Mailbox,
     Path(folder): Path<String>,
     body: axum::body::Bytes,
 ) -> Result<impl IntoResponse, AppError> {
@@ -79,15 +71,6 @@ pub async fn import_eml(
             "Empty body: EML file content is required. Send raw RFC822 email bytes in the request body.".to_string(),
         ));
     }
-
-    let mailbox_id: uuid::Uuid = claims
-        .sub
-        .parse()
-        .map_err(|_| AppError::Internal(anyhow::anyhow!("Invalid mailbox ID")))?;
-
-    let mailbox = crate::models::mailbox::Mailbox::find_by_id(&state.db, mailbox_id)
-        .await?
-        .ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
 
     let imap_service = ImapService::for_user(&state, mailbox.id).await?;
     // BYOK: borrow the user-specific IMAP credentials loaded from imap_configurations.
@@ -123,17 +106,9 @@ pub async fn import_eml(
 /// GET /api/folders/{folder}/export-mbox
 pub async fn export_folder_mbox(
     State(state): State<AppState>,
-    axum::Extension(claims): axum::Extension<Claims>,
+    Mailbox(mailbox): Mailbox,
     Path(folder): Path<String>,
 ) -> Result<impl IntoResponse, AppError> {
-    let mailbox_id: uuid::Uuid = claims
-        .sub
-        .parse()
-        .map_err(|_| AppError::Internal(anyhow::anyhow!("Invalid mailbox ID")))?;
-
-    let mailbox = crate::models::mailbox::Mailbox::find_by_id(&state.db, mailbox_id)
-        .await?
-        .ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
 
     let imap_service = ImapService::for_user(&state, mailbox.id).await?;
     let (_imap_user, _imap_pass) = imap_service

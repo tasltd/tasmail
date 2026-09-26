@@ -2,45 +2,34 @@ use axum::{
     extract::{Path, State},
     http::StatusCode,
     Json,
+    Extension,
 };
 use uuid::Uuid;
 
 use crate::error::AppError;
+use crate::extractors::Mailbox;
 use crate::models::distribution_group::{
     AddMemberRequest, CreateGroupRequest, DistributionGroup, GroupMember,
     UpdateGroupRequest,
 };
-// Added (TMAIL-286): need Mailbox to resolve the owner's domain_id when the
-// SPA omits it (the only domain a non-admin user has access to is their own).
-use crate::models::mailbox::Mailbox;
 use crate::services::auth_service::Claims;
 use crate::state::AppState;
-
-fn parse_mailbox_id(claims: &Claims) -> Result<Uuid, AppError> {
-    claims
-        .sub
-        .parse()
-        .map_err(|_| AppError::Internal(anyhow::anyhow!("Invalid mailbox ID")))
-}
 
 /// GET /api/groups — List distribution groups owned by the current user
 pub async fn list_groups(
     State(state): State<AppState>,
-    axum::Extension(claims): axum::Extension<Claims>,
+    mailbox: Mailbox,
 ) -> Result<Json<Vec<DistributionGroup>>, AppError> {
-    let mailbox_id = parse_mailbox_id(&claims)?;
-    let groups = DistributionGroup::find_by_owner(&state.db, mailbox_id).await?;
+    let groups = DistributionGroup::find_by_owner(&state.db, mailbox.0.id).await?;
     Ok(Json(groups))
 }
 
 /// POST /api/groups — Create a new distribution group
 pub async fn create_group(
     State(state): State<AppState>,
-    axum::Extension(claims): axum::Extension<Claims>,
+    mailbox: Mailbox,
     Json(body): Json<CreateGroupRequest>,
 ) -> Result<(StatusCode, Json<DistributionGroup>), AppError> {
-    let mailbox_id = parse_mailbox_id(&claims)?;
-
     // Validate address format
     if !body.address.contains('@') {
         return Err(AppError::BadRequest("Invalid group address format".to_string()));
@@ -51,16 +40,9 @@ pub async fn create_group(
     // mailbox.domain_id matches single-domain BYOK reality and avoids hitting
     // the FK constraint with garbage. Admins on multi-domain deployments
     // can still pin a domain explicitly in the request body.
-    let resolved_domain_id = if let Some(d) = body.domain_id {
-        d
-    } else {
-        let mailbox = Mailbox::find_by_id(&state.db, mailbox_id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("Owner mailbox not found".to_string()))?;
-        mailbox.domain_id
-    };
+    let resolved_domain_id = body.domain_id.unwrap_or(mailbox.0.domain_id);
 
-    let group = DistributionGroup::create(&state.db, &body, mailbox_id, resolved_domain_id).await?;
+    let group = DistributionGroup::create(&state.db, &body, mailbox.0.id, resolved_domain_id).await?;
     Ok((StatusCode::CREATED, Json(group)))
 }
 
@@ -78,18 +60,17 @@ pub async fn get_group(
 /// PUT /api/groups/:id — Update a distribution group
 pub async fn update_group(
     State(state): State<AppState>,
-    axum::Extension(claims): axum::Extension<Claims>,
+    mailbox: Mailbox,
+    Extension(claims): Extension<Claims>,
     Path(id): Path<Uuid>,
     Json(body): Json<UpdateGroupRequest>,
 ) -> Result<Json<DistributionGroup>, AppError> {
-    let mailbox_id = parse_mailbox_id(&claims)?;
-
     // Verify ownership
     let existing = DistributionGroup::find_by_id(&state.db, id)
         .await?
         .ok_or_else(|| AppError::NotFound("Group not found".to_string()))?;
 
-    if existing.owner_mailbox_id != mailbox_id && !claims.is_admin {
+    if existing.owner_mailbox_id != mailbox.0.id && !claims.is_admin {
         return Err(AppError::Forbidden("Not the group owner".to_string()));
     }
 
@@ -100,16 +81,15 @@ pub async fn update_group(
 /// DELETE /api/groups/:id — Delete a distribution group
 pub async fn delete_group(
     State(state): State<AppState>,
-    axum::Extension(claims): axum::Extension<Claims>,
+    mailbox: Mailbox,
+    Extension(claims): Extension<Claims>,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
-    let mailbox_id = parse_mailbox_id(&claims)?;
-
     let existing = DistributionGroup::find_by_id(&state.db, id)
         .await?
         .ok_or_else(|| AppError::NotFound("Group not found".to_string()))?;
 
-    if existing.owner_mailbox_id != mailbox_id && !claims.is_admin {
+    if existing.owner_mailbox_id != mailbox.0.id && !claims.is_admin {
         return Err(AppError::Forbidden("Not the group owner".to_string()));
     }
 
@@ -134,17 +114,16 @@ pub async fn list_members(
 /// POST /api/groups/:id/members — Add a member to a group
 pub async fn add_member(
     State(state): State<AppState>,
-    axum::Extension(claims): axum::Extension<Claims>,
+    mailbox: Mailbox,
+    Extension(claims): Extension<Claims>,
     Path(id): Path<Uuid>,
     Json(body): Json<AddMemberRequest>,
 ) -> Result<(StatusCode, Json<GroupMember>), AppError> {
-    let mailbox_id = parse_mailbox_id(&claims)?;
-
     let group = DistributionGroup::find_by_id(&state.db, id)
         .await?
         .ok_or_else(|| AppError::NotFound("Group not found".to_string()))?;
 
-    if group.owner_mailbox_id != mailbox_id && !claims.is_admin {
+    if group.owner_mailbox_id != mailbox.0.id && !claims.is_admin {
         return Err(AppError::Forbidden("Not the group owner".to_string()));
     }
 
@@ -160,16 +139,15 @@ pub async fn add_member(
 /// DELETE /api/groups/:id/members/:address — Remove a member from a group
 pub async fn remove_member(
     State(state): State<AppState>,
-    axum::Extension(claims): axum::Extension<Claims>,
+    mailbox: Mailbox,
+    Extension(claims): Extension<Claims>,
     Path((id, address)): Path<(Uuid, String)>,
 ) -> Result<StatusCode, AppError> {
-    let mailbox_id = parse_mailbox_id(&claims)?;
-
     let group = DistributionGroup::find_by_id(&state.db, id)
         .await?
         .ok_or_else(|| AppError::NotFound("Group not found".to_string()))?;
 
-    if group.owner_mailbox_id != mailbox_id && !claims.is_admin {
+    if group.owner_mailbox_id != mailbox.0.id && !claims.is_admin {
         return Err(AppError::Forbidden("Not the group owner".to_string()));
     }
 
@@ -180,38 +158,7 @@ pub async fn remove_member(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_parse_mailbox_id_valid_uuid() {
-        let claims = Claims {
-            sub: "550e8400-e29b-41d4-a716-446655440000".to_string(),
-            username: "test@example.com".to_string(),
-            is_admin: false,
-            is_compliance_officer: false,
-            exp: 0,
-            iat: 0,
-        };
-        let result = parse_mailbox_id(&claims);
-        assert!(result.is_ok());
-        assert_eq!(
-            result.unwrap().to_string(),
-            "550e8400-e29b-41d4-a716-446655440000"
-        );
-    }
-
-    #[test]
-    fn test_parse_mailbox_id_invalid_uuid() {
-        let claims = Claims {
-            sub: "not-a-uuid".to_string(),
-            username: "test@example.com".to_string(),
-            is_admin: false,
-            is_compliance_officer: false,
-            exp: 0,
-            iat: 0,
-        };
-        let result = parse_mailbox_id(&claims);
-        assert!(result.is_err());
-    }
+    use crate::services::auth_service::Claims;
 
     #[test]
     fn test_create_group_request_deserialization() {
@@ -223,9 +170,6 @@ mod tests {
         assert!(req.domain_id.is_some());
     }
 
-    // Added (TMAIL-286): companion test for the SPA path — request omits
-    // domain_id and the handler must accept it (the handler resolves the
-    // fallback before calling DistributionGroup::create).
     #[test]
     fn test_create_group_request_without_domain_id_deserialization() {
         let json = r#"{"name": "Team", "address": "team@example.com"}"#;

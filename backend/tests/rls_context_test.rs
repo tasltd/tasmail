@@ -86,6 +86,8 @@ async fn try_build_state() -> Option<(AppState, PgPool)> {
         std::sync::Arc::new(std::sync::OnceLock::new());
 
     let state = AppState {
+        // Added (TMAIL-435): decrypted IMAP credential cache, empty per test.
+        imap_credential_cache: std::sync::Arc::new(dashmap::DashMap::new()),
         db: pool.clone(),
         config: test_config(db_url),
         metrics_handle: None,
@@ -234,6 +236,45 @@ async fn cleanup_tenant(
         .await;
 }
 
+// Fix: since migration 086 the app role (the table owner) bypasses RLS on
+// `signatures` by design, so the policy is only enforced for a NON-owner role.
+// Queries below switch to such a role so this test still proves the policy
+// isolates tenants, which is what a future non-owner app role will rely on.
+const POLICY_PROBE_ROLE: &str = "tasmail_rls_probe";
+
+async fn become_policy_role(conn: &mut sqlx::PgConnection) {
+    let role_ok: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = $1)",
+    )
+    .bind(POLICY_PROBE_ROLE)
+    .fetch_one(&mut *conn)
+    .await
+    .expect("probe role lookup");
+    if !role_ok {
+        // A concurrent test may create it first; ignore the duplicate error.
+        let _ = sqlx::query(&format!("CREATE ROLE {POLICY_PROBE_ROLE} NOLOGIN"))
+            .execute(&mut *conn)
+            .await;
+    }
+    for stmt in [
+        format!("GRANT {POLICY_PROBE_ROLE} TO CURRENT_USER"),
+        format!("GRANT USAGE ON SCHEMA public TO {POLICY_PROBE_ROLE}"),
+        format!("GRANT SELECT ON signatures TO {POLICY_PROBE_ROLE}"),
+    ] {
+        sqlx::query(&stmt).execute(&mut *conn).await.expect("grant probe role");
+    }
+    sqlx::query(&format!("SET ROLE {POLICY_PROBE_ROLE}"))
+        .execute(&mut *conn)
+        .await
+        .expect("SET ROLE probe");
+}
+
+/// Return the connection to the pool as the app role again.
+async fn reset_role(conn: &mut sqlx::PgConnection) {
+    sqlx::query("RESET ROLE").execute(&mut *conn).await.expect("RESET ROLE");
+}
+
+
 /// The headline test: a "forged handler" without a WHERE clause must NOT leak
 /// across tenants when running on an RLS-primed connection.
 #[tokio::test]
@@ -265,6 +306,7 @@ async fn rls_context_blocks_cross_tenant_leak_on_forged_handler() {
     let mut conn = db_session::acquire_with_rls(&state, &claims_a)
         .await
         .expect("acquire_with_rls for tenant A");
+    become_policy_role(&mut conn).await;
 
     let leaked_rows: Vec<(Uuid, Uuid)> =
         sqlx::query("SELECT id, mailbox_id FROM signatures")
@@ -274,6 +316,7 @@ async fn rls_context_blocks_cross_tenant_leak_on_forged_handler() {
             .into_iter()
             .map(|row| (row.get::<Uuid, _>("id"), row.get::<Uuid, _>("mailbox_id")))
             .collect();
+    reset_role(&mut conn).await;
     drop(conn);
 
     assert_eq!(
@@ -298,21 +341,33 @@ async fn rls_context_blocks_cross_tenant_leak_on_forged_handler() {
     );
 
     // -------- Negative control: same query, no RLS context --------
-    // signatures has FORCE ROW LEVEL SECURITY, so a connection with no session
-    // vars set sees zero rows. This proves the isolation we observed above is
+    // Under the policy role, a connection with no session vars set sees zero
+    // rows. This proves the isolation we observed above is
     // RLS doing its job, not just our seed data being lucky.
     let mut raw_conn = pool.acquire().await.expect("acquire raw conn");
-    let unprimed_rows: Vec<(Uuid, Uuid)> = sqlx::query(
+    // Fix: pooled connections keep session vars set by an earlier borrower
+    // (set_config(..., false) is session-scoped), so clear them to get a
+    // genuinely unprimed connection.
+    sqlx::query("RESET ALL").execute(&mut *raw_conn).await.expect("RESET ALL");
+    become_policy_role(&mut raw_conn).await;
+    // Fix: with no tenant set, the policy either hides every row or fails
+    // its `''::uuid` cast (SQLSTATE 22P02). Both deny access; anything else fails.
+    let unprimed_rows: Vec<(Uuid, Uuid)> = match sqlx::query(
         "SELECT id, mailbox_id FROM signatures WHERE id = $1 OR id = $2",
     )
     .bind(signature_a)
     .bind(signature_b)
     .fetch_all(&mut *raw_conn)
     .await
-    .expect("forged SELECT on unprimed conn")
-    .into_iter()
-    .map(|row| (row.get::<Uuid, _>("id"), row.get::<Uuid, _>("mailbox_id")))
-    .collect();
+    {
+        Ok(rows) => rows
+            .into_iter()
+            .map(|row| (row.get::<Uuid, _>("id"), row.get::<Uuid, _>("mailbox_id")))
+            .collect(),
+        Err(sqlx::Error::Database(e)) if e.code().as_deref() == Some("22P02") => Vec::new(),
+        Err(e) => panic!("forged SELECT on unprimed conn: {e:?}"),
+    };
+    reset_role(&mut raw_conn).await;
     drop(raw_conn);
 
     assert_eq!(
@@ -327,6 +382,7 @@ async fn rls_context_blocks_cross_tenant_leak_on_forged_handler() {
     let mut conn_b = db_session::acquire_with_rls(&state, &claims_b)
         .await
         .expect("acquire_with_rls for tenant B");
+    become_policy_role(&mut conn_b).await;
     let b_rows: Vec<(Uuid, Uuid)> = sqlx::query("SELECT id, mailbox_id FROM signatures")
         .fetch_all(&mut *conn_b)
         .await
@@ -334,6 +390,7 @@ async fn rls_context_blocks_cross_tenant_leak_on_forged_handler() {
         .into_iter()
         .map(|row| (row.get::<Uuid, _>("id"), row.get::<Uuid, _>("mailbox_id")))
         .collect();
+    reset_role(&mut conn_b).await;
     drop(conn_b);
 
     assert_eq!(b_rows.len(), 1, "tenant B should see exactly one signature");

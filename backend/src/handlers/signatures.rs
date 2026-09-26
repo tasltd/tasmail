@@ -3,8 +3,10 @@ use axum::{
     http::StatusCode,
     Json,
 };
+use uuid::Uuid;
 
 use crate::error::AppError;
+use crate::extractors::Mailbox;
 use crate::models::signature::{CreateSignature, Signature, UpdateSignature};
 use crate::services::auth_service::Claims;
 use crate::state::AppState;
@@ -12,9 +14,9 @@ use crate::state::AppState;
 /// GET /api/signatures — list all signatures for the current user
 pub async fn list_signatures(
     State(state): State<AppState>,
-    axum::Extension(claims): axum::Extension<Claims>,
+    mailbox: Mailbox,
 ) -> Result<Json<Vec<Signature>>, AppError> {
-    let mailbox_id = parse_mailbox_id(&claims)?;
+    let mailbox_id = mailbox.0.id;
     let signatures = Signature::find_by_mailbox(&state.db, mailbox_id).await?;
     Ok(Json(signatures))
 }
@@ -22,10 +24,10 @@ pub async fn list_signatures(
 /// POST /api/signatures — create a new signature
 pub async fn create_signature(
     State(state): State<AppState>,
-    axum::Extension(claims): axum::Extension<Claims>,
+    mailbox: Mailbox,
     Json(body): Json<CreateSignature>,
 ) -> Result<(StatusCode, Json<Signature>), AppError> {
-    let mailbox_id = parse_mailbox_id(&claims)?;
+    let mailbox_id = mailbox.0.id;
     let signature = Signature::create(&state.db, mailbox_id, &body).await?;
     Ok((StatusCode::CREATED, Json(signature)))
 }
@@ -33,11 +35,11 @@ pub async fn create_signature(
 /// PUT /api/signatures/:id — update a signature
 pub async fn update_signature(
     State(state): State<AppState>,
-    axum::Extension(claims): axum::Extension<Claims>,
-    Path(id): Path<uuid::Uuid>,
+    mailbox: Mailbox,
+    Path(id): Path<Uuid>,
     Json(body): Json<UpdateSignature>,
 ) -> Result<Json<Signature>, AppError> {
-    let mailbox_id = parse_mailbox_id(&claims)?;
+    let mailbox_id = mailbox.0.id;
     let signature = Signature::update(&state.db, id, mailbox_id, &body)
         .await?
         .ok_or_else(|| AppError::NotFound("Signature not found".to_string()))?;
@@ -47,23 +49,16 @@ pub async fn update_signature(
 /// DELETE /api/signatures/:id — delete a signature
 pub async fn delete_signature(
     State(state): State<AppState>,
-    axum::Extension(claims): axum::Extension<Claims>,
-    Path(id): Path<uuid::Uuid>,
+    mailbox: Mailbox,
+    Path(id): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
-    let mailbox_id = parse_mailbox_id(&claims)?;
+    let mailbox_id = mailbox.0.id;
     let deleted = Signature::delete(&state.db, id, mailbox_id).await?;
     if deleted {
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(AppError::NotFound("Signature not found".to_string()))
     }
-}
-
-fn parse_mailbox_id(claims: &Claims) -> Result<uuid::Uuid, AppError> {
-    claims
-        .sub
-        .parse()
-        .map_err(|_| AppError::Internal(anyhow::anyhow!("Invalid mailbox ID")))
 }
 
 #[cfg(test)]
@@ -81,7 +76,7 @@ mod tests {
             exp: 0,
             iat: 0,
         };
-        assert!(parse_mailbox_id(&claims).is_ok());
+        assert!(claims.sub.parse::<uuid::Uuid>().is_ok());
     }
 
     #[test]
@@ -94,6 +89,6 @@ mod tests {
             exp: 0,
             iat: 0,
         };
-        assert!(parse_mailbox_id(&claims).is_err());
+        assert!(claims.sub.parse::<uuid::Uuid>().is_err());
     }
 }

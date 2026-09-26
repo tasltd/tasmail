@@ -739,6 +739,25 @@ export function ComposeModal({ isOpen, onClose, replyContext = null }: ComposeMo
                     ? 'Attachments exceed the 25 MB limit.'
                     : undefined
             }
+          data-testid="compose-send-btn"
+          onClick={() => sendMut.mutate()}
+          disabled={
+            sendMut.isPending ||
+            !to.trim() ||
+            !subject.trim() ||
+            hasUploadingAttachment ||
+            hasFailedAttachment ||
+            overTotalLimit
+          }
+          title={
+            hasUploadingAttachment
+              ? 'Waiting for attachment uploads to finish…'
+              : hasFailedAttachment
+                ? 'One or more attachments failed to upload. Remove or retry them.'
+                : overTotalLimit
+                  ? 'Attachments exceed the 25 MB limit.'
+                  : undefined
+          }
           >
             <Send className="size-4 mr-1 sm:mr-2" />
             {sendMut.isPending ? 'Sending…' : 'Send'}

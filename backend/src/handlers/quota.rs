@@ -5,42 +5,32 @@ use axum::{
 };
 
 use crate::error::AppError;
-use crate::models::mailbox::Mailbox;
+use crate::extractors::mailbox::MailboxExtractor as Mailbox;
 use crate::models::quota::{QuotaStatus, QuotaUsage};
-use crate::services::auth_service::Claims;
 use crate::state::AppState;
 
 /// GET /api/quota — Get current user's quota status
 /// Changed: Checks Redis cache first to avoid repeated DB + IMAP calls
 pub async fn get_quota(
     State(state): State<AppState>,
-    axum::Extension(claims): axum::Extension<Claims>,
+    Mailbox(mailbox): Mailbox,
 ) -> Result<Json<QuotaStatus>, AppError> {
-    let mailbox_id: uuid::Uuid = claims
-        .sub
-        .parse()
-        .map_err(|_| AppError::Internal(anyhow::anyhow!("Invalid mailbox ID in token")))?;
-
     // Added: Check Redis cache first
-    if let Some(cached) = state.cache.get_quota::<QuotaStatus>(&claims.sub).await {
+    if let Some(cached) = state.cache.get_quota::<QuotaStatus>(&mailbox.id.to_string()).await {
         return Ok(Json(cached));
     }
 
-    let mailbox = Mailbox::find_by_id(&state.db, mailbox_id)
-        .await?
-        .ok_or_else(|| AppError::NotFound("Mailbox not found".to_string()))?;
-
-    let usage = QuotaUsage::find_by_mailbox(&state.db, mailbox_id).await?;
+    let usage = QuotaUsage::find_by_mailbox(&state.db, mailbox.id).await?;
 
     let status = QuotaUsage::to_status(
         usage.as_ref(),
         mailbox.quota_bytes,
         mailbox.quota_warn_percent,
-        mailbox_id,
+        mailbox.id,
     );
 
     // Added: Cache the quota status
-    state.cache.set_quota(&claims.sub, &status).await;
+    state.cache.set_quota(&mailbox.id.to_string(), &status).await;
 
     Ok(Json(status))
 }
@@ -52,19 +42,11 @@ pub async fn get_quota(
 /// global Dovecot host instead of the user's per-mailbox IMAP server.
 pub async fn sync_quota(
     State(state): State<AppState>,
-    axum::Extension(claims): axum::Extension<Claims>,
+    Mailbox(mailbox): Mailbox,
 ) -> Result<Json<QuotaStatus>, AppError> {
-    let mailbox_id: uuid::Uuid = claims
-        .sub
-        .parse()
-        .map_err(|_| AppError::Internal(anyhow::anyhow!("Invalid mailbox ID in token")))?;
-
-    let mailbox = Mailbox::find_by_id(&state.db, mailbox_id)
-        .await?
-        .ok_or_else(|| AppError::NotFound("Mailbox not found".to_string()))?;
 
     // Fetch quota from the user's BYOK IMAP server using their stored creds.
-    let imap_service = crate::services::imap_service::ImapService::for_user(&state, mailbox_id).await?;
+    let imap_service = crate::services::imap_service::ImapService::for_user(&state, mailbox.id).await?;
     let (imap_user, imap_pass) = imap_service
         .user_creds()
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("BYOK IMAP credentials missing")))?;
@@ -78,18 +60,18 @@ pub async fn sync_quota(
         });
 
     // Update database
-    let usage = QuotaUsage::upsert(&state.db, mailbox_id, used_bytes, message_count).await?;
+    let usage = QuotaUsage::upsert(&state.db, mailbox.id, used_bytes, message_count).await?;
 
     let status = QuotaUsage::to_status(
         Some(&usage),
         mailbox.quota_bytes,
         mailbox.quota_warn_percent,
-        mailbox_id,
+        mailbox.id,
     );
 
     // Added: Invalidate stale cache and set fresh data
-    state.cache.invalidate_quota(&claims.sub).await;
-    state.cache.set_quota(&claims.sub, &status).await;
+    state.cache.invalidate_quota(&mailbox.id.to_string()).await;
+    state.cache.set_quota(&mailbox.id.to_string(), &status).await;
 
     Ok(Json(status))
 }

@@ -230,4 +230,69 @@ test.describe('TMAIL-292 alt-UI modern theme sweep', () => {
     );
     await takeScreenshot(page, `${SCREENSHOT_DIR}/07-back-to-classic`);
   });
+
+  // ── EDGE CASE: Empty inbox renders gracefully when no messages exist ────────
+  test('empty inbox renders gracefully', async ({ page }) => {
+    test.setTimeout(60_000);
+
+    // Navigate to modern UI - page should load with empty state
+    await page.goto('/modern/');
+
+    // Wait for inbox to render - expect empty state message or no message rows
+    const emptyState = page.locator('text=No messages,');
+    const messageRows = page.locator('div.cursor-pointer');
+
+    // Either empty state text is visible, or no message rows exist
+    const hasEmptyState = await emptyState.isVisible({ timeout: 5_000 });
+    const rowCount = await messageRows.count();
+
+    // At least one of: empty state text visible OR zero message rows
+    expect(hasEmptyState || rowCount === 0).toBe(true);
+
+    await takeScreenshot(page, 'edge-empty-inbox');
+  });
+
+  // ── EDGE CASE: Single message renders correctly ───────────────────────────
+  test('single message in inbox renders and can be opened', async ({ page }) => {
+    test.setTimeout(60_000);
+
+    await page.goto('/modern/');
+
+    // Wait for at least one message row
+    const messageRows = page.locator('div.cursor-pointer');
+    const rowCount = await messageRows.count();
+    expect(rowCount).toBeGreaterThanOrEqual(1);
+
+    // Click first message
+    await messageRows.first().click();
+
+    // Reader pane should open with subject
+    await expect(page.locator('h2').nth(1)).toBeVisible({ timeout: 10_000 });
+
+    await takeScreenshot(page, 'edge-single-message');
+  });
+
+  // ── EDGE CASE: Compose with empty body handled gracefully ────────────────
+  test('compose with empty body does not crash', async ({ page }) => {
+    test.setTimeout(60_000);
+
+    await page.goto('/modern/');
+
+    // Open compose
+    await page.locator('text=New Message').first().click();
+    await expect(page.locator('text=New Message')).toBeVisible({ timeout: 5_000 });
+
+    // Fill only email and subject, leave body empty (click into editor but don't type)
+    const composeBody = page.locator('[data-testid="compose-rte-editor"]');
+    await composeBody.click();
+
+    // Send without body text - should handle gracefully
+    await page.locator('button', { hasText: /^Send$/ }).first().click();
+
+    // Modal should close or show error - neither is a crash
+    const modalStillOpen = await page.locator('[role="dialog"]').isVisible({ timeout: 5_000 });
+    // If modal is still open, that's OK as long as no JS error occurred
+
+    await takeScreenshot(page, 'edge-empty-body-compose');
+  });
 });

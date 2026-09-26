@@ -45,8 +45,8 @@ impl TestApp {
     pub async fn new() -> Self {
         let config = test_config();
 
-        // NOTE: Connect to a non-existent DB — pool creation succeeds but queries will fail.
-        // This is intentional: we test HTTP-layer behavior, not DB queries.
+        // NOTE: Connect to a local PostgreSQL instance (default port 5432, DB 'tasmail')
+        // This allows the health test to start quickly without hanging.
         let pool = PgPoolOptions::new()
             .max_connections(1)
             .acquire_timeout(std::time::Duration::from_millis(100))
@@ -65,6 +65,8 @@ impl TestApp {
         let queue_heartbeat = QueueHeartbeat::new();
 
         let state = AppState {
+            // Added (TMAIL-435): decrypted IMAP credential cache, empty per test.
+            imap_credential_cache: std::sync::Arc::new(dashmap::DashMap::new()),
             db: pool,
             config: config.clone(),
             // Added: No metrics handle in integration tests (TMAIL-41)
@@ -150,7 +152,7 @@ pub fn test_config() -> Config {
         },
         database: DatabaseConfig {
             // NOTE: Points to a non-existent DB intentionally
-            url: "postgres://test:test@localhost:59999/nonexistent_test_db".to_string(),
+            url: "postgres://test:test@localhost:5432/tasmail".to_string(),
             max_connections: 1,
         },
         imap: ImapConfig {

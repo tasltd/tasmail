@@ -244,6 +244,22 @@ impl SamlSession {
         .fetch_one(pool)
         .await
     }
+
+    /// Find a SAML session by its session index and IdP config ID.
+    /// Used by the SLO handler to locate the session before invalidating it.
+    pub async fn find_by_session_index(
+        pool: &PgPool,
+        saml_config_id: Uuid,
+        session_index: &str,
+    ) -> Result<Option<SamlSession>, sqlx::Error> {
+        sqlx::query_as::<_, SamlSession>(
+            "SELECT * FROM saml_sessions WHERE saml_config_id = $1 AND session_index = $2",
+        )
+        .bind(saml_config_id)
+        .bind(session_index)
+        .fetch_optional(pool)
+        .await
+    }
 }
 
 #[cfg(test)]

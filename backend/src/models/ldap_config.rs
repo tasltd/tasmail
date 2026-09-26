@@ -170,6 +170,21 @@ impl LdapConfiguration {
         Ok(())
     }
 
+    /// Find all active ldap configurations that are due for sync based on
+    /// their sync_interval_minutes and last_sync_at.
+    pub async fn find_due_for_sync(pool: &PgPool) -> Result<Vec<LdapConfiguration>, sqlx::Error> {
+        let now = chrono::Utc::now();
+        sqlx::query_as::<_, LdapConfiguration>(
+            "SELECT * FROM ldap_configurations
+             WHERE active = true
+               AND sync_interval_minutes IS NOT NULL
+               AND (last_sync_at IS NULL
+                    OR last_sync_at < now() - interval '1 minute' * sync_interval_minutes)",
+        )
+        .fetch_all(pool)
+        .await
+    }
+
     /// Update sync status after a sync run completes
     pub async fn update_sync_status(
         pool: &PgPool,

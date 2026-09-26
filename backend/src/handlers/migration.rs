@@ -1,39 +1,21 @@
-// TMAIL-345: migration handlers switched from `&state.db` to the `RlsConn`
-// extractor so the INSERT/UPDATE/SELECT queries run against a connection
-// that has `app.mailbox_id` pre-set to the request's JWT subject.
-//
-// The previous pattern (`&state.db` directly) was the root cause of an
-// intermittent "new row violates row-level security policy for table
-// migration_jobs" 500 — when a fresh acquire pulled a pool connection that
-// carried a stale `app.mailbox_id` from a different prior request, the
-// CHECK on INSERT failed. The fix matches the helper documented in
-// services::db_session (TMAIL-309) — this handler module is the first
-// caller of `RlsConn`, setting the migration precedent for the other
-// 60+ handlers to convert incrementally.
-use axum::{extract::Path, http::StatusCode, Json};
+use axum::{extract::Path, http::StatusCode, Json, Extension};
 use uuid::Uuid;
 
 use crate::error::AppError;
+use crate::extractors::Mailbox;
 use crate::models::migration_job::{
     CreateImapMigrationRequest, CreateMboxImportRequest, MigrationJob,
 };
 use crate::services::auth_service::Claims;
 use crate::services::db_session::RlsConn;
 
-fn parse_mailbox_id(claims: &Claims) -> Result<Uuid, AppError> {
-    claims
-        .sub
-        .parse()
-        .map_err(|_| AppError::Internal(anyhow::anyhow!("Invalid mailbox ID")))
-}
-
 /// POST /api/migration/imap — Start an IMAP-to-IMAP migration
 pub async fn start_imap_migration(
     mut rls: RlsConn,
-    axum::Extension(claims): axum::Extension<Claims>,
+    mailbox: Mailbox,
     Json(body): Json<CreateImapMigrationRequest>,
 ) -> Result<(StatusCode, Json<MigrationJob>), AppError> {
-    let mailbox_id = parse_mailbox_id(&claims)?;
+    let mailbox_id = mailbox.0.id;
 
     if body.source_host.is_empty()
         || body.source_user.is_empty()
@@ -46,20 +28,16 @@ pub async fn start_imap_migration(
 
     let job = MigrationJob::create_imap_conn(&mut *rls, mailbox_id, &body).await?;
 
-    // NOTE: The actual migration execution is handled by a background worker
-    // that polls for pending jobs. In production, this would invoke imapsync.
-    // For now, just create the job record.
-
     Ok((StatusCode::CREATED, Json(job)))
 }
 
 /// POST /api/migration/mbox — Start an MBOX file import
 pub async fn start_mbox_import(
     mut rls: RlsConn,
-    axum::Extension(claims): axum::Extension<Claims>,
+    mailbox: Mailbox,
     Json(body): Json<CreateMboxImportRequest>,
 ) -> Result<(StatusCode, Json<MigrationJob>), AppError> {
-    let mailbox_id = parse_mailbox_id(&claims)?;
+    let mailbox_id = mailbox.0.id;
 
     if body.mbox_file_path.is_empty() {
         return Err(AppError::BadRequest("MBOX file path is required".to_string()));
@@ -73,9 +51,9 @@ pub async fn start_mbox_import(
 /// GET /api/migration — List migration jobs for the current user
 pub async fn list_migrations(
     mut rls: RlsConn,
-    axum::Extension(claims): axum::Extension<Claims>,
+    mailbox: Mailbox,
 ) -> Result<Json<Vec<MigrationJob>>, AppError> {
-    let mailbox_id = parse_mailbox_id(&claims)?;
+    let mailbox_id = mailbox.0.id;
     let jobs = MigrationJob::list_by_mailbox_conn(&mut *rls, mailbox_id).await?;
     Ok(Json(jobs))
 }
@@ -94,10 +72,11 @@ pub async fn get_migration(
 /// POST /api/migration/:id/cancel — Cancel a pending/running migration
 pub async fn cancel_migration(
     mut rls: RlsConn,
-    axum::Extension(claims): axum::Extension<Claims>,
+    mailbox: Mailbox,
+    Extension(claims): Extension<Claims>,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
-    let mailbox_id = parse_mailbox_id(&claims)?;
+    let mailbox_id = mailbox.0.id;
 
     let job = MigrationJob::find_by_id_conn(&mut *rls, id)
         .await?
@@ -162,31 +141,5 @@ mod tests {
     fn test_mbox_import_request_rejects_missing_path() {
         let json = r#"{}"#;
         assert!(serde_json::from_str::<CreateMboxImportRequest>(json).is_err());
-    }
-
-    #[test]
-    fn test_parse_mailbox_id_valid() {
-        let claims = Claims {
-            sub: "550e8400-e29b-41d4-a716-446655440000".to_string(),
-            username: "test@example.com".to_string(),
-            is_admin: false,
-            is_compliance_officer: false,
-            exp: 0,
-            iat: 0,
-        };
-        assert!(parse_mailbox_id(&claims).is_ok());
-    }
-
-    #[test]
-    fn test_parse_mailbox_id_invalid() {
-        let claims = Claims {
-            sub: "invalid".to_string(),
-            username: "test@example.com".to_string(),
-            is_admin: false,
-            is_compliance_officer: false,
-            exp: 0,
-            iat: 0,
-        };
-        assert!(parse_mailbox_id(&claims).is_err());
     }
 }

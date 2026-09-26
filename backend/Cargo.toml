@@ -10,6 +10,9 @@ default-run = "tasmail"
 [dependencies]
 # Web framework
 axum = { version = "0.8", features = ["ws", "macros", "multipart"] }
+async-trait = "0.1"
+dashmap = "6"
+
 axum-extra = { version = "0.10", features = ["cookie", "typed-header"] }
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["compat"] }

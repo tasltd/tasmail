@@ -512,6 +512,7 @@ export function Composer() {
       <div className="composer__actions">
         <button
           className="btn btn--primary"
+          data-testid="compose-send-btn"
           onClick={handleSend}
           disabled={sending}
         >

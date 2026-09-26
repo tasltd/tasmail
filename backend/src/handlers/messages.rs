@@ -6,8 +6,9 @@ use axum::{
 use serde::Deserialize;
 
 use crate::error::AppError;
-use crate::models::webhook::WebhookEvent;
+use crate::extractors::mailbox::{load_mailbox, MailboxExtractor as Mailbox};
 use crate::services::auth_service::Claims;
+use crate::models::webhook::WebhookEvent;
 use crate::services::imap_service::{FullMessage, ImapService};
 // Added (TMAIL-320): response types for streaming a single MIME part back to
 // the browser as a binary download.
@@ -63,7 +64,7 @@ pub struct SaveDraftRequest {
 /// GET /api/folders/:folder/messages — list messages in a folder
 pub async fn list_messages(
     State(state): State<AppState>,
-    axum::Extension(claims): axum::Extension<Claims>,
+    Mailbox(mailbox): Mailbox,
     Path(folder): Path<String>,
     Query(query): Query<ListMessagesQuery>,
 ) -> Result<Json<serde_json::Value>, AppError> {
@@ -71,15 +72,6 @@ pub async fn list_messages(
     validation::validate_folder_name(&folder)?;
     let page = query.page.unwrap_or(0);
     let page_size = query.page_size.unwrap_or(50).min(200);
-
-    let mailbox_id: uuid::Uuid = claims
-        .sub
-        .parse()
-        .map_err(|_| AppError::Internal(anyhow::anyhow!("Invalid mailbox ID")))?;
-
-    let mailbox = crate::models::mailbox::Mailbox::find_by_id(&state.db, mailbox_id)
-        .await?
-        .ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
 
     let imap_service = ImapService::for_user(&state, mailbox.id).await?;
     // BYOK: borrow the user-specific IMAP credentials loaded from imap_configurations.
@@ -101,17 +93,9 @@ pub async fn list_messages(
 /// GET /api/folders/:folder/messages/:uid — get a full message
 pub async fn get_message(
     State(state): State<AppState>,
-    axum::Extension(claims): axum::Extension<Claims>,
+    Mailbox(mailbox): Mailbox,
     Path((folder, uid)): Path<(String, u32)>,
 ) -> Result<Json<FullMessage>, AppError> {
-    let mailbox_id: uuid::Uuid = claims
-        .sub
-        .parse()
-        .map_err(|_| AppError::Internal(anyhow::anyhow!("Invalid mailbox ID")))?;
-
-    let mailbox = crate::models::mailbox::Mailbox::find_by_id(&state.db, mailbox_id)
-        .await?
-        .ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
 
     let imap_service = ImapService::for_user(&state, mailbox.id).await?;
     // BYOK: borrow the user-specific IMAP credentials loaded from imap_configurations.
@@ -139,17 +123,9 @@ pub async fn get_message(
 /// for every reader pane. This handler is the lazy fetch.
 pub async fn download_message_part(
     State(state): State<AppState>,
-    axum::Extension(claims): axum::Extension<Claims>,
+    Mailbox(mailbox): Mailbox,
     Path((folder, uid, part_id)): Path<(String, u32, String)>,
 ) -> Result<Response<Body>, AppError> {
-    let mailbox_id: uuid::Uuid = claims
-        .sub
-        .parse()
-        .map_err(|_| AppError::Internal(anyhow::anyhow!("Invalid mailbox ID")))?;
-
-    let mailbox = crate::models::mailbox::Mailbox::find_by_id(&state.db, mailbox_id)
-        .await?
-        .ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
 
     let imap_service = ImapService::for_user(&state, mailbox.id).await?;
     let (imap_user, imap_pass) = imap_service
@@ -218,14 +194,8 @@ pub async fn send_message(
         validation::validate_body_size(html)?;
     }
 
-    let mailbox_id: uuid::Uuid = claims
-        .sub
-        .parse()
-        .map_err(|_| AppError::Internal(anyhow::anyhow!("Invalid mailbox ID")))?;
-
-    let mailbox = crate::models::mailbox::Mailbox::find_by_id(&state.db, mailbox_id)
-        .await?
-        .ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
+    // Fix: validate before the DB lookup (TMAIL-37 validate-first order).
+    let mailbox = load_mailbox(&state, &claims).await?;
 
     // BYOK send: load the user's default SMTP server from smtp_configurations + decrypt the password.
     // The IMAP credentials we loaded above are the wrong key for SMTP — they likely won't even authenticate.
@@ -318,14 +288,8 @@ pub async fn search_messages(
         validation::validate_folder_name(f)?;
     }
 
-    let mailbox_id: uuid::Uuid = claims
-        .sub
-        .parse()
-        .map_err(|_| AppError::Internal(anyhow::anyhow!("Invalid mailbox ID")))?;
-
-    let mailbox = crate::models::mailbox::Mailbox::find_by_id(&state.db, mailbox_id)
-        .await?
-        .ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
+    // Fix: validate before the DB lookup (TMAIL-37 validate-first order).
+    let mailbox = load_mailbox(&state, &claims).await?;
 
     let folder = query.folder.as_deref().unwrap_or("INBOX");
     let imap_service = ImapService::for_user(&state, mailbox.id).await?;
@@ -348,17 +312,9 @@ pub async fn search_messages(
 /// DELETE /api/folders/:folder/messages/:uid — delete a message
 pub async fn delete_message(
     State(state): State<AppState>,
-    axum::Extension(claims): axum::Extension<Claims>,
+    Mailbox(mailbox): Mailbox,
     Path((folder, uid)): Path<(String, u32)>,
 ) -> Result<StatusCode, AppError> {
-    let mailbox_id: uuid::Uuid = claims
-        .sub
-        .parse()
-        .map_err(|_| AppError::Internal(anyhow::anyhow!("Invalid mailbox ID")))?;
-
-    let mailbox = crate::models::mailbox::Mailbox::find_by_id(&state.db, mailbox_id)
-        .await?
-        .ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
 
     let imap_service = ImapService::for_user(&state, mailbox.id).await?;
     // BYOK: borrow the user-specific IMAP credentials loaded from imap_configurations.
@@ -383,18 +339,10 @@ pub async fn delete_message(
 /// POST /api/folders/:folder/messages/:uid/move — move a message
 pub async fn move_message(
     State(state): State<AppState>,
-    axum::Extension(claims): axum::Extension<Claims>,
+    Mailbox(mailbox): Mailbox,
     Path((folder, uid)): Path<(String, u32)>,
     Json(body): Json<MoveRequest>,
 ) -> Result<StatusCode, AppError> {
-    let mailbox_id: uuid::Uuid = claims
-        .sub
-        .parse()
-        .map_err(|_| AppError::Internal(anyhow::anyhow!("Invalid mailbox ID")))?;
-
-    let mailbox = crate::models::mailbox::Mailbox::find_by_id(&state.db, mailbox_id)
-        .await?
-        .ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
 
     let imap_service = ImapService::for_user(&state, mailbox.id).await?;
     // BYOK: borrow the user-specific IMAP credentials loaded from imap_configurations.
@@ -423,18 +371,10 @@ pub async fn move_message(
 /// POST /api/folders/:folder/messages/:uid/flag — set/remove a flag
 pub async fn flag_message(
     State(state): State<AppState>,
-    axum::Extension(claims): axum::Extension<Claims>,
+    Mailbox(mailbox): Mailbox,
     Path((folder, uid)): Path<(String, u32)>,
     Json(body): Json<FlagRequest>,
 ) -> Result<StatusCode, AppError> {
-    let mailbox_id: uuid::Uuid = claims
-        .sub
-        .parse()
-        .map_err(|_| AppError::Internal(anyhow::anyhow!("Invalid mailbox ID")))?;
-
-    let mailbox = crate::models::mailbox::Mailbox::find_by_id(&state.db, mailbox_id)
-        .await?
-        .ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
 
     let imap_service = ImapService::for_user(&state, mailbox.id).await?;
     // BYOK: borrow the user-specific IMAP credentials loaded from imap_configurations.
@@ -484,14 +424,8 @@ pub async fn save_draft(
         validation::validate_body_size(html)?;
     }
 
-    let mailbox_id: uuid::Uuid = claims
-        .sub
-        .parse()
-        .map_err(|_| AppError::Internal(anyhow::anyhow!("Invalid mailbox ID")))?;
-
-    let mailbox = crate::models::mailbox::Mailbox::find_by_id(&state.db, mailbox_id)
-        .await?
-        .ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
+    // Fix: validate before the DB lookup (TMAIL-37 validate-first order).
+    let mailbox = load_mailbox(&state, &claims).await?;
 
     // Build a minimal RFC 2822 message for the draft
     let to_header = body.to.join(", ");

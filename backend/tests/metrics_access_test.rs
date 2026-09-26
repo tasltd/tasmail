@@ -110,6 +110,8 @@ async fn metrics_allows_valid_bearer_token_from_any_ip() {
 
     let inner_router_holder: Arc<OnceLock<axum::Router>> = Arc::new(OnceLock::new());
     let state = AppState {
+        // Added (TMAIL-435): decrypted IMAP credential cache, empty per test.
+        imap_credential_cache: std::sync::Arc::new(dashmap::DashMap::new()),
         db: pool,
         config: cfg,
         metrics_handle: None,
@@ -159,6 +161,8 @@ async fn metrics_rejects_wrong_bearer_token() {
 
     let inner_router_holder: Arc<OnceLock<axum::Router>> = Arc::new(OnceLock::new());
     let state = AppState {
+        // Added (TMAIL-435): decrypted IMAP credential cache, empty per test.
+        imap_credential_cache: std::sync::Arc::new(dashmap::DashMap::new()),
         db: pool,
         config: cfg,
         metrics_handle: None,
@@ -205,6 +209,8 @@ async fn metrics_allows_explicitly_listed_ip() {
 
     let inner_router_holder: Arc<OnceLock<axum::Router>> = Arc::new(OnceLock::new());
     let state = AppState {
+        // Added (TMAIL-435): decrypted IMAP credential cache, empty per test.
+        imap_credential_cache: std::sync::Arc::new(dashmap::DashMap::new()),
         db: pool,
         config: cfg,
         metrics_handle: None,

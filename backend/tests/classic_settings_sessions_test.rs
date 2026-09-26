@@ -102,6 +102,8 @@ async fn try_build_app() -> Option<(axum::Router, PgPool)> {
     let inner_router_holder: Arc<std::sync::OnceLock<axum::Router>> =
         Arc::new(std::sync::OnceLock::new());
     let state = AppState {
+        // Added (TMAIL-435): decrypted IMAP credential cache, empty per test.
+        imap_credential_cache: std::sync::Arc::new(dashmap::DashMap::new()),
         db: pool.clone(),
         config: config.clone(),
         metrics_handle: None,
@@ -310,6 +312,9 @@ async fn get_lists_both_tables_marks_current_row() {
     let req = Request::builder()
         .method(Method::GET)
         .uri("/classic/settings/sessions")
+        // Fix: the session middleware refreshes the current row's last-seen
+        // UA from this request, so send the same browser's UA.
+        .header(header::USER_AGENT, "Mozilla/5.0 current")
         .header(header::COOKIE, cookie_for(seeded.current_session.id))
         .body(Body::empty())
         .unwrap();
@@ -320,7 +325,7 @@ async fn get_lists_both_tables_marks_current_row() {
     assert_eq!(status, StatusCode::OK, "GET should 200; body={body}");
     assert!(body.contains("Active sessions"));
     // Both classic rows surface in the table.
-    assert!(body.contains("Mozilla/5.0 current"));
+    assert!(body.contains("Mozilla/5.0 current"), "classic row UA missing; body={body}");
     assert!(body.contains("Mozilla/5.0 other"));
     // Both SPA rows surface.
     assert!(body.contains("TASMail-Mobile/1.0"));

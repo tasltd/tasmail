@@ -20,4 +20,14 @@ export default defineConfig([
       globals: globals.browser,
     },
   },
+  // Added: Playwright fixtures take a callback named `use` and an empty `{}`
+  // first argument by design, which the React hooks and empty-pattern rules
+  // misread as errors. Neither rule applies to E2E code.
+  {
+    files: ['e2e/**/*.ts'],
+    rules: {
+      'react-hooks/rules-of-hooks': 'off',
+      'no-empty-pattern': 'off',
+    },
+  },
 ])

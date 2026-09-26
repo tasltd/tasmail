@@ -70,6 +70,7 @@ export const test = base.extend<{
   apiSignup: (email: string, password: string) => Promise<{ access_token: string; refresh_token: string }>;
   apiSignupTourVisible: (email: string, password: string) => Promise<{ access_token: string; refresh_token: string }>;
   markTourSeen: (accessToken: string) => Promise<void>;
+  email: string;
 }>({
   // Added: Screenshot output directory fixture, resolved to e2e/screenshots/
   screenshotDir: async ({}, use) => {
@@ -126,20 +127,32 @@ export const test = base.extend<{
   // so the FirstLoginTour overlay (added in TMAIL-401) doesn't render on /app and
   // intercept downstream Playwright interactions. Tests that need to drive the
   // tour itself should use `apiSignupTourVisible` instead.
+  // TMAIL-434: Retries on rate limiting (HTTP 429) with exponential backoff.
   apiSignup: async ({ baseURL }, use) => {
     const fn = async (email: string, password: string) => {
       const url = `${baseURL?.replace(/\/$/, '') ?? ''}/api/auth/signup`;
-      const resp = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
-      });
-      if (!resp.ok) {
-        throw new Error(`apiSignup failed: HTTP ${resp.status} ${await resp.text()}`);
+      let lastError: Error | null = null;
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const resp = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password }),
+        });
+        if (resp.ok) {
+          const tokens = (await resp.json()) as { access_token: string; refresh_token: string };
+          await markFirstLoginTourSeenViaApi(baseURL, tokens.access_token);
+          return tokens;
+        }
+        if (resp.status === 429) {
+          const delay = Math.pow(2, attempt) * 1000;
+          console.warn(`apiSignup: rate limited (attempt ${attempt + 1}/5), retrying in ${delay}ms`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          lastError = new Error(`apiSignup: rate limited after ${attempt + 1} attempts`);
+        } else {
+          throw new Error(`apiSignup failed: HTTP ${resp.status} ${await resp.text()}`);
+        }
       }
-      const tokens = (await resp.json()) as { access_token: string; refresh_token: string };
-      await markFirstLoginTourSeenViaApi(baseURL, tokens.access_token);
-      return tokens;
+      throw lastError || new Error('apiSignup: max retries exceeded');
     };
     await use(fn);
   },
@@ -168,6 +181,20 @@ export const test = base.extend<{
   markTourSeen: async ({ baseURL }, use) => {
     const fn = async (accessToken: string) => {
       await markFirstLoginTourSeenViaApi(baseURL, accessToken);
+    };
+    await use(fn);
+  },
+
+  // Added: Sign up a user via API + write JWT tokens to localStorage so
+  // subsequent page navigations authenticate without UI interaction.
+  // Returns the token pair for the caller's convenience.
+  setupAuth: async ({ page }, use) => {
+    const fn = async () => {
+      const tokens = await apiSignup(page, NOREPLY_CREDS.email, PASSWORD);
+      await page.addInitScript(([at, rt]) => {
+        localStorage.setItem('access_token', at);
+        localStorage.setItem('refresh_token', rt);
+      }, [tokens.access_token, tokens.refresh_token]);
     };
     await use(fn);
   },

@@ -2,6 +2,8 @@ mod config;
 // Added (TMAIL-308): Multi-origin CORS parser with wildcard support.
 mod cors;
 mod error;
+// Fix: declare the extractors module in the binary crate too; handlers import it.
+mod extractors;
 mod handlers;
 mod middleware;
 mod models;
@@ -11,11 +13,15 @@ mod state;
 // Added: Centralized input validation module for security hardening (TMAIL-37)
 mod validation;
 
+// Fix: legacy `crate::Mailbox` imports (archive.rs, imap_config.rs) resolve here.
+pub use extractors::Mailbox;
+
 use std::net::SocketAddr;
 use std::path::Path;
 
 use sqlx::postgres::PgPoolOptions;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use crate::services::ldap_sync_scheduler::LdapSyncScheduler;
 
 use config::Config;
 use state::AppState;
@@ -87,6 +93,7 @@ async fn main() -> anyhow::Result<()> {
     );
     scheduler.start();
 
+
     // TMAIL-158: Initialize Redis cache up-front so the queue processor can share it
     // with the HTTP handlers — both read per-user SMTP config and we want a single
     // cache namespace so invalidations from the API immediately invalidate the queue's view.
@@ -134,6 +141,17 @@ async fn main() -> anyhow::Result<()> {
     // Added: Encryption service derived from JWT secret — used for DB-stored credentials
     let encryption = services::encryption::EncryptionService::from_jwt_secret(&config.jwt.secret);
 
+    // TMAIL-322: LDAP background sync scheduler — polls active ldap configs
+    // that have sync_interval_minutes set, runs apply_sync for overdue ones,
+    // and writes a LdapSyncLog entry for audit. Runs every 60 seconds by default;
+    // override with LDAP_SYNC_POLL_INTERVAL_SECS env var.
+    let ldap_poll_interval: u64 = std::env::var("LDAP_SYNC_POLL_INTERVAL_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(60);
+    let ldap_scheduler = LdapSyncScheduler::new(pool.clone(), encryption.clone(), ldap_poll_interval);
+    ldap_scheduler.start();
+
     // TMAIL-306: shared Arc<OnceLock<Router>> handle. The `state` field below holds
     // one clone of this Arc; the router we build below captures another clone of the
     // same Arc inside its state. After `create_router` returns, we `set()` the wired
@@ -156,6 +174,8 @@ async fn main() -> anyhow::Result<()> {
         inner_router: inner_router_holder.clone(),
         // Added (TMAIL-310): same clone the queue processor stamps each cycle.
         queue_heartbeat,
+        // Added (TMAIL-435): In-memory cache for decrypted IMAP credentials.
+        imap_credential_cache: std::sync::Arc::new(dashmap::DashMap::new()),
     };
 
     let app = router::create_router(state);

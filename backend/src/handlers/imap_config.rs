@@ -1,6 +1,7 @@
 // Added: Per-user IMAP configuration handlers (BYOK webmail pivot).
 // CRUD endpoints + connection tester. Mirrors smtp_config.rs structure.
 
+use crate::Mailbox;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -17,50 +18,44 @@ use crate::models::imap_config::{
 use crate::services::auth_service::Claims;
 use crate::state::AppState;
 
-fn parse_user_id(claims: &Claims) -> Result<Uuid, AppError> {
-    Uuid::parse_str(&claims.sub).map_err(|e| AppError::BadRequest(format!("Invalid user id: {}", e)))
-}
 
 /// GET /api/imap-configs — list user's saved IMAP servers (passwords scrubbed)
 pub async fn list_imap_configs(
     State(state): State<AppState>,
-    axum::Extension(claims): axum::Extension<Claims>,
+    Mailbox(mailbox): Mailbox,
 ) -> Result<Json<Vec<ImapConfigSummary>>, AppError> {
-    let user_id = parse_user_id(&claims)?;
-    let configs = ImapConfiguration::list_for_user(&state.db, user_id).await?;
+    let configs = ImapConfiguration::list_for_user(&state.db, mailbox.id).await?;
     Ok(Json(configs.into_iter().map(ImapConfigSummary::from).collect()))
 }
 
 /// POST /api/imap-configs — add a new IMAP server. Password is encrypted at rest.
 pub async fn create_imap_config(
     State(state): State<AppState>,
-    axum::Extension(claims): axum::Extension<Claims>,
+    Mailbox(mailbox): Mailbox,
     Json(body): Json<CreateImapConfigRequest>,
 ) -> Result<(StatusCode, Json<ImapConfigSummary>), AppError> {
-    let user_id = parse_user_id(&claims)?;
     if body.host.trim().is_empty() || body.username.trim().is_empty() || body.password.is_empty() {
         return Err(AppError::BadRequest("host, username, and password are required".into()));
     }
     let key = derive_encryption_key(&state.config.jwt.secret);
-    let cfg = ImapConfiguration::create(&state.db, user_id, &body, &key).await?;
+    let cfg = ImapConfiguration::create(&state.db, mailbox.id, &body, &key).await?;
     // TMAIL-162: drop the per-user cache so the next request picks up the new default.
-    let _ = state.cache.invalidate_user_imap_config(&user_id.to_string()).await;
+    let _ = state.cache.invalidate_user_imap_config(&mailbox.id.to_string()).await;
     Ok((StatusCode::CREATED, Json(ImapConfigSummary::from(cfg))))
 }
 
 /// DELETE /api/imap-configs/{id} — remove a saved IMAP server
 pub async fn delete_imap_config(
     State(state): State<AppState>,
-    axum::Extension(claims): axum::Extension<Claims>,
+    Mailbox(mailbox): Mailbox,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
-    let user_id = parse_user_id(&claims)?;
-    let removed = ImapConfiguration::delete(&state.db, user_id, id).await?;
+    let removed = ImapConfiguration::delete(&state.db, mailbox.id, id).await?;
     if !removed {
         return Err(AppError::NotFound(format!("imap_configuration {}", id)));
     }
     // TMAIL-162: drop cache so the next request reflects the deletion.
-    let _ = state.cache.invalidate_user_imap_config(&user_id.to_string()).await;
+    let _ = state.cache.invalidate_user_imap_config(&mailbox.id.to_string()).await;
     Ok(StatusCode::NO_CONTENT)
 }
 

@@ -1,17 +1,21 @@
 use std::sync::{Arc, OnceLock};
+use dashmap::DashMap;
 
 use sqlx::PgPool;
 // Added: Prometheus handle for rendering metrics output (TMAIL-41)
 use metrics_exporter_prometheus::PrometheusHandle;
 
 use crate::config::Config;
-// Added: Redis cache service for performance optimization
+// Added: Redis cache service for branding/quota/rate-limit/session caching
 use crate::services::cache_service::CacheService;
 // Added: AES-256-GCM encryption service used to decrypt DB-stored payment credentials.
 use crate::services::encryption::EncryptionService;
 // Added (TMAIL-310): Shared liveness gauge — stamped by the queue processor
 // each cycle and read by the /api/health readiness probe.
 use crate::services::queue_heartbeat::QueueHeartbeat;
+// Added: In-memory cache for decrypted IMAP credentials to avoid expensive 
+// key derivation/decryption on every request (TMAIL-435).
+use crate::services::imap_service::DecryptedImapCredentials;
 
 /// Shared application state accessible in all handlers
 #[derive(Clone)]
@@ -37,4 +41,7 @@ pub struct AppState {
     // Both observers (HTTP probe + processor) share the underlying AtomicI64, so
     // tick timestamps flow through without any synchronisation cost.
     pub queue_heartbeat: QueueHeartbeat,
+    // Added: In-memory cache for decrypted IMAP credentials. 
+    // Keyed by user_id.
+    pub imap_credential_cache: Arc<DashMap<uuid::Uuid, DecryptedImapCredentials>>,
 }

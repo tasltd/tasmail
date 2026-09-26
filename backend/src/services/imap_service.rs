@@ -1,12 +1,56 @@
 use async_imap::Session;
 use async_native_tls::TlsStream;
-use futures::TryStreamExt;
+use futures::{Stream, StreamExt, TryStreamExt};
 use serde::Serialize;
 use tokio::net::TcpStream;
 use tokio_util::compat::{Compat, TokioAsyncReadCompatExt};
 
 use crate::config::ImapConfig;
 use crate::error::AppError;
+
+/// Tolerant collector for a stream of `Result<Fetch>` frames.
+///
+/// Some servers (e.g. Stalwart with `UTF8=ACCEPT`) emit ENVELOPE subjects
+/// containing non-ASCII bytes (UTF-8 emoji, accented chars). imap-proto treats
+/// quoted strings as ASCII (`CHAR = %x01-7F`) and rejects bytes >= 0x80, so a
+/// single such message makes the whole FETCH frame fail to parse. `try_collect`
+/// propagates the first error and aborts the entire page — an inbox with one
+/// emoji subject renders as a hard "FETCH stream failed" 500/503.
+///
+/// This helper drains the stream, logging-and-skipping frames that fail to
+/// parse, so one malformed ENVELOPE no longer blanks the whole message list.
+/// Each skipped frame only costs that one message from the current page.
+async fn collect_fetch_ok<'a, S>(stream: S) -> Vec<async_imap::types::Fetch>
+where
+    S: Stream<Item = Result<async_imap::types::Fetch, async_imap::error::Error>> + 'a,
+{
+    let mut out = Vec::new();
+    let mut stream = std::pin::pin!(stream);
+    while let Some(item) = stream.next().await {
+        match item {
+            Ok(fetch) => out.push(fetch),
+            Err(e) => {
+                // Added: Skip unparseable frames instead of aborting the whole
+                // page. Wrapped to keep the message list resilient (TMAIL-453).
+                tracing::warn!("skipping unparseable IMAP FETCH frame: {}", e);
+            }
+        }
+    }
+    out
+}
+
+/// Decrypted credentials for an IMAP connection.
+/// Stored in AppState's in-memory cache to avoid repeated 
+/// expensive key derivation and decryption.
+#[derive(Debug, Clone)]
+pub struct DecryptedImapCredentials {
+    pub host: String,
+    pub port: u16,
+    pub tls: bool,
+    pub username: String,
+    pub password: String,
+    pub trash_folder: Option<String>,
+}
 
 /// Represents an IMAP folder
 #[derive(Debug, Clone, Serialize)]
@@ -124,6 +168,20 @@ impl ImapService {
         state: &crate::state::AppState,
         user_id: uuid::Uuid,
     ) -> Result<Self, AppError> {
+        // TMAIL-435: Check in-memory cache first
+        if let Some(cached) = state.imap_credential_cache.get(&user_id) {
+            return Ok(Self {
+                config: ImapConfig {
+                    host: cached.host.clone(),
+                    port: cached.port,
+                    tls: cached.tls,
+                    master_password: None,
+                },
+                user_credentials: Some((cached.username.clone(), cached.password.clone())),
+                user_trash_folder: cached.trash_folder.clone(),
+            });
+        }
+
         // TMAIL-162: try Redis first; falls through to DB on miss or Redis down.
         // We cache the full ImapConfiguration row including its encrypted_password ciphertext —
         // never the plaintext password.
@@ -165,6 +223,18 @@ impl ImapService {
         // honour it instead of hardcoding "Trash" (which doesn't exist on
         // Stalwart, Gmail, Outlook, ProtonMail Bridge — see folders-messages-2026-05.md finding #7).
         let user_trash_folder = cfg.trash_folder.clone();
+
+        // TMAIL-435: Cache the decrypted credentials in memory
+        let decrypted = DecryptedImapCredentials {
+            host: cfg.host.clone(),
+            port: cfg.port as u16,
+            tls: matches!(cfg.encryption.as_str(), "ssl"),
+            username: cfg.username.clone(),
+            password: password.clone(),
+            trash_folder: user_trash_folder.clone(),
+        };
+        state.imap_credential_cache.insert(user_id, decrypted);
+
         Ok(Self {
             config: imap_cfg,
             user_credentials: Some((cfg.username.clone(), password)),
@@ -173,8 +243,9 @@ impl ImapService {
     }
 
     /// PURPOSE: Resolve the effective trash folder name for the current service.
-    /// Returns the per-user configured value when set (BYOK), else the legacy
-    /// hardcoded "Trash" so existing Dovecot self-host deployments keep working.
+    /// Returns the per-user configured value when set (BYOK), otherwise falls back
+    /// to the legacy hardcoded "Trash" to ensure compatibility with existing
+    /// Dovecot self-host deployments.
     pub fn trash_folder(&self) -> &str {
         self.user_trash_folder.as_deref().unwrap_or("Trash")
     }
@@ -372,13 +443,13 @@ impl ImapService {
         // requests the first 8 KiB of the raw RFC 822 body which is enough to
         // cover typical header + first text part for the overwhelming majority
         // of messages while keeping the FETCH payload bounded.
-        let messages: Vec<_> = session
+        let messages = session
             .fetch(&range, "(UID ENVELOPE FLAGS RFC822.SIZE BODY.PEEK[]<0.8192>)")
             .await
-            .map_err(|e| AppError::Imap(format!("FETCH failed: {}", e)))?
-            .try_collect()
-            .await
-            .map_err(|e| AppError::Imap(format!("FETCH stream failed: {}", e)))?;
+            .map_err(|e| AppError::Imap(format!("FETCH failed: {}", e)))?;
+        // Changed: skip frames whose ENVELOPE has non-ASCII bytes instead of
+        // aborting the whole page (imap-proto treats quoted strings as ASCII).
+        let messages = collect_fetch_ok(messages).await;
 
         let mut envelopes = Vec::new();
         for msg in &messages {
@@ -479,13 +550,13 @@ impl ImapService {
 
         // Changed (TMAIL-329): mirror list_messages' BODY.PEEK[]<0.8192> partial
         // fetch so search-result rows render a preview too.
-        let messages: Vec<_> = session
+        let messages = session
             .uid_fetch(&uid_range, "(UID ENVELOPE FLAGS RFC822.SIZE BODY.PEEK[]<0.8192>)")
             .await
-            .map_err(|e| AppError::Imap(format!("FETCH failed: {}", e)))?
-            .try_collect()
-            .await
-            .map_err(|e| AppError::Imap(format!("FETCH stream failed: {}", e)))?;
+            .map_err(|e| AppError::Imap(format!("FETCH failed: {}", e)))?;
+        // Changed: skip frames whose ENVELOPE has non-ASCII bytes instead of
+        // aborting the whole search page (imap-proto treats quoted strings as ASCII).
+        let messages = collect_fetch_ok(messages).await;
 
         let mut envelopes = Vec::new();
         for msg in &messages {

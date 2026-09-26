@@ -97,9 +97,11 @@ pub async fn acquire_with_rls(
 /// Axum extractor that yields a pooled Postgres connection with RLS context
 /// already set. Wraps `acquire_with_rls` so handlers can write:
 ///
-///     pub async fn handler(rls: RlsConn, ...) -> Result<..., AppError> {
-///         let rows = sqlx::query_as!(...).fetch_all(&mut *rls.conn).await?;
-///     }
+/// ```ignore
+/// pub async fn handler(rls: RlsConn, ...) -> Result<..., AppError> {
+///     let rows = sqlx::query_as!(...).fetch_all(&mut *rls.conn).await?;
+/// }
+/// ```
 ///
 /// Requires `rls_context_middleware` to have run earlier in the request
 /// pipeline (which is wired in `router::create_router` immediately after

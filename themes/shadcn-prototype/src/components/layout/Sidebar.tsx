@@ -145,7 +145,7 @@ export function Sidebar({
           </Button>
         </div>
 
-        <Button onClick={onCompose} className="w-full">
+        <Button onClick={onCompose} className="w-full" data-testid="sidebar-compose">
           <Plus className="size-4 mr-2" />
           Compose
         </Button>

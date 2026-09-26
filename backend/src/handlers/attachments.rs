@@ -1,4 +1,3 @@
-// Added: Attachment upload/download/list/delete/stats handlers for TMAIL-59
 use axum::{
     body::Body,
     extract::{Multipart, Path, State},
@@ -10,10 +9,9 @@ use std::path::PathBuf;
 use uuid::Uuid;
 
 use crate::error::AppError;
+use crate::extractors::mailbox::MailboxExtractor as Mailbox;
 use crate::models::attachment::{Attachment, StorageStats};
-use crate::models::mailbox::Mailbox;
 use crate::services::attachment_service::AttachmentService;
-use crate::services::auth_service::Claims;
 use crate::state::AppState;
 
 /// PURPOSE: Build AttachmentService from app config
@@ -25,22 +23,14 @@ fn build_service(state: &AppState) -> AttachmentService {
     )
 }
 
-/// PURPOSE: Parse and validate mailbox_id from JWT claims
-fn parse_mailbox_id(claims: &Claims) -> Result<Uuid, AppError> {
-    claims
-        .sub
-        .parse()
-        .map_err(|_| AppError::Internal(anyhow::anyhow!("Invalid mailbox ID in token")))
-}
-
 /// POST /api/attachments — Upload attachment via multipart/form-data
 /// CONSTRAINTS: Max file size enforced by config; virus scan runs after storage
 pub async fn upload_attachment(
     State(state): State<AppState>,
-    axum::Extension(claims): axum::Extension<Claims>,
+    mailbox: Mailbox,
     mut multipart: Multipart,
 ) -> Result<(StatusCode, Json<Attachment>), AppError> {
-    let mailbox_id = parse_mailbox_id(&claims)?;
+    let mailbox_id = mailbox.0.id;
     let service = build_service(&state);
     let max_size = state.config.storage.max_file_size;
 
@@ -93,28 +83,24 @@ pub async fn upload_attachment(
     // Attachments count toward the mailbox's quota_bytes budget per the spec.
     // quota_bytes <= 0 is treated as "unlimited / not configured" — admin-created
     // mailboxes always seed a positive default, so this only matters for legacy rows.
-    let mailbox = Mailbox::find_by_id(&state.db, mailbox_id)
-        .await?
-        .ok_or_else(|| AppError::NotFound("Mailbox not found".to_string()))?;
-
-    if mailbox.quota_bytes > 0 {
-        let used = Attachment::total_size_for_mailbox(&state.db, mailbox_id).await?;
-        if would_exceed_quota(used, size_bytes, mailbox.quota_bytes) {
+    if mailbox.0.quota_bytes > 0 {
+        let used = Attachment::total_size_for_mailbox(&state.db, mailbox.0.id).await?;
+        if would_exceed_quota(used, size_bytes, mailbox.0.quota_bytes) {
             return Err(AppError::BadRequest(format!(
                 "Attachment would exceed mailbox quota: {} used + {} new > {} allowed",
-                used, size_bytes, mailbox.quota_bytes
+                used, size_bytes, mailbox.0.quota_bytes
             )));
         }
     }
 
     // Added: Store file to disk and compute checksum
     let (storage_path, checksum) = service
-        .store_file(mailbox_id, &data, &filename)
+        .store_file(mailbox.0.id, &data, &filename)
         .await
         .map_err(|e| AppError::Internal(e))?;
 
     // Added: Check for duplicate by checksum (deduplication)
-    if let Some(existing) = Attachment::find_by_checksum(&state.db, mailbox_id, &checksum).await? {
+    if let Some(existing) = Attachment::find_by_checksum(&state.db, mailbox.0.id, &checksum).await? {
         // NOTE: Clean up the just-stored duplicate file
         let _ = service.delete_file(&storage_path).await;
         return Ok((StatusCode::OK, Json(existing)));
@@ -123,7 +109,7 @@ pub async fn upload_attachment(
     // Added: Create database record
     let attachment = Attachment::create(
         &state.db,
-        mailbox_id,
+        mailbox.0.id,
         &filename,
         &content_type,
         size_bytes,
@@ -174,10 +160,9 @@ pub async fn upload_attachment(
 /// GET /api/attachments — List all attachments for the current user
 pub async fn list_attachments(
     State(state): State<AppState>,
-    axum::Extension(claims): axum::Extension<Claims>,
+    mailbox: Mailbox,
 ) -> Result<Json<Vec<Attachment>>, AppError> {
-    let mailbox_id = parse_mailbox_id(&claims)?;
-    let attachments = Attachment::list_by_mailbox(&state.db, mailbox_id).await?;
+    let attachments = Attachment::list_by_mailbox(&state.db, mailbox.0.id).await?;
     Ok(Json(attachments))
 }
 
@@ -188,11 +173,10 @@ pub async fn list_attachments(
 /// and for resumable downloads on flaky mobile networks.
 pub async fn download_attachment(
     State(state): State<AppState>,
-    axum::Extension(claims): axum::Extension<Claims>,
+    mailbox: Mailbox,
     headers: HeaderMap,
     Path(id): Path<Uuid>,
 ) -> Result<Response, AppError> {
-    let _mailbox_id = parse_mailbox_id(&claims)?;
     let service = build_service(&state);
 
     // NOTE: RLS enforces ownership, but find_by_id is used here for simplicity
@@ -205,6 +189,11 @@ pub async fn download_attachment(
         return Err(AppError::Forbidden(
             "Cannot download file flagged as infected by virus scanner".to_string(),
         ));
+    }
+
+    // Added: Check ownership explicitly if RLS isn't enough for this specific query
+    if attachment.mailbox_id != mailbox.0.id {
+        return Err(AppError::Forbidden("Not the attachment owner".to_string()));
     }
 
     // Added: Look up the on-disk size once so we can build correct Content-Range
@@ -363,10 +352,9 @@ fn would_exceed_quota(used: i64, incoming: i64, quota_bytes: i64) -> bool {
 /// DELETE /api/attachments/{id} — Delete an attachment (file + record)
 pub async fn delete_attachment(
     State(state): State<AppState>,
-    axum::Extension(claims): axum::Extension<Claims>,
+    mailbox: Mailbox,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
-    let mailbox_id = parse_mailbox_id(&claims)?;
     let service = build_service(&state);
 
     // Added: Fetch attachment to get storage path before deleting record
@@ -374,7 +362,7 @@ pub async fn delete_attachment(
         .await?
         .ok_or_else(|| AppError::NotFound("Attachment not found".to_string()))?;
 
-    let deleted = Attachment::delete(&state.db, id, mailbox_id).await?;
+    let deleted = Attachment::delete(&state.db, id, mailbox.0.id).await?;
     if !deleted {
         return Err(AppError::NotFound("Attachment not found".to_string()));
     }
@@ -394,10 +382,9 @@ pub async fn delete_attachment(
 /// GET /api/attachments/stats — Get storage statistics for current user
 pub async fn attachment_stats(
     State(state): State<AppState>,
-    axum::Extension(claims): axum::Extension<Claims>,
+    mailbox: Mailbox,
 ) -> Result<Json<StorageStats>, AppError> {
-    let mailbox_id = parse_mailbox_id(&claims)?;
-    let stats = Attachment::storage_stats(&state.db, mailbox_id).await?;
+    let stats = Attachment::storage_stats(&state.db, mailbox.0.id).await?;
     Ok(Json(stats))
 }
 
@@ -416,7 +403,7 @@ mod tests {
             exp: 0,
             iat: 0,
         };
-        assert!(parse_mailbox_id(&claims).is_ok());
+        assert!(claims.sub.parse::<Uuid>().is_ok());
     }
 
     #[test]
@@ -429,7 +416,7 @@ mod tests {
             exp: 0,
             iat: 0,
         };
-        assert!(parse_mailbox_id(&claims).is_err());
+        assert!(claims.sub.parse::<Uuid>().is_err());
     }
 
     #[test]

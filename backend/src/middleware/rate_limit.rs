@@ -22,6 +22,8 @@ pub struct RateLimiter {
     state: Arc<Mutex<HashMap<String, WindowState>>>,
     max_requests: u32,
     window_secs: u64,
+    /// If true, bypasses rate limiting entirely (useful for E2E tests)
+    pub bypass: bool,
 }
 
 struct WindowState {
@@ -30,15 +32,21 @@ struct WindowState {
 }
 
 impl RateLimiter {
-    pub fn new(max_requests: u32, window_secs: u64) -> Self {
+    pub fn new(max_requests: u32, window_secs: u64, bypass: bool) -> Self {
         Self {
             state: Arc::new(Mutex::new(HashMap::new())),
             max_requests,
             window_secs,
+            bypass,
         }
     }
 
     async fn check(&self, key: &str) -> bool {
+        // Bypass rate limiting if enabled (e.g., for E2E tests)
+        if self.bypass {
+            return true;
+        }
+
         let mut state = self.state.lock().await;
         let now = Instant::now();
 
@@ -116,7 +124,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_rate_limiter_allows_within_limit() {
-        let limiter = RateLimiter::new(3, 60);
+        let limiter = RateLimiter::new(3, 60, false);
         assert!(limiter.check("127.0.0.1").await);
         assert!(limiter.check("127.0.0.1").await);
         assert!(limiter.check("127.0.0.1").await);
@@ -124,7 +132,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_rate_limiter_blocks_over_limit() {
-        let limiter = RateLimiter::new(2, 60);
+        let limiter = RateLimiter::new(2, 60, false);
         assert!(limiter.check("10.0.0.1").await);
         assert!(limiter.check("10.0.0.1").await);
         assert!(!limiter.check("10.0.0.1").await);
@@ -132,7 +140,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_rate_limiter_different_ips_independent() {
-        let limiter = RateLimiter::new(1, 60);
+        let limiter = RateLimiter::new(1, 60, false);
         assert!(limiter.check("1.1.1.1").await);
         assert!(limiter.check("2.2.2.2").await);
         assert!(!limiter.check("1.1.1.1").await);
@@ -142,7 +150,7 @@ mod tests {
     #[tokio::test]
     async fn test_rate_limiter_window_reset() {
         // Use a very short window to test reset
-        let limiter = RateLimiter::new(1, 0);
+        let limiter = RateLimiter::new(1, 0, true);
         assert!(limiter.check("3.3.3.3").await);
         // Window is 0 seconds so next check should reset
         assert!(limiter.check("3.3.3.3").await);
