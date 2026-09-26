@@ -48,6 +48,17 @@ left the backend half-refactored. Each problem and its fix:
 | A half-written SAML logout handler (TMAIL-305) sat inside the test module. | The test build failed. | Removed it. It was never routed. |
 | `trace-check`'s baseline had been reset to 0 known orphans against the cut-down router. | The check reported 10 false "new" orphans. | Restored the baseline from before `497d34d`. |
 
+## Follow-up: stale IMAP password cache
+
+A security review of the push found that the in-memory cache of decrypted
+IMAP credentials (TMAIL-435) never dropped an entry. After a user changed or
+deleted their IMAP settings, the server kept using the old password until it
+restarted.
+
+- **`invalidate_user_credentials`** in `imap_service.rs` now clears both the in-memory entry and the Redis copy. All four places that write IMAP settings call it.
+- **Cached entries expire after 5 minutes**, the same as the Redis cache. That covers changes made any other way.
+- **Tests:** `tests/imap_credential_cache_test.rs` covers an empty cache, one user among 10,000, and leaving other users untouched. Unit tests cover entry age at zero, at the limit and far past it.
+
 ## Tests that were changed
 
 - **15 test files** now set the new `imap_credential_cache` field on `AppState`.

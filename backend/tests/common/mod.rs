@@ -37,6 +37,8 @@ pub struct TestApp {
     // Added (TMAIL-310): exposed so health tests can simulate "queue stalled"
     // vs "queue ticked" without spinning up the real processor.
     pub queue_heartbeat: QueueHeartbeat,
+    // Added: exposed so tests can inspect in-process caches on AppState.
+    pub state: AppState,
 }
 
 impl TestApp {
@@ -82,10 +84,10 @@ impl TestApp {
             queue_heartbeat: queue_heartbeat.clone(),
         };
 
-        let router = create_router(state);
+        let router = create_router(state.clone());
         // TMAIL-306: publish so any test that drives /api/mobile/batch finds a router.
         let _ = inner_router_holder.set(router.clone());
-        TestApp { router, config, queue_heartbeat }
+        TestApp { router, config, queue_heartbeat, state }
     }
 
     /// Added: Send a request through the router and return (StatusCode, response body as Value)

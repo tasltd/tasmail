@@ -645,7 +645,7 @@ pub async fn post_byok(
 
     // Drop the per-user caches so the next /api request picks up the new
     // defaults without waiting for the TTL.
-    let _ = state.cache.invalidate_user_imap_config(&user_id.to_string()).await;
+    crate::services::imap_service::invalidate_user_credentials(&state, user_id).await;
     let _ = state.cache.invalidate_user_smtp_config(&user_id.to_string()).await;
 
     tracing::info!(

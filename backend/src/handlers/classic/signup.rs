@@ -782,10 +782,7 @@ pub async fn post_step2_servers(
     ImapConfiguration::create(&state.db, mailbox_id, &imap_req, &key)
         .await
         .map_err(|e| AppError::Internal(anyhow::anyhow!("imap_configurations insert failed: {e}")))?;
-    let _ = state
-        .cache
-        .invalidate_user_imap_config(&mailbox_id.to_string())
-        .await;
+    crate::services::imap_service::invalidate_user_credentials(&state, mailbox_id).await;
 
     let smtp_encrypted = encrypt_api_key(&form.smtp_password, &key)
         .map_err(|e| AppError::Internal(anyhow::anyhow!("smtp encrypt failed: {e}")))?;

@@ -50,6 +50,28 @@ pub struct DecryptedImapCredentials {
     pub username: String,
     pub password: String,
     pub trash_folder: Option<String>,
+    /// Fix: when this entry was decrypted. Entries older than
+    /// `CREDENTIAL_CACHE_TTL` are ignored, so a change made outside the
+    /// handlers that call `invalidate_user_credentials` still takes effect.
+    pub cached_at: std::time::Instant,
+}
+
+/// Fix: maximum age of a cached decrypted credential. Matches the Redis
+/// config cache TTL (`TTL_USER_CFG_SECS` in cache_service.rs).
+pub const CREDENTIAL_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// True while a cached credential decrypted at `cached_at` may still be used.
+pub fn credentials_fresh(cached_at: std::time::Instant, now: std::time::Instant) -> bool {
+    now.saturating_duration_since(cached_at) < CREDENTIAL_CACHE_TTL
+}
+
+/// Fix: drop every cached copy of a user's IMAP credentials: the decrypted
+/// in-memory entry (TMAIL-435) and the encrypted Redis row (TMAIL-162).
+/// Call after any create, update or delete of that user's imap_configurations,
+/// or the old password keeps being used.
+pub async fn invalidate_user_credentials(state: &crate::state::AppState, user_id: uuid::Uuid) {
+    state.imap_credential_cache.remove(&user_id);
+    let _ = state.cache.invalidate_user_imap_config(&user_id.to_string()).await;
 }
 
 /// Represents an IMAP folder
@@ -169,7 +191,15 @@ impl ImapService {
         user_id: uuid::Uuid,
     ) -> Result<Self, AppError> {
         // TMAIL-435: Check in-memory cache first
-        if let Some(cached) = state.imap_credential_cache.get(&user_id) {
+        // Fix: skip and evict entries past CREDENTIAL_CACHE_TTL.
+        let fresh = state
+            .imap_credential_cache
+            .get(&user_id)
+            .filter(|c| credentials_fresh(c.cached_at, std::time::Instant::now()));
+        if fresh.is_none() {
+            state.imap_credential_cache.remove(&user_id);
+        }
+        if let Some(cached) = fresh {
             return Ok(Self {
                 config: ImapConfig {
                     host: cached.host.clone(),
@@ -232,6 +262,7 @@ impl ImapService {
             username: cfg.username.clone(),
             password: password.clone(),
             trash_folder: user_trash_folder.clone(),
+            cached_at: std::time::Instant::now(),
         };
         state.imap_credential_cache.insert(user_id, decrypted);
 
@@ -1553,6 +1584,28 @@ fn find_part_by_id(
 
 #[cfg(test)]
 mod tests {
+    // Added: the decrypted credential cache must expire, both ends.
+    #[test]
+    fn credentials_fresh_at_zero_age() {
+        let t = std::time::Instant::now();
+        assert!(credentials_fresh(t, t));
+    }
+
+    #[test]
+    fn credentials_stale_at_and_past_ttl() {
+        let t = std::time::Instant::now();
+        assert!(credentials_fresh(t, t + CREDENTIAL_CACHE_TTL - std::time::Duration::from_millis(1)));
+        assert!(!credentials_fresh(t, t + CREDENTIAL_CACHE_TTL));
+        assert!(!credentials_fresh(t, t + CREDENTIAL_CACHE_TTL * 1000));
+    }
+
+    #[test]
+    fn credentials_fresh_when_clock_reads_earlier() {
+        // saturating: a `now` before `cached_at` counts as zero age, never a panic.
+        let t = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        assert!(credentials_fresh(t, std::time::Instant::now()));
+    }
+
     use super::*;
 
     // Helper to build a simple email for testing

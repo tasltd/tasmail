@@ -40,7 +40,7 @@ pub async fn create_imap_config(
     let key = derive_encryption_key(&state.config.jwt.secret);
     let cfg = ImapConfiguration::create(&state.db, mailbox.id, &body, &key).await?;
     // TMAIL-162: drop the per-user cache so the next request picks up the new default.
-    let _ = state.cache.invalidate_user_imap_config(&mailbox.id.to_string()).await;
+    crate::services::imap_service::invalidate_user_credentials(&state, mailbox.id).await;
     Ok((StatusCode::CREATED, Json(ImapConfigSummary::from(cfg))))
 }
 
@@ -55,7 +55,7 @@ pub async fn delete_imap_config(
         return Err(AppError::NotFound(format!("imap_configuration {}", id)));
     }
     // TMAIL-162: drop cache so the next request reflects the deletion.
-    let _ = state.cache.invalidate_user_imap_config(&mailbox.id.to_string()).await;
+    crate::services::imap_service::invalidate_user_credentials(&state, mailbox.id).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
